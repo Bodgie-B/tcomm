@@ -18,3 +18,9 @@ sdkconfig.old
 
 # Firmware images (Waveshare's factory image is their file, not ours)
 *.bin
+
+# Screensaver preview output
+*.ppm
+*.mp4
+*.gif
+*.png

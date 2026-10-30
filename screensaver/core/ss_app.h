@@ -1,0 +1,60 @@
+// Public interface of the screensaver module.
+//
+// This is the whole surface the panel firmware (port_esp32/) and the PC preview
+// (sim/) talk to. Integration into TComm means calling these functions and
+// nothing else. The host owns the framebuffer and the clock; core owns the
+// scene, the scheduler and the renderer.
+#pragma once
+
+#include "ss_platform.h"
+#include "gfx/surface.h"
+#include "palette.h"
+#include "anim/scheduler.h"
+
+namespace ss {
+
+// Inputs the host keeps up to date. Core reads them at tick boundaries.
+struct Inputs {
+  float mood;             // solar-day position, see palette.h (0 night .. 5 dusk)
+  WeatherTint weather;    // overcast, fog, night_dim in 0..1
+  int weather_code;       // scene weather: 0 clear, 1 rain, 2 snow, 3 wind, 4 heat, 5 fog, 6 chill (expandable)
+  bool have_outside;      // false: no OUTSIDE reading for 15 min, pick random weather
+  int other_status;       // 0 Open, 1 Busy, 2 Private, 3 Sleeping, 4 Away, 5 No signal
+  int dog_out;            // 0 none, 1 Lucy, 2 Copper
+  bool night_mode;        // night rule in force (dim, no large bright areas)
+  bool lookout_window;    // true inside the sunset window: play the Lookout spine
+};
+
+struct App;   // opaque to the host; defined in core/scene/app.cpp
+
+// Size of the App object so the host can place it in internal SRAM or PSRAM
+// without core allocating. Must be >= sizeof(App); checked at compile time in
+// app.cpp.
+#define SS_APP_BYTES (96 * 1024)
+
+// Start the screensaver. `storage` is SS_APP_BYTES of host memory. `seed` picks
+// the first loop; later loops reseed from the host RNG via `next_seed`.
+App* appStart(void* storage, const HostAlloc& alloc, uint64_t seed, const Inputs& in);
+void appStop(App* app, const HostAlloc& alloc);
+
+void appSetInputs(App* app, const Inputs& in);
+bool appPostEvent(App* app, Event e);          // doorbell, status change, dog
+
+// Advance one logical tick (SS_TICK_DT). The host calls this at SS_TICK_HZ.
+// Returns true when a new loop started this tick (for the preview log).
+bool appTick(App* app);
+
+// Composite the current state into `fb` (full frame, origin_y 0). Only dirty
+// strips are written. Returns the number of strips written.
+int appRender(App* app, Surface& fb);
+
+// Force every strip dirty (after the host touched the framebuffer, or on resume).
+void appInvalidate(App* app);
+
+// Introspection for the preview HUD and logs.
+const char* appBeatName(const App* app);
+float appBeatProgress(const App* app);
+uint64_t appLoopSeed(const App* app);
+uint32_t appTickCount(const App* app);
+
+}  // namespace ss
