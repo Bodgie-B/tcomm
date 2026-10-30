@@ -24,3 +24,5 @@ sdkconfig.old
 *.mp4
 *.gif
 *.png
+*.bundle
+screensaver/preview_out/
