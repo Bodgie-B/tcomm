@@ -258,7 +258,7 @@ static void testTimelineRun() {
         g_updates[0], g_updates[1], g_updates[2], e0, e1, e2);
   CHECK(g_firstT[0] == 0.f && g_firstT[1] == 0.f, "first update of a beat has t = 0 (nothing carries across beats): %g, %g", (double)g_firstT[0],
         (double)g_firstT[1]);
-  CHECK(g_lastT[0] < 1.f && g_lastT[2] < 1.f && g_lastT[0] > 0.9f, "last t values %g %g", (double)g_lastT[0], (double)g_lastT[2]);
+  CHECK(g_lastT[0] == 1.f && g_lastT[2] == 1.f, "last update of a beat has t = 1 exactly: %g %g", (double)g_lastT[0], (double)g_lastT[2]);
 
   // Hooks: B0 (start), E0 B1, E1 B2, E2 -- each once, in order.
   const char kinds[6] = {'B', 'E', 'B', 'E', 'B', 'E'};
