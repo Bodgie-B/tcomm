@@ -26,3 +26,6 @@ sdkconfig.old
 *.png
 *.bundle
 screensaver/preview_out/
+# ...except the curated renders in the Stage 1 report
+!docs/screensaver/stage1-report/img/*.png
+!docs/screensaver/stage1-report/img/*.mp4
