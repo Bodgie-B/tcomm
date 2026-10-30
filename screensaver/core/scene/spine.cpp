@@ -21,6 +21,7 @@
 
 #include "../anim/ease.h"
 #include "../ss_app.h"
+#include "director.h"
 #include "world.h"
 
 namespace ss {
@@ -39,6 +40,7 @@ enum StepOp : uint8_t {
   OP_GO,         // walk to the anchor at s px/s by a route: around the back of the fire pit,
                  // and in two legs when the move is steeper than it is wide (walks only move x)
   OP_REPEAT,     // while pred(w): go back a steps
+  OP_UNTIL,      // wait until pred(w) (a critter arrived, the bear is gone)
 };
 
 enum Anchor : uint8_t {
@@ -93,6 +95,7 @@ constexpr Step doit(ActFn fn) { return Step{OP_DO, 0, 0, 0.f, 0.f, 0.f, fn, null
 constexpr Step repeatWhile(PredFn p, int back) {
   return Step{OP_REPEAT, (uint8_t)back, 0, 0.f, 0.f, 0.f, nullptr, p};
 }
+constexpr Step until(PredFn p) { return Step{OP_UNTIL, 0, 0, 0.f, 0.f, 0.f, nullptr, p}; }
 
 constexpr int LEFT = 0, RIGHT = 1, TO_FIRE = 2;
 
@@ -101,6 +104,16 @@ constexpr float kStroll = 34.f, kWade = 22.f, kRun = 78.f;
 
 inline float minf(float a, float b) { return a < b ? a : b; }
 inline float maxf(float a, float b) { return a > b ? a : b; }
+
+// A pose change while fx offsets are on: World adds them to h.pose every tick,
+// so take them out of the blend's start first, or they count twice.
+void setPose(World& w, PoseId p, float seconds) {
+  HikerPose& P = w.hiker.pose;
+  P.lean -= w.fx.lean;
+  P.head -= w.fx.head;
+  P.lift -= w.fx.lift;
+  hikerSetPose(w.hiker, p, seconds);
+}
 
 // ---- actions -------------------------------------------------------------------
 // Each takes u 0..1 over its step and leaves the world at rest at u = 1.
@@ -120,9 +133,22 @@ void actShrug(World& w, float u) {
 
 // The rig has no pack pose: he holds it in CARRY with the food sack as a
 // stand-in the pack is drawn over (CARRY keeps the arms still while walking).
-void doPackPickUp(World& w, float) {
-  w.pack.held = true;
-  hikerCarry(w.hiker, CARRY_BAG);
+// Where the pack stands while his hands hold it (World's rule for a held pack).
+Vec2 packAtHands(const World& w) {
+  const Vec2 m = hikerHandsMid(w.hiker);
+  return Vec2{m.x, minf(m.y + 13.f, w.hiker.feet.y + 3.f)};
+}
+// From where it fell behind his heels round to his hands, lifted a little on
+// the way (it used to jump there in one tick).
+void actPackLift(World& w, float u) {
+  if (u <= 0.f) w.spine.v0 = w.pack.pos;
+  const Vec2 to = packAtHands(w);
+  const float k = easeInOut(u);
+  w.pack.pos = Vec2{lerp(w.spine.v0.x, to.x, k), lerp(w.spine.v0.y, to.y, k) - 6.f * sinT(0.5f * k)};
+  if (u >= 1.f) {
+    w.pack.held = true;
+    hikerCarry(w.hiker, CARRY_BAG);
+  }
 }
 void doPackSetDown(World& w, float) {
   w.pack.held = false;
@@ -220,9 +246,9 @@ void actStumble(World& w, float u) {
   Hiker& h = w.hiker;
   if (u <= 0.f) {
     w.spine.u0 = h.feet.x;
-    hikerSetPose(h, POSE_YELP, 0.3f);
+    setPose(w, POSE_YELP, 0.3f);
   }
-  if (u >= 0.32f && h.target == POSE_YELP) hikerSetPose(h, POSE_STAND, 0.45f);
+  if (u >= 0.32f && h.target == POSE_YELP) setPose(w, POSE_STAND, 0.45f);
   const float back = sinT(0.5f * window(u, 0.f, 0.3f));
   const float fwd = sinT(0.5f * window(u, 0.28f, 0.55f));
   w.fx.lean = -0.4f * back + 0.22f * fwd;
@@ -317,7 +343,7 @@ void actYelp(World& w, float u) {
   Hiker& h = w.hiker;
   if (u <= 0.f) {
     w.spine.u0 = h.feet.x;
-    hikerSetPose(h, POSE_YELP, 0.35f);
+    setPose(w, POSE_YELP, 0.35f);
   }
   w.fx.reach = 1.f - easeOutCubic(window(u, 0.f, 0.25f));
   h.feet.x = w.spine.u0 - (float)h.facing * 14.f * easeOutCubic(window(u, 0.12f, 0.6f));
@@ -381,13 +407,236 @@ void setDown(World& w, ItemId id, Vec2 at) {
   it.facing = (int8_t)w.hiker.facing;
 }
 
-// Stage 5 hook: while he eats, critters (chipmunk, mouse) edge closer and
-// scatter whenever he moves (each sip or bite raises fx.arm_w). Empty step
-// until stage 5 schedules them from here.
-void hookDinnerCritters(World&, float) {}
-// Stage 5 hook: the night theft (a raccoon takes the mug, the pot, the fork or
-// a shoe left out). Empty step until stage 5.
-void hookTheft(World&, float) {}
+// ---- critter scenes (stage 5) ---------------------------------------------------------
+// The dinner visitors and the night thief run beside the script, from
+// spineCritterScenes every tick; the hooks in the scripts start them. The bear
+// beat is a script of its own (below the food bag).
+
+// A bite or sip: the hand passing half way up, counted once on the way up.
+void noteBite(World& w, float lift) {
+  SpineState& sp = w.spine;
+  if (lift > 0.5f && !sp.bite_up) {
+    sp.bite_up = true;
+    if (sp.bites < 255) ++sp.bites;
+  } else if (lift < 0.3f) {
+    sp.bite_up = false;
+  }
+}
+
+// Ground the critters can stand on at x: `want`, or higher up the bank if the
+// stream (with its far bank strip) comes closer.
+float groundAt(const World& w, float x, float want) {
+  float cy, half;
+  if (!landscapeStreamSpan(w.land, x, cy, half)) return want;
+  return minf(want, cy - 1.06f * half - 14.f);
+}
+
+constexpr float kDeerWalk = 30.f, kDeerStep = 14.f, kChipRun = 70.f;
+constexpr int kDeerMaxSteps = 7;
+
+// Where the deer edges toward: well short of the hiker sitting at camp.sit.
+Vec2 deerNearest(const World& w) {
+  const Vec2 s = w.spine.camp.sit;
+  const float x = s.x + 150.f;
+  return Vec2{x, groundAt(w, x, s.y - 16.f)};
+}
+Vec2 deerSpot(const World& w) {
+  const float x = (float)w.land.camp_x + 44.f;
+  return Vec2{x, groundAt(w, x, 350.f)};
+}
+
+// Dinner: a deer comes out at the right edge of camp and a chipmunk runs in
+// from the left behind the fire. Both are shy: the first move he makes, they go.
+void hookDinnerCritters(World& w, float) {
+  SpineState& sp = w.spine;
+  if (sp.deer < 0) {
+    const float x = (float)SS_WIDTH + 50.f;
+    const int d = directorSpawn(w, CR_DEER, Vec2{x, groundAt(w, x, 340.f)}, -1);
+    if (d >= 0) {
+      w.crit[d].tag = CT_DINNER;
+      w.crit[d].flags = CF_SHY;
+      directorWalk(w, d, deerSpot(w), kDeerWalk, CA_MOVE);
+      sp.deer = (int8_t)d;
+      sp.deer_steps = sp.bites;
+      sp.deer_t = 0.f;
+    }
+  }
+  if (sp.chip < 0) {
+    const float y = w.fire.pos.y - 32.f;
+    const int c = directorSpawn(w, CR_CHIPMUNK, Vec2{-18.f, y}, 1);
+    if (c >= 0) {
+      w.crit[c].tag = CT_DINNER;
+      w.crit[c].flags = CF_SHY;
+      directorWalk(w, c, Vec2{w.fire.pos.x - 96.f, y}, kChipRun, CA_RUN);
+      sp.chip = (int8_t)c;
+      sp.chip_stage = 0;
+      sp.chip_t = 0.f;
+    }
+  }
+}
+
+// Dinner b: the pot boils over and he jumps back; everything near the camp bolts.
+void doDinnerScatter(World& w, float) { directorScatter(w, w.hiker.feet, 600.f); }
+
+void deerTick(World& w) {
+  SpineState& sp = w.spine;
+  if (sp.deer < 0) return;
+  if (!directorOwns(w, sp.deer, CT_DINNER)) {   // scattered (or gone): no longer ours
+    if (!w.crit[sp.deer].in_use || w.crit[sp.deer].tag != CT_DINNER) sp.deer = -1;
+    return;
+  }
+  Critter& c = w.critters[sp.deer];
+  sp.deer_t += SS_TICK_DT;
+  if (!critterArrived(c)) {
+    sp.deer_t = 0.f;
+    return;
+  }
+  // Arrived somewhere: freeze, head up, looking at him.
+  if (c.action == CA_IDLE && sp.deer_t > 0.25f) critterSetAction(c, CA_LOOK, 0.4f);
+  // Dinner b has no bites before the pot boils over: the deer edges in every
+  // few seconds instead, drawn by the smell.
+  if (w.plan.dinner == 1 && sp.deer_t > 3.2f && sp.bites == sp.deer_steps) {
+    ++sp.bites;
+    sp.bite_up = false;
+  }
+  const int taken = (int)sp.deer_steps;
+  if (sp.bites > sp.deer_steps && sp.deer_t > 0.6f) {
+    sp.deer_steps = sp.bites;
+    const Vec2 near = deerNearest(w);
+    if (taken < kDeerMaxSteps && c.feet.x - kDeerStep > near.x) {
+      const float x = c.feet.x - kDeerStep;
+      const Vec2 from = deerSpot(w);
+      const float u = clamp01((from.x - x) / maxf(1.f, from.x - near.x));
+      critterSetAction(c, CA_MOVE, 0.2f);
+      directorWalk(w, sp.deer, Vec2{x, lerp(from.y, near.y, u)}, 16.f, CA_MOVE);
+    }
+  }
+}
+
+void chipTick(World& w) {
+  SpineState& sp = w.spine;
+  if (sp.chip < 0) return;
+  if (!directorOwns(w, sp.chip, CT_DINNER)) {
+    if (!w.crit[sp.chip].in_use || w.crit[sp.chip].tag != CT_DINNER) sp.chip = -1;
+    return;
+  }
+  Critter& c = w.critters[sp.chip];
+  sp.chip_t += SS_TICK_DT;
+  const float y = w.fire.pos.y - 32.f;
+  switch (sp.chip_stage) {
+    case 0:   // in from the left, then up on its haunches for a look
+      if (critterArrived(c)) {
+        critterSetAction(c, CA_SIT, 0.35f);
+        sp.chip_stage = 1;
+        sp.chip_t = 0.f;
+      }
+      break;
+    case 1:
+      if (sp.chip_t > 0.6f && c.action == CA_SIT) critterSetAction(c, CA_LOOK, 0.3f);
+      if (sp.chip_t > 1.8f) {   // on, behind the fire
+        directorWalk(w, sp.chip, Vec2{w.fire.pos.x - 24.f, y}, kChipRun, CA_RUN);
+        sp.chip_stage = 2;
+        sp.chip_t = 0.f;
+      }
+      break;
+    case 2:   // finds a crumb behind the fire and eats it, sitting up
+      if (critterArrived(c) && sp.chip_t > 0.3f) {
+        c.carry = CC_CRUMB;
+        critterSetAction(c, CA_SIT, 0.3f);
+        sp.chip_stage = 3;
+        sp.chip_t = 0.f;
+      }
+      break;
+    default:   // eat, look at him, eat
+      if (sp.chip_t > 0.4f && c.action == CA_SIT) critterSetAction(c, CA_EAT, 0.3f);
+      if (sp.chip_t > 4.0f && c.action == CA_EAT) critterSetAction(c, CA_LOOK, 0.25f);
+      if (sp.chip_t > 5.6f) sp.chip_t = 0.2f;
+      break;
+  }
+}
+
+// The close: a shoe by the tent door; a raccoon walks off with it.
+constexpr float kThiefWalk = 38.f;
+
+// Food bag, at the tent door: one crouch and a shoe comes off and stays outside.
+void doShoeOff(World& w, float) {
+  Item& s = w.items[ITEM_SHOE];
+  const Hiker& h = w.hiker;
+  s.held = false;
+  s.on_fire = false;
+  s.critter = 0;
+  s.down = true;
+  s.facing = 1;
+  s.pos = Vec2{h.feet.x + 11.f, h.feet.y + 2.f};
+}
+
+void hookTheft(World& w, float) {
+  SpineState& sp = w.spine;
+  const Item& shoe = w.items[ITEM_SHOE];
+  if (sp.thief >= 0 || !shoe.down) return;
+  const int r = directorSpawn(w, CR_RACCOON, Vec2{-34.f, shoe.pos.y - 1.f}, 1);
+  if (r < 0) return;
+  w.crit[r].tag = CT_THIEF;
+  directorWalk(w, r, Vec2{shoe.pos.x - 13.f, shoe.pos.y - 1.f}, kThiefWalk, CA_MOVE);
+  sp.thief = (int8_t)r;
+  sp.thief_stage = 0;
+  sp.thief_t = 0.f;
+}
+
+void thiefTick(World& w) {
+  SpineState& sp = w.spine;
+  if (sp.thief < 0) return;
+  if (!directorOwns(w, sp.thief, CT_THIEF)) {
+    if (!w.crit[sp.thief].in_use || w.crit[sp.thief].tag != CT_THIEF) sp.thief = -1;
+    return;
+  }
+  Critter& c = w.critters[sp.thief];
+  Item& shoe = w.items[ITEM_SHOE];
+  sp.thief_t += SS_TICK_DT;
+  auto next = [&](uint8_t st) {
+    sp.thief_stage = st;
+    sp.thief_t = 0.f;
+  };
+  switch (sp.thief_stage) {
+    case 0:
+      if (critterArrived(c)) {
+        critterSetAction(c, CA_SNIFF, 0.4f);
+        next(1);
+      }
+      break;
+    case 1:   // a good long sniff
+      if (sp.thief_t > 1.8f) {
+        critterSetAction(c, CA_CARRY, 0.5f);
+        next(2);
+      }
+      break;
+    case 2:   // picks it up
+      if (sp.thief_t > 0.25f && shoe.down) {
+        shoe.down = false;
+        c.carry = CC_SHOE;
+        w.memory.shoe_taken = true;
+      }
+      if (sp.thief_t > 0.7f) {   // turns toward the tent
+        directorWalk(w, sp.thief, Vec2{c.feet.x - 3.f, c.feet.y}, 10.f, CA_MOVE);
+        next(3);
+      }
+      break;
+    case 3:
+      if (critterArrived(c) && sp.thief_t > 0.3f) {
+        critterSetAction(c, CA_LOOK, 0.35f);
+        next(4);
+      }
+      break;
+    case 4:   // the guilty pause, then off the way it came
+      if (sp.thief_t > 1.9f) {
+        directorExit(w, sp.thief, -1, kThiefWalk, CA_MOVE);
+        sp.thief = -1;   // the director releases it once it is out of sight
+        next(5);
+      }
+      break;
+    default: break;
+  }
+}
 
 // ---- dinner ------------------------------------------------------------------------------
 
@@ -413,6 +662,7 @@ void actMugDinner(World& w, float u) {
   const float s = u * kMugDinnerS;
   float sip = 0.f;
   for (int k = 0; k < 3; ++k) sip = maxf(sip, plateau(s, 3.f + 6.f * (float)k, 0.55f, 0.7f));
+  noteBite(w, sip);
   mugHold(w, envelope(u, 0.05f, 0.05f), sip, 0.16f);
   if (u >= 1.f) fxRest(w);
 }
@@ -497,6 +747,7 @@ void actEatPot(World& w, float u) {
   const float f = ph - floorf(ph);
   const float dip = plateau(f, 0.f, 0.16f, 0.08f);
   const float lift = plateau(f, 0.42f, 0.16f, 0.14f);
+  noteBite(w, lift * env);
   setArm(w, 0, env, 0.5f + 0.25f * dip + 0.4f * lift, 1.3f - 1.1f * dip + 1.15f * lift);
   w.fx.head = env * (0.08f + 0.25f * dip - 0.14f * lift);
   if (u >= 1.f) fxRest(w);
@@ -546,6 +797,7 @@ void actEatFork(World& w, float u) {
   const float env = envelope(u, 0.05f, 0.06f);
   const float ph = s / 0.8f;
   const float lift = plateau(ph - floorf(ph), 0.05f, 0.2f, 0.12f);
+  noteBite(w, lift * env);
   setArm(w, 0, env, 0.55f + 0.35f * lift, 1.5f + 0.95f * lift);
   w.fx.head = env * (0.1f - 0.12f * lift);
   if (u >= 1.f) fxRest(w);
@@ -689,6 +941,305 @@ void actHeave(World& w, float u) {
     b.swing = 0.f;
     fxRest(w);
   }
+}
+
+// ---- the bear ------------------------------------------------------------------------------
+// He is in the lit tent. The bear walks in from the right, sniffs toward the
+// tent (the shadow inside freezes, then trembles), goes to the bag pine and
+// tries: a) climbing, b) shaking the trunk, c) swatting with a stick. The
+// shadow follows the bear's x with a lag the whole time (bearUpdate).
+
+constexpr float kBearWalk = 22.f, kBearRun = 72.f;
+
+Critter* bearOf(World& w) {
+  return directorOwns(w, w.spine.bear, CT_BEAR) ? &w.critters[w.spine.bear] : nullptr;
+}
+bool bearArrived(const World& w) {
+  const int b = w.spine.bear;
+  return b < 0 || !w.crit[b].in_use || critterArrived(w.critters[b]);
+}
+bool bearGone(const World& w) { return w.spine.bear < 0 || !w.crit[w.spine.bear].in_use; }
+
+float trunkX(const World& w) { return (float)w.land.camp_x; }
+constexpr float kBearTreeY = 346.f;   // in front of the camp pine's foot (340)
+
+// Where it stops to sniff, right of the bag pine.
+Vec2 bearSniffSpot(const World& w) {
+  const float x = trunkX(w) + 96.f;
+  return Vec2{x, groundAt(w, x, kBearTreeY)};
+}
+
+void bearWalk(World& w, Vec2 to, float v) {
+  if (w.spine.bear >= 0) directorWalk(w, w.spine.bear, to, v, CA_MOVE);
+}
+
+void doBearEnter(World& w, float) {
+  SpineState& sp = w.spine;
+  const float x = (float)SS_WIDTH + 60.f;
+  const int b = directorSpawn(w, CR_BEAR, Vec2{x, groundAt(w, x, 340.f)}, -1);
+  sp.bear = (int8_t)b;
+  if (b < 0) return;
+  w.crit[b].tag = CT_BEAR;
+  w.crit[b].flags = CF_BRAVE;
+  // The bear's pace barely varies, so the beat's length holds on every seed.
+  Critter& c = w.critters[b];
+  c.speed_dial = 0.4f + 0.2f * c.speed_dial;
+  sp.shadow_v = w.tent.shadow_x;
+  sp.fear = 0.f;
+  bearWalk(w, bearSniffSpot(w), kBearWalk);
+}
+
+// Nose up, sniffing toward the tent; the shadow freezes, then shakes.
+void actBearSniff(World& w, float u) {
+  Critter* c = bearOf(w);
+  if (!c) return;
+  if (u <= 0.f) critterSetAction(*c, CA_SNIFF, 0.7f);
+  c->head_add = 0.35f * envelope(u, 0.15f, 0.2f);
+  w.spine.fear = u < 0.12f ? 0.f : (u < 0.45f ? 0.05f : 1.f);
+  if (u >= 1.f) {
+    c->head_add = 0.f;
+    critterSetAction(*c, CA_IDLE, 0.5f);
+  }
+}
+
+// A long look up at the bag.
+void actBearLookUp(World& w, float u) {
+  Critter* c = bearOf(w);
+  if (!c) return;
+  if (u <= 0.f) critterSetAction(*c, CA_LOOK, 0.6f);
+  c->head_add = 0.45f * envelope(u, 0.3f, 0.25f);
+  if (u >= 1.f) c->head_add = 0.f;
+}
+
+void doBearToTrunk(World& w, float) {   // climb and shake: right of the trunk, facing it
+  const float dx = w.plan.bear == 0 ? 5.f : 20.f;
+  bearWalk(w, Vec2{trunkX(w) + dx, kBearTreeY}, kBearWalk);
+}
+
+void doBearLeave(World& w, float) {
+  SpineState& sp = w.spine;
+  if (sp.bear >= 0 && w.crit[sp.bear].in_use) directorExit(w, sp.bear, 1, kBearWalk, CA_MOVE);
+  sp.fear = 0.f;
+}
+
+// a) Climb: up the trunk to just under the branch.
+constexpr float kBearClimbH = 74.f;   // the climbing figure, feet to the top of its head
+void doBearClimb(World& w, float) {
+  Critter* c = bearOf(w);
+  if (!c) return;
+  critterClimbTo(*c, (float)LS_BRANCH_ROOT_Y + 7.f + kBearClimbH, 13.f);
+}
+
+// At the top, one paw out toward the bag along the branch: well short. Two tries.
+void actBearReachTrunk(World& w, float u) {
+  Critter* c = bearOf(w);
+  if (!c) return;
+  const float s = u * 2.f;
+  const float k = s - floorf(s);
+  const float strain = sinT(0.5f * window(k, 0.f, 0.45f)) * (1.f - window(k, 0.75f, 1.f));
+  c->fore_add = u >= 1.f ? 0.f : -0.25f * strain + 0.06f * strain * sinT(u * 9.f);
+  c->head_add = u >= 1.f ? 0.f : 0.25f * envelope(u, 0.1f, 0.1f);
+}
+
+// Slides down the trunk and lands with a thump: a little dust at the foot.
+void actBearSlide(World& w, float u) {
+  Critter* c = bearOf(w);
+  if (!c) return;
+  if (u <= 0.f) w.spine.u0 = c->feet.y;
+  c->feet.y = lerp(w.spine.u0, kBearTreeY, easeInCubic(u));
+  if (u >= 1.f) {
+    for (int k = 0; k < 2; ++k) {
+      Bit& b = w.bits[k];
+      b = Bit{};
+      b.kind = BIT_DUST;
+      b.pos = Vec2{c->feet.x + (k ? 14.f : -10.f), kBearTreeY - 3.f};
+      b.vel = Vec2{k ? 14.f : -12.f, -9.f};
+      b.land_y = kBearTreeY + 1.f;
+    }
+    critterSetAction(*c, CA_SIT, 0.45f);
+  }
+}
+
+// Sits where it landed and looks up at the bag for a while.
+void actBearSitLook(World& w, float u) {
+  Critter* c = bearOf(w);
+  if (!c) return;
+  c->head_add = 0.75f * envelope(u, 0.25f, 0.2f);
+  if (u >= 1.f) critterSetAction(*c, CA_IDLE, 0.7f);
+}
+
+// The hung bag swings when something hits it: an impulse on its damped swing.
+void bagKick(World& w, float v) {
+  if (w.bag.state != BAG_HUNG) return;
+  w.spine.bag_v += v;
+  w.spine.bag_osc = true;
+}
+
+// b) Shake: up on its hind legs, arms round the trunk, shaking. The bag swings
+// and cones drop: one to the ground, one on its head.
+void actBearRear(World& w, float u) {
+  Critter* c = bearOf(w);
+  if (!c) return;
+  if (u <= 0.f) critterSetAction(*c, CA_REAR, 1.0f);
+}
+
+void dropCone(World& w, int k, Vec2 from, float hit_y, float land_y) {
+  Bit& b = w.bits[k];
+  b = Bit{};
+  b.kind = BIT_CONE;
+  b.pos = from;
+  b.vel = Vec2{0.f, 30.f};
+  b.ground_y = hit_y;
+  b.land_y = land_y;
+}
+
+constexpr float kShakeS = 5.5f;
+void actBearShake(World& w, float u) {
+  Critter* c = bearOf(w);
+  if (!c) return;
+  const float s = u * kShakeS, prev = s - SS_TICK_DT;
+  if (u <= 0.f) critterSetAction(*c, CA_SHAKE, 0.45f);
+  if (u < 0.9f) {   // the trunk shakes: each jolt pumps the bag along the way it already swings
+    const float ph = s * 2.f;
+    if (floorf(ph) != floorf(ph - SS_TICK_DT * 2.f)) bagKick(w, w.spine.bag_v < 0.f ? -0.55f : 0.55f);
+  }
+  if (prev < 1.6f && s >= 1.6f)   // a cone off the canopy to the ground
+    dropCone(w, 2, Vec2{trunkX(w) - 26.f, 236.f}, kBearTreeY + 6.f, kBearTreeY + 6.f);
+  if (prev < 4.4f && s >= 4.4f) {   // ...and one right on its head
+    const Vec2 h = critterHead(*c);
+    dropCone(w, 3, Vec2{h.x, h.y - 64.f}, h.y + 2.f, c->feet.y + 4.f);
+  }
+}
+
+// Nose to the bark, up and down the trunk.
+void actBearSniffTrunk(World& w, float u) {
+  Critter* c = bearOf(w);
+  if (!c) return;
+  if (u <= 0.f) critterSetAction(*c, CA_SNIFF, 0.5f);
+  c->head_add = 0.3f * sinT(0.5f * u) * sinT(0.5f * u);
+  if (u >= 1.f) {
+    c->head_add = 0.f;
+    critterSetAction(*c, CA_IDLE, 0.4f);
+  }
+}
+
+// Bonk: it drops and turns, frozen a moment, then runs.
+void actBearStartle(World& w, float u) {
+  Critter* c = bearOf(w);
+  if (!c) return;
+  if (u <= 0.f) critterSetAction(*c, CA_STARTLE, 0.9f);
+  w.spine.fear = 1.f;
+}
+void doBearRunOff(World& w, float) {
+  SpineState& sp = w.spine;
+  if (sp.bear >= 0 && w.crit[sp.bear].in_use) directorExit(w, sp.bear, 1, kBearRun, CA_RUN);
+  sp.fear = 0.f;
+}
+
+// c) The stick: the fire-poking stick if it is lying out, else a fallen branch
+// (laid by the bag pine at the start of the loop). Carried in the mouth,
+// swung from the paw.
+void doBearToStick(World& w, float) {
+  Critter* c = bearOf(w);
+  if (!c) return;
+  const Item& st = w.items[ITEM_STICK];
+  const int f = st.pos.x < c->feet.x ? -1 : 1;
+  const Vec2 m = critterMouth(*c);
+  const float reach = fabsf(m.x - c->feet.x);
+  // Its mouth over the stick's near half, a few px behind it (by the fire,
+  // that walks it behind the flames, never into them).
+  const float x = st.pos.x - (float)f * (12.f + reach);
+  const float y = st.pos.y < 380.f ? st.pos.y - 1.f : st.pos.y - 5.f;
+  bearWalk(w, Vec2{x, groundAt(w, x, y)}, fabsf(x - c->feet.x) > 200.f ? 30.f : kBearWalk);
+}
+
+void actBearPickStick(World& w, float u) {
+  Critter* c = bearOf(w);
+  if (!c) return;
+  if (u <= 0.f) critterSetAction(*c, CA_SNIFF, 0.4f);
+  Item& st = w.items[ITEM_STICK];
+  if (u >= 0.55f && !st.critter) {
+    st.critter = (uint8_t)(w.spine.bear + 1);
+    st.held = true;
+    st.down = false;
+    st.facing = (int8_t)c->facing;
+    st.angle = -0.2f;   // trailing back along its side
+  }
+  if (u >= 1.f) critterSetAction(*c, CA_IDLE, 0.4f);
+}
+
+void doBearToBag(World& w, float) {
+  Critter* c = bearOf(w);
+  if (!c) return;
+  const float side = c->feet.x < w.bag.tip.x ? -1.f : 1.f;
+  bearWalk(w, Vec2{w.bag.tip.x + 20.f * side, kBearTreeY + 2.f}, fabsf(w.bag.tip.x - c->feet.x) > 150.f ? 30.f : 24.f);
+}
+
+// Up on its hind legs with the stick raised.
+void actBearRaiseStick(World& w, float u) {
+  Critter* c = bearOf(w);
+  if (!c) return;
+  if (u <= 0.f) {
+    critterSetAction(*c, CA_REACH, 1.0f);
+    w.spine.u0 = w.items[ITEM_STICK].angle;
+  }
+  Item& st = w.items[ITEM_STICK];
+  st.facing = (int8_t)c->facing;
+  st.angle = lerp(w.spine.u0, -0.04f, easeInOut(window(u, 0.3f, 1.f)));
+}
+
+// Two swats: a wind-up back, a fast sweep through the bag, back up.
+constexpr float kSwatS = 3.4f;
+void actBearSwat(World& w, float u) {
+  Critter* c = bearOf(w);
+  if (!c) return;
+  Item& st = w.items[ITEM_STICK];
+  const float s = u * kSwatS;
+  const float k = s < 1.7f ? s / 1.7f : (s - 1.7f) / 1.7f;
+  const float back = easeInOut(window(k, 0.f, 0.35f));
+  const float sweep = easeInCubic(window(k, 0.35f, 0.5f));
+  const float up = easeInOut(window(k, 0.6f, 1.f));
+  st.angle = -0.04f - 0.06f * back + 0.26f * sweep * (1.f - up) + 0.06f * back * up;
+  if (u >= 1.f) st.angle = -0.04f;
+  // The stick reaches the bag at about a third of the sweep.
+  const float k0 = k - SS_TICK_DT / 1.7f;
+  if (k0 < 0.42f && k >= 0.42f) bagKick(w, (float)c->facing * 1.1f);
+  c->fore_add = 0.12f * sweep * (1.f - up);
+  if (u >= 1.f) c->fore_add = 0.f;
+}
+
+void doBearDropStick(World& w, float) {
+  Critter* c = bearOf(w);
+  Item& st = w.items[ITEM_STICK];
+  if (!c || !st.critter) return;
+  st.critter = 0;
+  st.held = false;
+  st.down = true;
+  st.pos = Vec2{c->feet.x - (float)c->facing * 8.f, c->feet.y + 3.f};
+  st.facing = 1;
+}
+
+// Stands looking up at the bag a long time, then down on all fours.
+void actBearStandLook(World& w, float u) {
+  Critter* c = bearOf(w);
+  if (!c) return;
+  if (u <= 0.f) critterSetAction(*c, CA_REAR, 0.6f);
+  c->head_add = 0.5f * envelope(u, 0.15f, 0.15f);
+  if (u >= 1.f) {
+    c->head_add = 0.f;
+    critterSetAction(*c, CA_IDLE, 0.9f);
+  }
+}
+
+// Laid at the start of a loop whose bear swats with a stick but whose
+// firewood left none out: a fallen branch right of the bag pine.
+void layFallenBranch(World& w) {
+  Item& st = w.items[ITEM_STICK];
+  if (st.down || st.held) return;
+  st.down = true;
+  st.facing = -1;
+  st.critter = 0;
+  st.pos = Vec2{trunkX(w) + 56.f, groundAt(w, trunkX(w) + 56.f, kBearTreeY + 6.f)};
 }
 
 // ---- the tent at night -------------------------------------------------------------------
@@ -891,7 +1442,7 @@ void actStandLeaf(World& w, float u) {
   if (u <= 0.f) {
     w.spine.v0 = l.pos;
     w.spine.u0 = l.rot;
-    hikerSetPose(h, POSE_STAND, 0.9f);
+    setPose(w, POSE_STAND, 0.9f);
   }
   const float k = easeInCubic(window(u, 0.1f, 0.65f));
   l.pos = Vec2{w.spine.v0.x + 7.f * (float)h.facing * k, lerp(w.spine.v0.y, h.feet.y + 4.f, k)};
@@ -959,7 +1510,7 @@ const Step kArrivalC[] = {
 // the fabric. Shared end of each raise: back pole, front pole.
 #define SETUP_START                                                     \
   pose(POSE_STAND, 0.3f, 0.3f), act(actShrug, 1.1f),                    \
-      pose(POSE_CROUCH, 0.7f, 1.4f), doit(doPackPickUp),                \
+      pose(POSE_CROUCH, 0.7f, 1.4f), act(actPackLift, 0.6f),            \
       pose(POSE_CARRY, 0.6f, 0.2f), walk(AT_PACK, 30.f, 16.f, -3.f),    \
       face(LEFT), pose(POSE_CROUCH, 0.6f, 0.4f), doit(doPackSetDown),   \
       pose(POSE_STAND, 0.6f, 0.2f), walk(AT_TENT_WORK, 30.f), face(LEFT), \
@@ -1135,7 +1686,7 @@ const Step kDinnerA[] = {
     doit(doMugUp),
     pose(POSE_STAND, 0.6f, 0.1f),
     TO_SIT,
-    doit(hookDinnerCritters),   // stage 5: critters edge in; each sip scatters them
+    doit(hookDinnerCritters),   // a deer edges in a step a sip; a chipmunk behind the fire
     act(actMugDinner, kMugDinnerS),
     still(0.8f),
     doit(doMugDown),
@@ -1157,7 +1708,9 @@ const Step kDinnerB[] = {
     go(AT_SIT, 20.f),
     face(TO_FIRE),
     pose(POSE_SIT, 0.9f, 0.5f),
-    still(4.0f),
+    doit(hookDinnerCritters),   // they edge in while the pot heats...
+    still(11.0f),
+    doit(doDinnerScatter),      // ...and bolt when it boils over
     act(actBoilOver, kBoilS),
     still(0.8f),
     pose(POSE_CROUCH, 0.7f, 0.2f),
@@ -1165,7 +1718,6 @@ const Step kDinnerB[] = {
     act(actPotOff, 2.0f),
     carry(CARRY_NONE),
     pose(POSE_SIT, 0.9f, 0.4f),
-    doit(hookDinnerCritters),   // stage 5: critters edge in; each bite scatters them
     act(actEatPot, kEatPotS),
     still(1.0f),
 };
@@ -1182,7 +1734,7 @@ const Step kDinnerC[] = {
     act(actShrugFork, 1.4f),
     still(0.4f),
     TO_SIT,
-    doit(hookDinnerCritters),   // stage 5: critters edge in; each bite scatters them
+    doit(hookDinnerCritters),   // a deer edges in a step a bite; a chipmunk behind the fire
     act(actEatFork, kEatForkS),
     still(0.6f),
     doit(doForkDown),
@@ -1192,9 +1744,9 @@ const Step kDinnerC[] = {
 // Food bag, shared: out of the pack, over to the bag branch. Shared end: to
 // the tent door, in, and the lantern comes on.
 #define BAG_FETCH FROM_REST, PACK_CROUCH, doit(doBagUp), pose(POSE_CARRY, 0.6f, 0.1f)
-#define TO_TENT                                                                                 \
-  go(AT_DOOR, 36.f), face(LEFT), pose(POSE_CROUCH, 0.6f, 0.5f), doit(doEnterTent), still(1.6f), \
-      doit(doLightOn), still(1.0f)
+#define TO_TENT                                                                             \
+  go(AT_DOOR, 36.f), face(LEFT), pose(POSE_CROUCH, 0.6f, 0.5f), doit(doShoeOff), still(0.5f), \
+      doit(doEnterTent), still(1.6f), doit(doLightOn), still(1.0f)
 
 // Food bag a: up on the first pull.
 const Step kFoodbagA[] = {
@@ -1256,15 +1808,71 @@ const Step kFoodbagC[] = {
     TO_TENT,
 };
 
-// Bear: placeholder for stage 5. The lit tent with his shadow inside; the
-// beat burns the fire down (beatUpdate<SB_BEAR>).
-const Step kBearHold[] = {doit(doLightOn), still(1.0f)};
+// Bear, shared start: in from the right at a slow walk, a stop to sniff
+// toward the tent. The fire burns down all the while (bearUpdate).
+#define BEAR_IN doit(doBearEnter), until(bearArrived), still(0.8f), act(actBearSniff, 5.0f), still(0.6f)
+#define BEAR_OUT doit(doBearLeave), until(bearGone)
+
+// Bear a: climbs the trunk, reaches for the bag and can't, slides down with a
+// thump, sits and looks up, leaves.
+const Step kBearA[] = {
+    BEAR_IN,
+    doit(doBearToTrunk),
+    until(bearArrived),
+    act(actBearLookUp, 2.0f),
+    doit(doBearClimb),
+    until(bearArrived),
+    still(0.6f),
+    act(actBearReachTrunk, 4.4f),
+    still(0.5f),
+    act(actBearSlide, 0.55f),
+    still(0.8f),
+    act(actBearSitLook, 5.0f),
+    still(0.6f),
+    BEAR_OUT,
+};
+
+// Bear b: rears and shakes the trunk; the bag swings, cones fall, one on its
+// head; it startles and runs.
+const Step kBearB[] = {
+    BEAR_IN,
+    doit(doBearToTrunk),
+    until(bearArrived),
+    act(actBearLookUp, 2.2f),
+    act(actBearSniffTrunk, 2.6f),
+    still(0.5f),
+    act(actBearRear, 1.3f),
+    act(actBearShake, kShakeS),
+    act(actBearStartle, 0.9f),
+    still(1.2f),
+    doit(doBearRunOff),
+    until(bearGone),
+};
+
+// Bear c: fetches the stick (or a fallen branch), rears, swats the bag twice,
+// drops the stick, a long look up, leaves.
+const Step kBearC[] = {
+    BEAR_IN,
+    doit(doBearToStick),
+    until(bearArrived),
+    act(actBearPickStick, 1.6f),
+    doit(doBearToBag),
+    until(bearArrived),
+    still(0.4f),
+    act(actBearRaiseStick, 1.4f),
+    act(actBearSwat, kSwatS),
+    still(0.3f),
+    doit(doBearDropStick),
+    act(actBearStandLook, 5.5f),
+    still(0.6f),
+    BEAR_OUT,
+};
 
 // Close a: the light goes out, the fire sinks to embers, the smoke stops.
 const Step kCloseA[] = {
-    still(4.0f), doit(doLightOut), still(3.5f), doit(doFireDown), still(4.0f),
-    doit(hookTheft),   // stage 5: the night theft
-    still(0.5f),
+    still(4.0f), doit(doLightOut), still(1.5f),
+    doit(hookTheft),   // the night theft runs beside the rest (spineCritterScenes)
+    still(2.0f), doit(doFireDown), still(4.0f),
 };
 
 // Close b: out once more to check the fire, a long look at the sky, back in.
@@ -1286,19 +1894,20 @@ const Step kCloseB[] = {
     pose(POSE_CROUCH, 0.6f, 0.4f),
     doit(doEnterTent),
     doit(doLightOn),
+    still(1.0f),
+    doit(hookTheft),   // the night theft, once he is back in
     still(3.0f),
     doit(doLightOut),
     still(2.0f),
     doit(doFireDown),
     still(2.5f),
-    doit(hookTheft),   // stage 5: the night theft
 };
 
 // Close c: reading in bed; the light flickers out and back twice first.
 const Step kCloseC[] = {
-    still(4.0f), act(actFlicker, kFlickerS), still(3.0f), doit(doFireDown), still(4.0f),
-    doit(hookTheft),   // stage 5: the night theft
-    still(0.5f),
+    still(4.0f), act(actFlicker, kFlickerS), still(0.5f),
+    doit(hookTheft),   // the night theft runs beside the rest (spineCritterScenes)
+    still(2.5f), doit(doFireDown), still(4.0f),
 };
 
 // ---- fillers ------------------------------------------------------------------------
@@ -1415,6 +2024,8 @@ const Step kFillStreamListen[] = {
 #undef WOOD_DOWN
 #undef FIRE_START
 #undef FIRE_BURN
+#undef BEAR_IN
+#undef BEAR_OUT
 
 struct Script {
   const Step* steps;
@@ -1432,7 +2043,7 @@ const Script kScripts[SB_COUNT][3] = {
     {SCRIPT(kFireA), SCRIPT(kFireB), SCRIPT(kFireC)},
     {SCRIPT(kDinnerA), SCRIPT(kDinnerB), SCRIPT(kDinnerC)},
     {SCRIPT(kFoodbagA), SCRIPT(kFoodbagB), SCRIPT(kFoodbagC)},
-    {SCRIPT(kBearHold), NO_SCRIPT, NO_SCRIPT},
+    {SCRIPT(kBearA), SCRIPT(kBearB), SCRIPT(kBearC)},
     {SCRIPT(kCloseA), SCRIPT(kCloseB), SCRIPT(kCloseC)},
 };
 
@@ -1450,11 +2061,22 @@ const uint8_t kDurations[SB_COUNT][3] = {
     {39, 39, 35},   // setup
     {34, 62, 35},   // firewood (b is two trips)
     {31, 43, 37},   // fire
-    {38, 41, 33},   // dinner
+    {38, 48, 33},   // dinner (b: the visitors come while the pot heats)
     {38, 48, 47},   // foodbag (the walks: pack, bag pine, tent door)
-    {40, 0, 0},     // bear (placeholder for stage 5)
-    {22, 32, 24},   // close (the last 2.5 s fade to black)
+    {58, 42, 59},   // bear (c: with the branch by the pine; see beatSeconds)
+    {34, 50, 37},   // close (the theft; the last 2.5 s fade to black)
 };
+
+// Bear c fetching the firewood stick from beside the fire walks much further.
+constexpr uint8_t kBearStickFarS = 17;
+
+// A beat's seconds in this plan.
+int beatSeconds(const LoopPlan& p, int b) {
+  const uint8_t v = spineVariant(p, b);
+  int s = kDurations[b][v];
+  if (b == SB_BEAR && v == 2 && p.firewood == 2) s += kBearStickFarS;
+  return s;
+}
 
 // The close's fade to black takes its last kFadeS seconds; the script is done by then.
 constexpr float kFadeS = 2.5f;
@@ -1571,7 +2193,7 @@ void enterStep(World& w, const Step& s) {
     case OP_WALK:
     case OP_VIA: startWalk(w, s); break;
     case OP_GO: startGo(w, s); break;
-    case OP_POSE: hikerSetPose(h, (PoseId)s.a, s.x); break;
+    case OP_POSE: setPose(w, (PoseId)s.a, s.x); break;
     case OP_FACE:
       if (s.a == TO_FIRE) h.facing = w.fire.pos.x < h.feet.x ? -1 : 1;
       else if (s.a == 3) h.facing = anchorPos(w, s.at).x < h.feet.x ? -1 : 1;
@@ -1610,6 +2232,7 @@ bool stepDone(World& w, const Step& s, uint16_t ticks) {
       s.fn(w, u);
       return u >= 1.f;
     }
+    case OP_UNTIL: return !s.pred || s.pred(w);
     default: return true;   // instant
   }
 }
@@ -1656,6 +2279,9 @@ void startScript(World& w, const Script& sc) {
 template <int B>
 void beatBegin(SceneCtx& ctx) {
   World& w = *ctx.w;
+  // Right after the build-up: a bear that will want a stick and a firewood
+  // trip that brings none back get a fallen branch by the bag pine.
+  if (B == SB_ARRIVAL && w.plan.bear == 2 && w.plan.firewood != 2) layFallenBranch(w);
   startScript(w, kScripts[B][spineVariant(w.plan, B)]);
 }
 
@@ -1666,24 +2292,46 @@ void fillerBegin(SceneCtx& ctx) {
 
 void beatUpdate(SceneCtx& ctx, float, float) { runScript(*ctx.w); }
 
-// Bear (placeholder): the fire burns down over the beat while he is in the tent.
+// Bear: the script, the fire burning down over the beat while he is in the
+// tent, and his shadow in the tent following the bear's x with a lag,
+// trembling as `fear` says; calm again once the bear has gone.
 void bearUpdate(SceneCtx& ctx, float t, float) {
   World& w = *ctx.w;
   runScript(w);
   if (w.fire.state == FIRE_LIT) w.fire.fuel = lerp(1.f, 0.45f, easeInOut(t));
+  SpineState& sp = w.spine;
+  Tent& tent = w.tent;
+  const bool here = sp.bear >= 0 && w.crit[sp.bear].in_use && w.critters[sp.bear].visible;
+  float to = -4.f;   // where the shadow sits at rest (doLightOn)
+  if (here) {
+    const float bx = w.critters[sp.bear].feet.x;
+    to = minf(9.f, maxf(-14.f, -14.f + (bx - 470.f) * 0.065f));
+  } else {
+    sp.fear = 0.f;
+  }
+  sp.shadow_v += (to - sp.shadow_v) * (SS_TICK_DT / 0.9f);
+  tent.shadow_x = floorf(sp.shadow_v + 0.5f);
+  // Fear: frozen at once, trembling builds in about half a second, calms in two.
+  if (sp.fear > 0.f && tent.shadow_jitter < 0.05f) tent.shadow_jitter = minf(sp.fear, 0.05f);   // freezes at once
+  const float rate = sp.fear > tent.shadow_jitter ? SS_TICK_DT / 0.5f : SS_TICK_DT / 2.f;
+  tent.shadow_jitter += (sp.fear - tent.shadow_jitter) * minf(1.f, rate);
+  if (sp.fear == 0.f && tent.shadow_jitter < 0.03f) tent.shadow_jitter = 0.f;
 }
 
 // Close: the script, and the frame fading to black over the last kFadeS
 // seconds, reaching 1 exactly on the beat's last tick (t = 1).
 void closeUpdate(SceneCtx& ctx, float t, float) {
   World& w = *ctx.w;
+  w.tent.shadow_jitter = 0.f;   // the bear has long gone
   runScript(w);
-  const float d = (float)kDurations[SB_CLOSE][spineVariant(w.plan, SB_CLOSE)];
+  const float d = (float)beatSeconds(w.plan, SB_CLOSE);
   const float fade = easeInOut(window(t, 1.f - kFadeS / d, 1.f));
-  // The script must be done before the fade starts; the beat's end comes
-  // after the rollover has reset the count, so it is counted here.
+  // The script (and the theft: every critter out of the frame) must be done
+  // before the fade starts; the beat's end comes after the rollover has reset
+  // the count, so it is counted here.
   const ScriptRun& r = w.spine.run;
-  if (w.fade == 0.f && fade > 0.f && r.steps && r.i < r.n && w.spine.overruns < 255) ++w.spine.overruns;
+  const bool busy = (r.steps && r.i < r.n) || directorCount(w) > 0;
+  if (w.fade == 0.f && fade > 0.f && busy && w.spine.overruns < 255) ++w.spine.overruns;
   w.fade = fade;
 }
 
@@ -1767,7 +2415,7 @@ namespace {
 // Whole seconds of everything but the pauses.
 int busySeconds(const LoopPlan& p) {
   int s = (int)(SS_BUILD_SECONDS + 0.5f);
-  for (int b = 0; b < SB_COUNT; ++b) s += kDurations[b][spineVariant(p, b)];
+  for (int b = 0; b < SB_COUNT; ++b) s += beatSeconds(p, b);
   for (int i = 0; i < p.n_fillers; ++i) s += spineFillerSeconds(p, p.filler[i]);
   return s;
 }
@@ -1848,6 +2496,15 @@ void spinePlan(LoopPlan& p, Rng& rng, const Inputs& in) {
     if (*slot[k] < kPauseMax) ++*slot[k];
   for (int guard = 0, k = 0; guard < 400 && busy + pauseSeconds(p) > kAimMax; ++guard, k = (k + 1) % ns)
     if (*slot[k] > kPauseMin) --*slot[k];
+  // Still too long with every pause at its least (long bear and close
+  // variants with four fillers): drop fillers from the end, down to two.
+  while (busySeconds(p) + pauseSeconds(p) > kAimMax && p.n_fillers > 2) {
+    --p.n_fillers;
+    p.filler[p.n_fillers] = 0;
+    p.filler_after[p.n_fillers] = 0;
+    p.filler_pause_s[p.n_fillers] = 0;
+    for (int i = 0; i < p.n_fillers; ++i) p.filler_after[i] = kSlots[p.n_fillers - 2][i];
+  }
 }
 
 void spineLayout(World& w) {
@@ -1882,7 +2539,7 @@ void spineLayout(World& w) {
 
   // The evening places (see CampLayout).
   c.pack_work = Vec2{c.pack.x + 16.f, c.pack.y - 3.f};
-  c.bag_work = Vec2{(float)(w.land.camp_x - 82) - 20.f, 356.f};   // left of the tip, facing the tree
+  c.bag_work = Vec2{(float)(w.land.camp_x - LS_BRANCH_LEN) - 20.f, 356.f};   // left of the tip, facing the tree
   c.door = Vec2{c.tent.x + 20.f, c.tent.y + 4.f};
   c.pot_down = Vec2{F.x + 20.f, F.y + 11.f};
   c.view = Vec2{F.x + 92.f, F.y - 34.f};
@@ -1917,13 +2574,43 @@ void spineLayout(World& w) {
   w.spine.u0 = 0.f;
   w.spine.v0 = Vec2{0.f, 0.f};
   w.spine.target = 0;
+  SpineState& sp = w.spine;
+  sp.bear = sp.deer = sp.chip = sp.thief = -1;
+  sp.bites = sp.deer_steps = sp.chip_stage = sp.thief_stage = 0;
+  sp.bite_up = false;
+  sp.deer_t = sp.chip_t = sp.thief_t = 0.f;
+  sp.shadow_v = 0.f;
+  sp.fear = 0.f;
+  sp.bag_v = 0.f;
+  sp.bag_osc = false;
+}
+
+void spineCritterScenes(World& w) {
+  deerTick(w);
+  chipTick(w);
+  thiefTick(w);
+  // The bag's damped swing once something hit it (about 1 swing a second,
+  // settling over a few seconds, like the foodbag beat's settle).
+  SpineState& sp = w.spine;
+  FoodBag& b = w.bag;
+  if (sp.bag_osc && b.state == BAG_HUNG) {
+    const float om = 6.2831853f * 0.95f, zeta = 0.14f;
+    const float acc = -om * om * b.swing - 2.f * zeta * om * sp.bag_v;
+    sp.bag_v += acc * SS_TICK_DT;
+    b.swing += sp.bag_v * SS_TICK_DT;
+    b.swing = minf(0.7f, maxf(-0.7f, b.swing));
+    if (fabsf(b.swing) < 0.004f && fabsf(sp.bag_v) < 0.03f) {
+      b.swing = 0.f;
+      sp.bag_v = 0.f;
+      sp.bag_osc = false;
+    }
+  }
 }
 
 void spineBuildTimeline(Timeline& tl, const LoopPlan& p) {
   tl.add(kBuildBeat);
   for (int b = 0; b < SB_COUNT; ++b) {
-    const uint8_t v = spineVariant(p, b);
-    tl.add(Beat{kBeatNames[b], (float)kDurations[b][v], kBegin[b], kUpdate[b], beatEnd});
+    tl.add(Beat{kBeatNames[b], (float)beatSeconds(p, b), kBegin[b], kUpdate[b], beatEnd});
     if (b == SB_CLOSE) break;   // the loop ends here
     tl.add(Beat{"pause", (float)p.pause_s[b], nullptr, nullptr, nullptr});
     for (int i = 0; i < p.n_fillers; ++i) {

@@ -67,6 +67,19 @@ int appLoopPlan(const App* app, char* buf, size_t n);
 // The frame area the hiker covers this tick (empty when out of frame);
 // returns whether he is visible.
 bool appHikerRect(const App* app, Rect* out);
+// The same, unclipped: the whole of him and what he holds, even past the
+// frame's edge (for checks that he stays in frame).
+bool appHikerBounds(const App* app, Rect* out);
+// He is walking this tick.
+bool appHikerWalking(const App* app);
+// Critters in the scene now (slots in use; 0 between visits).
+int appCritterCount(const App* app);
+// Slot `slot` (0..7): false when free or out of the frame; otherwise its
+// unclipped bounds and its kind (CritterKind, scene/critters.h).
+bool appCritterRect(const App* app, int slot, Rect* out, int* kind);
+// Loop memory (stage 6 adds the rest): the raccoon has the shoe; loops started.
+bool appMemoryShoeTaken(const App* app);
+uint32_t appMemoryLoopCount(const App* app);
 // Spine beats this loop that ended before their script did (0 when the
 // timing is right).
 int appSpineOverruns(const App* app);

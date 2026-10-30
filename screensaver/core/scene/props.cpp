@@ -94,7 +94,7 @@ void tentGeom(const Tent& t, TentGeom& g) {
 
   g.has_shadow = t.lit && t.shadow && hb > 30.f && hf > 30.f;
   for (int i = 0; i < 12; ++i)
-    g.shadow[i] = Vec2{x + t.shadow_x + kShadow[i][0], y - 3.f + t.shadow_y + kShadow[i][1]};
+    g.shadow[i] = Vec2{x + t.shadow_x + t.shadow_shake + kShadow[i][0], y - 3.f + t.shadow_y + kShadow[i][1]};
 }
 
 // ---- pack --------------------------------------------------------------------
@@ -152,6 +152,12 @@ void cairnStone(const Cairn& c, int k, Vec2& ctr, float& rx, float& ry) {
 
 constexpr float kStickLen = 62.f;
 
+// A stick a critter holds up: from its paw at `angle` turns from straight up.
+Vec2 stickEnd(const Item& it) {
+  const float sx = it.facing < 0 ? -1.f : 1.f;
+  return Vec2{it.pos.x + sx * kStickLen * sinT(it.angle), it.pos.y - kStickLen * cosT(it.angle)};
+}
+
 // Item outline points in local px (x mirrored by facing, scaled by size), so
 // draw and bounds share one table. Up to 6 points per shape.
 struct Shape { int n; float p[6][2]; };
@@ -199,6 +205,8 @@ void tentInit(Tent& t, Vec2 pos) {
   t.shadow = false;
   t.shadow_x = 0.f;
   t.shadow_y = 0.f;
+  t.shadow_jitter = 0.f;
+  t.shadow_shake = 0.f;
 }
 
 Rect tentBounds(const Tent& t) {
@@ -227,7 +235,7 @@ void tentDraw(const Tent& t, Surface& s, const Rect& clip, const Palette& pal) {
 bool tentSame(const Tent& a, const Tent& b) {
   return sameV(a.pos, b.pos) && a.state == b.state && a.progress == b.progress && a.sag == b.sag &&
          a.bump == b.bump && a.wobble == b.wobble && a.lit == b.lit && a.shadow == b.shadow &&
-         a.shadow_x == b.shadow_x && a.shadow_y == b.shadow_y;
+         a.shadow_x == b.shadow_x && a.shadow_y == b.shadow_y && a.shadow_shake == b.shadow_shake;
 }
 
 // ---- pack ------------------------------------------------------------------------
@@ -353,7 +361,10 @@ Rect itemBounds(ItemId id, const Item& it) {
       e.pt(itemPt(it, 12.8f, 0.f));
       break;
     case ITEM_STICK:
-      if (it.held) {
+      if (it.held && it.critter) {
+        e.pt(it.pos, 2.f);
+        e.pt(stickEnd(it), 2.f);
+      } else if (it.held) {
         const float sx = it.facing < 0 ? -1.f : 1.f;
         e.pt(it.pos, 2.f);
         e.pt(Vec2{it.pos.x - sx * kStickLen * it.size, it.ground_y - 1.f}, 2.f);
@@ -401,7 +412,9 @@ void itemDraw(ItemId id, const Item& it, Surface& s, const Rect& clip, const Pal
       capL(it, 7.5f, -7.f, 12.f, -8.f, 1.6f, s, pal[ACTOR], clip);
       break;
     case ITEM_STICK:
-      if (it.held) {   // dragged: hands to the ground behind
+      if (it.held && it.critter) {   // held up by a critter
+        strokeCapsule(s, it.pos, stickEnd(it), 2.6f, pal[TRUNK], clip);
+      } else if (it.held) {   // dragged: hands to the ground behind
         const float sx = it.facing < 0 ? -1.f : 1.f;
         strokeCapsule(s, it.pos, Vec2{it.pos.x - sx * kStickLen * it.size, it.ground_y - 1.f}, 2.6f, pal[TRUNK],
                       clip);
@@ -425,7 +438,7 @@ void itemDraw(ItemId id, const Item& it, Surface& s, const Rect& clip, const Pal
 
 bool itemSame(const Item& a, const Item& b) {
   return sameV(a.pos, b.pos) && a.down == b.down && a.held == b.held && a.facing == b.facing && a.size == b.size &&
-         a.ground_y == b.ground_y && a.on_fire == b.on_fire;
+         a.ground_y == b.ground_y && a.on_fire == b.on_fire && a.critter == b.critter && a.angle == b.angle;
 }
 
 const char* itemName(ItemId id) {
@@ -570,6 +583,83 @@ void leafDraw(const Leaf& l, Surface& dst, const Rect& clip, const Palette& pal)
 
 bool leafSame(const Leaf& a, const Leaf& b) {
   return a.on == b.on && sameV(a.pos, b.pos) && a.rot == b.rot && a.base_y == b.base_y;
+}
+
+// ---- falling and puffing bits ---------------------------------------------------------
+
+namespace {
+constexpr float kConeG = 900.f;   // px/s^2: quick, cartoon gravity
+constexpr float kConeRx = 3.2f, kConeRy = 4.4f;
+
+float dustRadius(const Bit& b) {
+  const float u = b.t / BIT_DUST_S;
+  return u >= 1.f ? 0.f : 7.f * sinT(0.5f * u) * (0.6f + 0.6f * u);
+}
+}  // namespace
+
+void bitStep(Bit& b, float dt) {
+  if (b.kind == BIT_NONE) return;
+  b.t += dt;
+  if (b.kind == BIT_DUST) {
+    b.pos.x += b.vel.x * dt;
+    b.pos.y += b.vel.y * dt;
+    if (b.t >= BIT_DUST_S) b.kind = BIT_NONE;
+    return;
+  }
+  if (b.resting) return;
+  b.vel.y += kConeG * dt;
+  b.pos.x += b.vel.x * dt;
+  b.pos.y += b.vel.y * dt;
+  b.spin += dt * (b.vel.x >= 0.f ? 1.6f : -1.6f);
+  if (b.pos.y < b.ground_y) return;
+  b.pos.y = b.ground_y;
+  if (b.ground_y < b.land_y) {   // off a head: away to one side and down to the ground
+    b.vel.y = -0.4f * b.vel.y;
+    if (b.vel.x == 0.f) b.vel.x = 45.f;
+    b.ground_y = b.land_y;
+    ++b.bounces;
+    return;
+  }
+  if (b.bounces >= 2 || b.vel.y < 140.f) {   // comes to rest on its side
+    b.resting = true;
+    b.vel = Vec2{0.f, 0.f};
+    b.spin = 0.25f;
+    return;
+  }
+  ++b.bounces;
+  b.vel.y = -0.3f * b.vel.y;
+  b.vel.x *= 0.5f;
+}
+
+Rect bitBounds(const Bit& b) {
+  Ext e;
+  if (b.kind == BIT_CONE) {
+    e.pt(Vec2{b.pos.x, b.pos.y - kConeRy}, kConeRy + 0.5f);
+  } else if (b.kind == BIT_DUST) {
+    const float r = dustRadius(b);
+    if (r > 0.3f) e.pt(b.pos, 1.3f * r + 0.5f);
+  }
+  return e.rect();
+}
+
+void bitDraw(const Bit& b, Surface& dst, const Rect& clip, const Palette& pal) {
+  if (!overlaps(bitBounds(b), clip)) return;
+  if (b.kind == BIT_CONE) {   // an upright or tumbling oval resting on pos
+    const float a = b.spin - floorf(b.spin);
+    const float k = fabsf(cosT(a));
+    const float rx = kConeRx + (kConeRy - kConeRx) * (1.f - k), ry = kConeRy - (kConeRy - kConeRx) * (1.f - k);
+    fillEllipse(dst, Vec2{b.pos.x, b.pos.y - ry}, rx, ry, pal[TRUNK], clip);
+  } else if (b.kind == BIT_DUST) {
+    const float r = dustRadius(b);
+    if (r > 0.3f) fillEllipse(dst, b.pos, r * 1.3f, r * 0.8f, pal[SMOKE], clip);
+  }
+}
+
+bool bitSame(const Bit& a, const Bit& b) {
+  if (a.kind != b.kind) return false;
+  if (a.kind == BIT_NONE) return true;
+  if (a.kind == BIT_DUST) return a.t == b.t && sameV(a.pos, b.pos);
+  return sameV(a.pos, b.pos) && a.spin == b.spin && a.resting == b.resting;
 }
 
 Vec2 hikerHandsMid(const Hiker& h) {

@@ -2,7 +2,9 @@
 // the ambient layer, the ambient strip budget, palette rebuild, the reserved
 // corner, App size, the story spine (determinism, quiet corner over two loops,
 // every variant and filler in frame and on time, loop length, the loop fade,
-// strips and time per frame over a whole loop), props, and
+// strips and time per frame over a whole loop and the bear beat), critters in
+// the scene (in frame, out of the corner, clear of the walking hiker, the
+// dinner and theft hooks, none left at a loop's end), loop memory, props, and
 // inspection images. Plain executable; returns non-zero on failure. Writes
 // landscape_*.ppm and props_sheet.ppm in the current directory (run from build/).
 #include "ss_app.h"
@@ -358,7 +360,7 @@ static void testSpineDeterminism() {
   Rig a, b;
   const Inputs in = makeInputs(3.f);
   CHECK(a.start(42, in) && b.start(42, in), "start");
-  static const int kAt[7] = {500, 1500, 2500, 3500, 6000, 9000, 12000};
+  static const int kAt[9] = {500, 1500, 2500, 3500, 6000, 7000, 9000, 12000, 13000};
   int t = 0;
   for (int at : kAt) {
     for (; t < at; ++t) {
@@ -428,8 +430,42 @@ static int beatIndex(const char* name, const char* const* names, int n) {
 // the reserved corner) for the whole loop; arrival to dinner and every filler
 // end with him in frame; the food bag and the close end with him in the tent;
 // no script runs past its beat.
+// Critters, every tick: in frame vertically and out of the reserved corner
+// while visible; never over the hiker's rect while he walks.
+struct CritterWatch {
+  int bad = 0, overlap = 0, walk_samples = 0;
+  bool kind_seen[9] = {};
+  void tick(const App* a, int seed, int t) {
+    Rect hr;
+    const bool hv = appHikerBounds(a, &hr);
+    const bool walking = appHikerWalking(a);
+    for (int i = 0; i < 8; ++i) {
+      Rect r;
+      int k = -1;
+      if (!appCritterRect(a, i, &r, &k)) continue;
+      if (k >= 0 && k < 9) kind_seen[k] = true;
+      const bool in_frame = r.x1 > 0 && r.x0 < SS_WIDTH && r.y0 >= 0 && r.y1 <= SS_HEIGHT;
+      const bool corner = r.x1 > LS_QUIET_X0_T && r.y1 > LS_QUIET_Y0_T;
+      if ((!in_frame || corner) && bad < 3)
+        printf("seed %d tick %d (%s): critter %d kind %d rect %d,%d,%d,%d\n", seed, t, appBeatName(a), i, k, r.x0, r.y0,
+               r.x1, r.y1);
+      if (!in_frame || corner) ++bad;
+      if (hv && walking) {
+        ++walk_samples;
+        const bool over = r.x0 < hr.x1 && hr.x0 < r.x1 && r.y0 < hr.y1 && hr.y0 < r.y1;
+        if (over && overlap < 3)
+          printf("seed %d tick %d (%s): critter %d kind %d overlaps the walking hiker\n", seed, t, appBeatName(a), i, k);
+        if (over) ++overlap;
+      }
+    }
+  }
+};
+
 static void testSpineVariants() {
-  static const int kVariants[8] = {3, 3, 3, 3, 3, 3, 1, 3};
+  static const int kVariants[8] = {3, 3, 3, 3, 3, 3, 3, 3};
+  CritterWatch cw;
+  bool bear_far = false;       // bear c fetching the firewood stick from the fire
+  int dinner_runs = 0, dinner_with = 0, thefts = 0, closes = 0;
   bool seen[8][3] = {};
   bool fseen[6] = {};
   int seeds_run = 0;
@@ -442,6 +478,7 @@ static void testSpineVariants() {
     appLoopPlan(a.app, plan, sizeof plan);
     bool fresh = false;
     for (int b = 0; b < 8; ++b) fresh = fresh || !seen[b][v[b]];
+    fresh = fresh || (v[6] == 2 && v[2] == 2 && !bear_far);   // also run the far-stick bear
     for (int f = 0; f < 6; ++f) fresh = fresh || (!fseen[f] && strstr(plan, kFillers[f]));
     if (!fresh) {
       a.stop();
@@ -451,10 +488,20 @@ static void testSpineVariants() {
     char prev[32] = "build";
     int t = 0, bad = 0;
     bool rolled = false;
+    bool dinner_critters = false, raccoon = false;
     for (; !rolled; ++t) {
       rolled = appTick(a.app);
       Rect r;
-      const bool vis = appHikerRect(a.app, &r);
+      const bool vis = appHikerBounds(a.app, &r);   // unclipped: the in-frame checks must be able to fail
+      if (!rolled) cw.tick(a.app, (int)seed, t);
+      if (beatIs(a.app, "dinner") && appCritterCount(a.app) > 0) dinner_critters = true;
+      if (beatIs(a.app, "close")) {
+        for (int i = 0; i < 8; ++i) {
+          int k = -1;
+          Rect cr;
+          if (appCritterRect(a.app, i, &cr, &k) && k == 4) raccoon = true;
+        }
+      }
       if (vis && bad < 3) {
         const bool in_frame = r.x1 > 0 && r.x0 < SS_WIDTH && r.y0 >= 0 && r.y1 <= SS_HEIGHT;
         const bool corner = r.x1 > LS_QUIET_X0_T && r.y1 > LS_QUIET_Y0_T;
@@ -485,8 +532,23 @@ static void testSpineVariants() {
         seen[7][v[7]] = true;
       }
     }
+    ++dinner_runs;
+    if (dinner_critters) ++dinner_with;
+    ++closes;
+    if (raccoon) ++thefts;
+    CHECK(dinner_critters, "seed %d: dinner variant %d brought no critters", (int)seed, v[4]);
+    CHECK(raccoon, "seed %d: close variant %d had no raccoon", (int)seed, v[7]);
+    if (v[6] == 2 && v[2] == 2) bear_far = true;
     a.stop();
   }
+  printf("critters: %d dinners with visitors of %d, %d thefts of %d closes; %d critter samples while he walked\n",
+         dinner_with, dinner_runs, thefts, closes, cw.walk_samples);
+  CHECK(cw.bad == 0, "%d critter samples out of frame or in the reserved corner", cw.bad);
+  CHECK(cw.overlap == 0, "%d critter samples over the walking hiker", cw.overlap);
+  CHECK(cw.kind_seen[3] && cw.kind_seen[0] && cw.kind_seen[4] && cw.kind_seen[7],
+        "deer %d chipmunk %d raccoon %d bear %d never appeared", cw.kind_seen[3], cw.kind_seen[0], cw.kind_seen[4],
+        cw.kind_seen[7]);
+  CHECK(bear_far, "bear c never fetched the firewood stick in the seeds run");
   int missing = 0;
   for (int b = 0; b < 8; ++b)
     for (int k = 0; k < kVariants[b]; ++k)
@@ -499,12 +561,32 @@ static void testSpineVariants() {
       ++missing;
       printf("filler %s never ran in 60 seeds\n", kFillers[f]);
     }
-  printf("spine variants: all 22 variants and 6 fillers run in %d seeds\n", seeds_run);
+  printf("spine variants: all 24 variants and 6 fillers run in %d seeds\n", seeds_run);
   CHECK(missing == 0, "%d variants or fillers unseen", missing);
 }
 
 // No script overruns its beat, for 60 seeds (checked on the close's last
 // tick, before the rollover resets the count).
+// Memory survives the loop rollover: the shoe the raccoon took stays taken,
+// and the loop count goes up.
+static void testMemory() {
+  Rig a;
+  CHECK(a.start(1, makeInputs(3.f)), "start");
+  CHECK(appMemoryLoopCount(a.app) == 1, "first loop counts %u", (unsigned)appMemoryLoopCount(a.app));
+  CHECK(!appMemoryShoeTaken(a.app), "the shoe is taken before anything happened");
+  const uint32_t len = appLoopTicks(a.app);
+  for (uint32_t t = 0; t + 1 < len; ++t) appTick(a.app);
+  const bool taken = appMemoryShoeTaken(a.app);
+  CHECK(taken, "the raccoon did not take the shoe in loop 1");
+  CHECK(appCritterCount(a.app) == 0, "critters left at the end of the loop");
+  CHECK(appTick(a.app), "no rollover");
+  CHECK(appMemoryShoeTaken(a.app) == taken, "the shoe came back with the new loop");
+  CHECK(appMemoryLoopCount(a.app) == 2, "second loop counts %u", (unsigned)appMemoryLoopCount(a.app));
+  printf("memory: shoe_taken %d after loop 1, loop_count %u in loop 2\n", (int)appMemoryShoeTaken(a.app),
+         (unsigned)appMemoryLoopCount(a.app));
+  a.stop();
+}
+
 static void testSpineOverruns() {
   int bad = 0;
   for (uint64_t seed = 1; seed <= 60; ++seed) {
@@ -515,6 +597,8 @@ static void testSpineOverruns() {
     // One tick left: every beat but the close has ended, and the close counts
     // an unfinished script when its fade starts.
     const int n = appSpineOverruns(a.app);
+    const int left = appCritterCount(a.app);
+    CHECK(left == 0, "seed %d: %d critters still in the scene at the end of the loop", (int)seed, left);
     if (n) {
       char plan[200];
       appLoopPlan(a.app, plan, sizeof plan);
@@ -582,12 +666,15 @@ static void testLoopFade() {
 // excluded: it rebuilds the cache and has its own numbers), and in the pauses,
 // where only the ambient layer and a breathing hiker move.
 static void testSpineBudget() {
-  static const uint64_t kSeeds[3] = {11, 7, 42};
+  static const uint64_t kSeeds[4] = {11, 7, 42, 1};   // seed 1: bear b
   for (uint64_t seed : kSeeds) {
     Rig a;
     CHECK(a.start(seed, makeInputs(3.f)), "start");
-    long sum = 0, psum = 0;
-    int frames = 0, pframes = 0, worst = 0;
+    int pv[8];
+    CHECK(parsePlan(a.app, pv), "plan");
+    const int bear_v = pv[6];
+    long sum = 0, psum = 0, bsum = 0;
+    int frames = 0, pframes = 0, worst = 0, bframes = 0, bworst = 0;
     double us = 0.0;
     for (int t = 0;; ++t) {
       const auto t0 = std::chrono::steady_clock::now();
@@ -604,7 +691,16 @@ static void testSpineBudget() {
         psum += n;
         ++pframes;
       }
+      if (beatIs(a.app, "bear")) {
+        bsum += n;
+        ++bframes;
+        if (n > bworst) bworst = n;
+      }
     }
+    const float bavg = bframes ? (float)bsum / (float)bframes : 0.f;
+    printf("seed %d: bear beat (variant %d) %d frames: avg %.2f strips, max %d\n", (int)seed, bear_v, bframes,
+           (double)bavg, bworst);
+    CHECK(bavg <= 10.f, "seed %d: bear beat averages %.2f strips per frame (budget 10)", (int)seed, (double)bavg);
     const float avg = frames ? (float)sum / (float)frames : 0.f;
     const float pavg = pframes ? (float)psum / (float)pframes : 0.f;
     printf("seed %d: whole loop %d frames: avg %.2f strips, max %d, %.3f ms/frame; pauses avg %.2f strips\n",
@@ -707,7 +803,7 @@ static void testProps() {
   for (int id = 0; id < ITEM_COUNT; ++id) {
     for (int f = 0; f < 2; ++f) {
       Item it{Vec2{40.f + 105.f * (float)id + 45.f * (float)f, 300.f}, true, false, (int8_t)(f ? -1 : 1),
-              id == ITEM_WOOD && f ? 1.65f : 1.f, 300.f, false};
+              id == ITEM_WOOD && f ? 1.65f : 1.f, 300.f, false, 0, 0.f};
       if ((id == ITEM_STICK || id == ITEM_FORK) && f) {   // dragged stick; fork standing in a hand
         it.down = false;
         it.held = true;
@@ -741,6 +837,23 @@ static void testProps() {
       check("leaf", leafBounds(l), [&](Surface& d) { leafDraw(l, d, all, pal); });
     }
   }
+  // Row 3c: a stick held up by a critter at three angles, a falling and a
+  // resting pine cone, a dust puff.
+  for (int k = 0; k < 3; ++k) {
+    Item it{Vec2{560.f + 40.f * (float)k, 470.f}, false, true, (int8_t)(k == 1 ? -1 : 1), 1.f, 470.f, false, 1,
+            -0.2f + 0.15f * (float)k};
+    check("stick held by a critter", itemBounds(ITEM_STICK, it), [&](Surface& d) { itemDraw(ITEM_STICK, it, d, all, pal); });
+  }
+  for (int k = 0; k < 3; ++k) {
+    Bit b{};
+    b.kind = k < 2 ? BIT_CONE : BIT_DUST;
+    b.pos = Vec2{720.f + 25.f * (float)k, 460.f};
+    b.resting = k == 1;
+    b.spin = 0.1f;
+    b.t = 0.4f;
+    b.land_y = 460.f;
+    check("bit", bitBounds(b), [&](Surface& d) { bitDraw(b, d, all, pal); });
+  }
   // Row 4: the armload over a walking hiker with wood.
   Hiker h;
   hikerInit(h, Vec2{100.f, 440.f}, 1);
@@ -769,6 +882,7 @@ int main() {
   testSpineQuietCorner();
   testSpineVariants();
   testSpineOverruns();
+  testMemory();
   testLoopLength();
   testLoopFade();
   testSpineBudget();

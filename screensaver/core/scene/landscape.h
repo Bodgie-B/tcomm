@@ -38,6 +38,14 @@ namespace ss {
 #define LS_QUIET_Y0     420
 #define LS_GROUND_Y     318   // flat ground starts here; layers behind it rise from below it
 
+// The camp pine's bag branch: leaves the trunk at LS_BRANCH_ROOT_Y (inside the
+// foliage) and reaches LS_BRANCH_LEN px to the left, its tip at
+// LS_BRANCH_TIP_Y. High enough that the hung bag clears a standing hiker's
+// hat and, by about 10 px, a reared bear's raised paw (stage 5).
+#define LS_BRANCH_ROOT_Y 212
+#define LS_BRANCH_TIP_Y  202
+#define LS_BRANCH_LEN    82
+
 // The stream's leading edge during the roll-in tapers to a point over this
 // many point-index units (about 40 px).
 #define LS_STREAM_TAPER 0.6f

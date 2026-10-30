@@ -10,6 +10,7 @@
 
 #include "../render/renderer.h"
 #include "../ss_app.h"
+#include "director.h"
 #include "world.h"
 
 namespace ss {
@@ -154,6 +155,28 @@ bool appHikerRect(const App* app, Rect* out) {
   if (out) *out = w.hiker_rect;
   return w.hiker.visible;
 }
+
+bool appHikerBounds(const App* app, Rect* out) {
+  const World& w = app->world;
+  if (out) *out = w.hiker_full;
+  return w.hiker.visible;
+}
+
+bool appHikerWalking(const App* app) { return app->world.hiker.visible && app->world.hiker.walking; }
+
+int appCritterCount(const App* app) { return directorCount(app->world); }
+
+bool appCritterRect(const App* app, int slot, Rect* out, int* kind) {
+  if (slot < 0 || slot >= CRITTER_MAX) return false;
+  const World& w = app->world;
+  if (!w.crit[slot].in_use) return false;
+  if (out) *out = critterBounds(w.critters[slot]);
+  if (kind) *kind = w.critters[slot].kind;
+  return w.critters[slot].visible;
+}
+
+bool appMemoryShoeTaken(const App* app) { return app->world.memory.shoe_taken; }
+uint32_t appMemoryLoopCount(const App* app) { return app->world.memory.loop_count; }
 
 int appSpineOverruns(const App* app) { return app->world.spine.overruns; }
 uint32_t appLoopTicks(const App* app) { return spineLoopTicks(app->world.plan); }

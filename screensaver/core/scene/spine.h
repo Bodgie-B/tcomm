@@ -111,6 +111,18 @@ struct SpineState {
   float u0;            // scratch value an action keeps across its ticks (start of a tween)
   Vec2 v0;             // scratch point (where a tween started)
   uint8_t target;      // scratch count (the cairn's stone count to reach)
+
+  // Critter scenes (stage 5). Slots in World::critters, -1 when none.
+  int8_t bear, deer, chip, thief;
+  uint8_t bites;       // bites and sips so far (the dinner actions count them)
+  bool bite_up;        // the current bite's hand is up (edge detector)
+  uint8_t deer_steps;  // bites the deer has answered with a step
+  uint8_t chip_stage, thief_stage;
+  float deer_t, chip_t, thief_t;   // seconds in the current stage
+  float shadow_v;      // the tent shadow's lagged x offset (the bear beat)
+  float fear;          // what the shadow's jitter eases toward: 0 calm, ~0.05 frozen, 1 trembling
+  float bag_v;         // the hung bag's swing speed, rad/s (a damped swing the bear sets off)
+  bool bag_osc;        // the damped swing is running
 };
 
 // Loop start: pick every variant, pause and filler from the loop RNG.
@@ -120,6 +132,10 @@ void spineLayout(World& w);
 // Add the build beat, then the spine beats, pauses and fillers in order. The
 // loop ends with the close.
 void spineBuildTimeline(Timeline& tl, const LoopPlan& p);
+// Every tick from worldTick, before the director: the dinner critters (a deer
+// edging in a step per bite, a chipmunk behind the fire), the night thief,
+// and the bag's damped swing after the bear.
+void spineCritterScenes(World& w);
 // Ticks the timeline for `p` lasts (the loop's length).
 uint32_t spineLoopTicks(const LoopPlan& p);
 // "arrival=1 setup=0 ... fillers=cairn,read" (fillers=none when empty).

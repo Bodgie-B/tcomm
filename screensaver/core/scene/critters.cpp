@@ -570,6 +570,8 @@ struct Prims {
   Prim v[kMaxPrims];
   float low;      // lowest ground contact, local y
   float belly;    // climbing: x of the belly line, local
+  bool has_paw, has_head, has_mouth;
+  Vec2 paw, head, mouth; // anchors (critterPaw, critterHead, critterMouth), local, then frame space
 };
 
 inline Vec2 add(Vec2 a, Vec2 b) { return Vec2{a.x + b.x, a.y + b.y}; }
@@ -706,6 +708,8 @@ void buildQuad(const Critter& c, const Look& L, Prims& ps) {
   const Vec2 hip = at(B, 0.3f, -0.4f);
   const Xf H = xf(at(B, d.nx + P.look, d.ny), th + P.head);
   const Vec2 mouth = at(H, d.mx, d.my);
+  ps.mouth = mouth;
+  ps.has_mouth = true;
 
   // Tail first (behind the body).
   const Vec2 root = at(B, d.tx, d.ty);
@@ -790,6 +794,8 @@ void buildQuad(const Critter& c, const Look& L, Prims& ps) {
   const float hl = d.Lh * fold, fl = d.Lf * fold;
   leg(ps, hip, P.hind[0], hl, d.wh, L.lift_h[0]);
   const Vec2 paw = leg(ps, shoulder, P.fore[0], fl, d.wf, L.lift_f[0]);
+  ps.paw = paw;
+  ps.has_paw = true;
 
   // Item: in the paws when sitting up, else in the mouth.
   if (c.carry != CC_NONE) {
@@ -890,14 +896,13 @@ const float kBearHead[11][2] = {{-3.0f, 7.0f},  {-4.5f, -2.0f}, {-1.5f, -8.0f}, 
 
 // Bear legs: thick tapered columns with a paw. Standing up straightens and
 // lengthens the hind legs.
-void bearLeg(Prims& ps, Vec2 root, float a, bool hind, float L, float lift, float near, float up) {
+Vec2 bearLeg(Prims& ps, Vec2 root, float a, bool hind, float L, float lift, float near, float up) {
   const float fold = 0.06f * lift;
   if (hind)
-    limb(ps, root, a - 0.3f + 0.25f * up, 0.55f * L, a + 0.15f - 0.1f * up - fold, 0.5f * L,
+    return limb(ps, root, a - 0.3f + 0.25f * up, 0.55f * L, a + 0.15f - 0.1f * up - fold, 0.5f * L,
          (14.f + 6.f * up) * near, (9.5f + 3.5f * up) * near, (8.f + 2.f * up) * near, 3.5f + 1.5f * up);
-  else
-    limb(ps, root, a + 0.04f, 0.55f * L, a - 0.04f - fold, 0.47f * L, 11.5f * near, 8.5f * near, 7.5f * near,
-         3.5f);
+  return limb(ps, root, a + 0.04f, 0.55f * L, a - 0.04f - fold, 0.47f * L, 11.5f * near, 8.5f * near, 7.5f * near,
+              3.5f);
 }
 
 void buildBear(const Critter& c, const Look& L, Prims& ps) {
@@ -921,8 +926,13 @@ void buildBear(const Critter& c, const Look& L, Prims& ps) {
   const Xf H = xf(at(B, 36.0f + P.look, -15.0f), th + P.head - 0.35f);
   polyIn(ps, H, kBearHead, 11, true);
   ellipse(ps, at(H, 0.6f, -8.6f), 3.7f, 3.7f);
+  ps.head = at(H, 4.0f, -9.5f);
+  ps.has_head = true;
+  ps.mouth = at(H, 16.5f, 1.5f);
+  ps.has_mouth = true;
   bearLeg(ps, at(B, 1.0f, -8.0f + 3.f * up), P.hind[0], true, Lh, L.lift_h[0], 1.f, up);
-  bearLeg(ps, at(B, 29.0f, -9.0f), P.fore[0], false, Lf, L.lift_f[0], 1.f, up);
+  ps.paw = bearLeg(ps, at(B, 29.0f, -9.0f), P.fore[0], false, Lf, L.lift_f[0], 1.f, up);
+  ps.has_paw = true;
 }
 
 // ---- frog -------------------------------------------------------------------
@@ -1043,7 +1053,11 @@ void build(const Critter& c, Prims& ps) {
   ps.n = 0;
   ps.low = -3.0e38f;
   ps.belly = 0.f;
-  const Look L = compose(c);
+  ps.has_paw = ps.has_head = ps.has_mouth = false;
+  ps.paw = ps.head = ps.mouth = Vec2{0.f, 0.f};
+  Look L = compose(c);
+  L.p.fore[0] += c.fore_add;   // the caller's offsets, on the drawn pose only
+  L.p.head += c.head_add;
   switch (c.kind) {
     case CR_DEER: buildDeer(c, L, ps); break;
     case CR_BEAR: buildBear(c, L, ps); break;
@@ -1060,14 +1074,18 @@ void build(const Critter& c, Prims& ps) {
   const float ys = 1.f + P.squash, xs = (1.f - 0.5f * P.squash) * L.sx;
   const float S = c.scale * (c.kind == CR_BEAR ? kBearK : 1.f);
   const float fx = (c.facing < 0 ? -S : S);
+  auto place = [&](Vec2& v) {
+    const float x = (v.x + gx + L.shiver) * xs;
+    const float y = (v.y + gy) * ys - P.lift;
+    v.x = c.feet.x + fx * x;
+    v.y = c.feet.y + S * y;
+  };
+  if (ps.has_paw) place(ps.paw);
+  if (ps.has_head) place(ps.head);
+  if (ps.has_mouth) place(ps.mouth);
   for (int k = 0; k < ps.n; ++k) {
     Prim& p = ps.v[k];
-    for (int i = 0; i < p.n; ++i) {
-      const float x = (p.p[i].x + gx + L.shiver) * xs;
-      const float y = (p.p[i].y + gy) * ys - P.lift;
-      p.p[i].x = c.feet.x + fx * x;
-      p.p[i].y = c.feet.y + S * y;
-    }
+    for (int i = 0; i < p.n; ++i) place(p.p[i]);
     if (p.kind == PRIM_ELLIPSE) {
       p.w *= S * xs;
       p.h *= S * ys;
@@ -1130,6 +1148,8 @@ void critterInit(Critter& c, CritterKind k, Vec2 feet, int facing) {
   c.speed_dial = 0.5f;
   c.jitter_dial = 0.5f;
   c.carry = CC_NONE;
+  c.fore_add = 0.f;
+  c.head_add = 0.f;
   c.action = CA_IDLE;
   c.blend_kind = BLEND_PLAIN;
   c.blending = false;
@@ -1162,7 +1182,9 @@ bool critterActionLoops(CritterAction a) {
 void critterSetAction(Critter& c, CritterAction a, float seconds) {
   if (!critterSupports(c.kind, a)) a = CA_IDLE;
   const bool keepMoving = c.moving && isGait(a);
+  const float phase = c.phase;
   startAction(c, a, seconds);
+  if (keepMoving) c.phase = phase;   // a gait change mid-move keeps the legs where they are
   if (!keepMoving) {
     c.moving = false;
     c.gait_w = 0.f;
@@ -1185,7 +1207,10 @@ void critterMoveTo(Critter& c, float x, float px_per_s) {
     else startTurn(c);
   }
   if (c.moving && c.action == g) return;   // retarget mid-move: keep the stride
+  const float phase = c.phase;
+  const bool was_moving = c.moving;
   startAction(c, g, kGaitIn);
+  if (was_moving) c.phase = phase;
   c.climbing = false;
   c.moving = true;
   c.gait_w = 0.f;
@@ -1314,6 +1339,28 @@ Rect critterBounds(const Critter& c) {
     by1 = maxf(by1, y1);
   }
   return Rect{(int)floorf(bx0) - 2, (int)floorf(by0) - 2, (int)ceilf(bx1) + 2, (int)ceilf(by1) + 2};
+}
+
+Vec2 critterPaw(const Critter& c) {
+  Prims ps;
+  build(c, ps);
+  if (ps.has_paw) return ps.paw;
+  return c.feet;
+}
+
+Vec2 critterMouth(const Critter& c) {
+  Prims ps;
+  build(c, ps);
+  if (ps.has_mouth) return ps.mouth;
+  return critterHead(c);
+}
+
+Vec2 critterHead(const Critter& c) {
+  Prims ps;
+  build(c, ps);
+  if (ps.has_head) return ps.head;
+  const Rect r = critterBounds(c);
+  return Vec2{0.5f * (float)(r.x0 + r.x1), (float)r.y0 + 2.f};
 }
 
 void critterDraw(const Critter& c, Surface& s, const Palette& pal, const Rect& clip) {

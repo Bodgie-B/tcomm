@@ -72,6 +72,11 @@ struct Critter {
   float speed_dial;    // 0..1 per loop: timid slow mover .. quick; scales move speed and gait rate
   float jitter_dial;   // 0..1 per loop: calm .. fidgety; scales idle fidget size and rate
   uint8_t carry;       // CritterCarry
+  // Offsets the caller lays over the drawn pose (not the blend, so a new action
+  // never starts from them): radians added to the near fore limb (a bear's paw
+  // reaching from the trunk) and to the head (+ up). Ease them back to 0.
+  float fore_add;
+  float head_add;
 
   // ---- owned by critters.cpp ----
   CritterAction action;
@@ -107,6 +112,14 @@ void critterClimbTo(Critter& c, float y, float px_per_s);
 bool critterArrived(const Critter& c);
 void critterTick(Critter& c, float dt);   // dt 0 recomposes
 Rect critterBounds(const Critter& c);     // every pixel critterDraw can touch, plus 2 px
+// Frame-space anchors from the drawn figure (offsets included): the end of the
+// near fore limb (bear, chipmunk, squirrel, raccoon, mouse; `feet` for the
+// others) and the top of the head (bear; the top centre of the bounds for the
+// others).
+Vec2 critterPaw(const Critter& c);
+Vec2 critterHead(const Critter& c);
+// The mouth (bear and the small quadrupeds; critterHead for the others).
+Vec2 critterMouth(const Critter& c);
 void critterDraw(const Critter& c, Surface& s, const Palette& pal, const Rect& clip);
 
 // The pose an action's blend lands on.

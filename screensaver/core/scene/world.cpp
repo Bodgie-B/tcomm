@@ -2,8 +2,10 @@
 #include "world.h"
 
 #include <math.h>
+#include <string.h>
 
 #include "../anim/ease.h"
+#include "director.h"
 
 namespace ss {
 
@@ -39,39 +41,64 @@ inline void unite(Rect& r, const Rect& b) {
 inline int16_t baseY(float y) { return (int16_t)floorf(y); }
 
 // Ground actors far to near by base y; insertion sort keeps equal y in list order.
-void sortActors(World& w) {
-  int n = 0;
-  ActorRef* a = w.actors;
-  a[n++] = ActorRef{ACT_FIRE, 0, (int16_t)(w.fire.pos.y + 5.f)};   // front stones
-  for (int i = 0; i < w.amb.n_tufts && n < WORLD_ACTOR_MAX; ++i) {
-    a[n++] = ActorRef{ACT_TUFT, (uint8_t)i, w.land.tufts[w.amb.tuft[i]].y};
+// Every push goes through `add`, which stops at WORLD_ACTOR_MAX.
+struct ActorList {
+  ActorRef* a;
+  int n;
+  void add(uint8_t kind, uint8_t idx, int16_t y) {
+    if (n < WORLD_ACTOR_MAX) a[n++] = ActorRef{kind, idx, y};
   }
+};
+
+// A foreground pine drawn again over `r` (owner 0 the hiker, 1 + slot a critter).
+void addPines(ActorList& L, const World& w, const Rect& r, int owner) {
+  for (int k = 0; k < 2; ++k)
+    if (overlaps(r, landscapeFgPineBounds(w.land, k)))
+      L.add(ACT_FGPINE, (uint8_t)(k | (owner << 1)), w.land.fg[k].base_y);
+}
+
+void sortActors(World& w) {
+  ActorList L{w.actors, 0};
+  L.add(ACT_FIRE, 0, (int16_t)(w.fire.pos.y + 5.f));   // front stones
+  for (int i = 0; i < w.amb.n_tufts; ++i) L.add(ACT_TUFT, (uint8_t)i, w.land.tufts[w.amb.tuft[i]].y);
   const Hiker& h = w.hiker;
   const int16_t held_y = baseY(h.feet.y + 1.f);   // things in his hands go in front of him
   if (h.visible) {
-    a[n++] = ActorRef{ACT_HIKER, 0, baseY(h.feet.y)};
-    for (int k = 0; k < 2; ++k) {
-      if (overlaps(w.hiker_rect, landscapeFgPineBounds(w.land, k))) {
-        a[n++] = ActorRef{ACT_FGPINE, (uint8_t)k, w.land.fg[k].base_y};
-      }
-    }
+    L.add(ACT_HIKER, 0, baseY(h.feet.y));
+    addPines(L, w, w.hiker_rect, 0);
   }
-  if (w.tent.state != TENT_PACKED) a[n++] = ActorRef{ACT_TENT, 0, baseY(w.tent.pos.y)};
-  if (w.pack.shown && (!w.pack.held || h.visible))
-    a[n++] = ActorRef{ACT_PACK, 0, w.pack.held ? held_y : baseY(w.pack.pos.y)};
-  if (w.bag.state == BAG_HUNG) a[n++] = ActorRef{ACT_BAG, 0, (int16_t)(w.land.camp.base_y - 1)};
-  else if (w.bag.state == BAG_DROPPED) a[n++] = ActorRef{ACT_BAG, 0, baseY(w.bag.pos.y)};
-  else if (w.bag.state == BAG_FLYING) a[n++] = ActorRef{ACT_BAG, 0, held_y};
-  if (w.cairn.n > 0) a[n++] = ActorRef{ACT_CAIRN, 0, baseY(w.cairn.pos.y)};
-  for (int i = 0; i < ITEM_COUNT && n < WORLD_ACTOR_MAX; ++i) {
+  if (w.tent.state != TENT_PACKED) L.add(ACT_TENT, 0, baseY(w.tent.pos.y));
+  if (w.pack.shown && (!w.pack.held || h.visible)) L.add(ACT_PACK, 0, w.pack.held ? held_y : baseY(w.pack.pos.y));
+  if (w.bag.state == BAG_HUNG) L.add(ACT_BAG, 0, (int16_t)(w.land.camp.base_y - 1));
+  else if (w.bag.state == BAG_DROPPED) L.add(ACT_BAG, 0, baseY(w.bag.pos.y));
+  else if (w.bag.state == BAG_FLYING) L.add(ACT_BAG, 0, held_y);
+  if (w.cairn.n > 0) L.add(ACT_CAIRN, 0, baseY(w.cairn.pos.y));
+  for (int i = 0; i < ITEM_COUNT; ++i) {
     const Item& it = w.items[i];
-    if (it.held) {
-      if (h.visible) a[n++] = ActorRef{ACT_ITEM, (uint8_t)i, held_y};
+    if (it.held && it.critter) {
+      const Critter& c = w.critters[it.critter - 1];
+      if (c.visible) L.add(ACT_ITEM, (uint8_t)i, baseY(c.feet.y + 1.f));
+    } else if (it.held) {
+      if (h.visible) L.add(ACT_ITEM, (uint8_t)i, held_y);
     }
-    else if (it.on_fire) a[n++] = ActorRef{ACT_ITEM, (uint8_t)i, (int16_t)(w.fire.pos.y + 6.f)};   // in front of the flames
-    else if (it.down) a[n++] = ActorRef{ACT_ITEM, (uint8_t)i, baseY(it.pos.y)};
+    else if (it.on_fire) L.add(ACT_ITEM, (uint8_t)i, (int16_t)(w.fire.pos.y + 6.f));   // in front of the flames
+    else if (it.down) L.add(ACT_ITEM, (uint8_t)i, baseY(it.pos.y));
   }
-  if (w.leaf.on && n < WORLD_ACTOR_MAX) a[n++] = ActorRef{ACT_LEAF, 0, baseY(w.leaf.base_y)};
+  if (w.leaf.on) L.add(ACT_LEAF, 0, baseY(w.leaf.base_y));
+  for (int i = 0; i < CRITTER_MAX; ++i) {
+    if (!w.crit[i].in_use || !w.critters[i].visible) continue;
+    // A climbing critter sorts by the trunk's foot, not its own feet up the trunk.
+    const float y = w.critters[i].pose.climb > 0.5f ? (float)w.land.camp.base_y + 1.f : w.critters[i].feet.y;
+    L.add(ACT_CRITTER, (uint8_t)i, baseY(y));
+    addPines(L, w, w.critter_rect[i], i + 1);
+  }
+  for (int i = 0; i < BITS_MAX; ++i) {
+    const Bit& b = w.bits[i];
+    if (b.kind == BIT_CONE) L.add(ACT_BIT, (uint8_t)i, baseY(b.land_y + 1.f));
+    else if (b.kind == BIT_DUST) L.add(ACT_BIT, (uint8_t)i, baseY(b.land_y));
+  }
+  const int n = L.n;
+  ActorRef* a = w.actors;
   for (int i = 1; i < n; ++i) {
     const ActorRef key = a[i];
     int j = i - 1;
@@ -92,14 +119,17 @@ void stepHiker(World& w) {
   HikerFx& fx = w.fx;
   if (!fx.on) {
     h.visible = false;
-    w.hiker_rect = kEmpty;
+    w.hiker_rect = w.hiker_full = kEmpty;
     return;
   }
+  const bool was_walking = h.walking;
   hikerTick(h, SS_TICK_DT);
   if (h.walking && fx.path_on) {
     const float span = fx.path_x1 - fx.path_x0;
     const float u = span != 0.f ? clamp01((h.feet.x - fx.path_x0) / span) : 1.f;
     h.feet.y = lerp(fx.path_y0, fx.path_y1, u);
+  } else if (was_walking && fx.path_on && fabsf(h.feet.x - fx.path_x1) < 0.5f) {
+    h.feet.y = fx.path_y1;   // arrived this tick: the last step's y too
   }
 
   HikerPose& P = h.pose;
@@ -135,7 +165,7 @@ void stepHiker(World& w) {
   }
   for (int i = 0; i < ITEM_COUNT; ++i) {
     Item& it = w.items[i];
-    if (!it.held) continue;
+    if (!it.held || it.critter) continue;   // a critter's paw holds it (directorStep)
     it.pos = i == ITEM_FORK ? hikerHandPos(h, 0) : m;   // the fork stands in his near hand
     it.facing = (int8_t)h.facing;
     it.ground_y = h.feet.y;
@@ -150,19 +180,34 @@ void stepHiker(World& w) {
     unite(r, armloadBounds(h, fx.armload));
     if (w.pack.held) unite(r, packBounds(w.pack));
     for (int i = 0; i < ITEM_COUNT; ++i)
-      if (w.items[i].held) unite(r, itemBounds((ItemId)i, w.items[i]));
+      if (w.items[i].held && !w.items[i].critter) unite(r, itemBounds((ItemId)i, w.items[i]));
+    w.hiker_full = r;
     w.hiker_rect = r.clipped(kFrame);
   } else {
-    w.hiker_rect = kEmpty;
+    w.hiker_rect = w.hiker_full = kEmpty;
   }
 }
 
 // Bounds of a prop he holds: nothing while he is out of frame.
 inline Rect heldBounds(const World& w, bool held, const Rect& b) { return held && !w.hiker.visible ? kEmpty : b; }
 
+// Bounds of an item: held ones only while their holder is in frame.
+Rect itemTrackBounds(const World& w, int i) {
+  const Item& it = w.items[i];
+  const Rect b = itemBounds((ItemId)i, it);
+  if (it.held && it.critter) return w.critters[it.critter - 1].visible ? b : kEmpty;
+  return heldBounds(w, it.held, b);
+}
+
 }  // namespace
 
 void worldBeginLoop(World& w, Rng& rng) {
+  // A clean World each loop; only Memory carries over.
+  const Memory keep = w.memory;
+  memset(static_cast<void*>(&w), 0, sizeof(World));
+  w.memory = keep;
+  ++w.memory.loop_count;
+
   landscapeGenerate(w.land, rng);
   // One rng call per statement: argument evaluation order differs between
   // compilers, and the PC preview must replay the board bit for bit.
@@ -203,9 +248,9 @@ void worldBeginLoop(World& w, Rng& rng) {
   w.hiker_rect = kEmpty;
   tentInit(w.tent, c.tent);
   w.pack = PackProp{c.pack, 1, false, false};
-  bagInit(w.bag, Vec2{(float)(w.land.camp_x - 82), 294.f});
+  bagInit(w.bag, Vec2{(float)(w.land.camp_x - LS_BRANCH_LEN), (float)LS_BRANCH_TIP_Y});
   w.cairn = Cairn{c.cairn, 0, 1.f};
-  for (Item& it : w.items) it = Item{c.wood, false, false, 1, 1.f, c.wood.y, false};
+  for (Item& it : w.items) it = Item{c.wood, false, false, 1, 1.f, c.wood.y, false, 0, 0.f};
   w.items[ITEM_WOOD].pos = c.wood;
   w.steam = Steam{Vec2{0.f, 0.f}, -1.f, 0};
   w.skip.n = 0;
@@ -213,6 +258,22 @@ void worldBeginLoop(World& w, Rng& rng) {
   for (Vec2& p : w.skip.p) p = Vec2{0.f, 0.f};
   w.leaf = Leaf{false, Vec2{0.f, 0.f}, 0.f, 0.f};
   w.fade = 1.f;   // a loop opens from black; the build beat lifts it
+
+  // Critter slots: all free, each with this loop's personality (one rng call
+  // per statement).
+  for (CritterSlot& s : w.crit) {
+    s = CritterSlot{};
+    const float sd = rng.range(0.f, 1.f);
+    const float jd = rng.range(0.f, 1.f);
+    s.speed_dial = sd;
+    s.jitter_dial = jd;
+  }
+  for (int i = 0; i < CRITTER_MAX; ++i) {
+    critterInit(w.critters[i], CR_CHIPMUNK, Vec2{0.f, 0.f}, 1);
+    w.critters[i].visible = false;
+    w.critter_rect[i] = kEmpty;
+  }
+  for (Bit& b : w.bits) b = Bit{};
 
   sortActors(w);
 
@@ -222,6 +283,9 @@ void worldBeginLoop(World& w, Rng& rng) {
   for (Rect& r : d.tuft) r = kEmpty;
   for (Rect& r : d.smoke) r = kEmpty;
   d.hiker = d.tent = d.pack = d.bag = d.cairn = kEmpty;
+  for (Rect& r : d.critter) r = kEmpty;
+  for (Rect& r : d.bit) r = kEmpty;
+  for (int i = 0; i < BITS_MAX; ++i) d.bit_s[i] = w.bits[i];
   for (Rect& r : d.item) r = kEmpty;
   d.steam = d.skip = d.leaf = kEmpty;
   d.steam_s = w.steam;
@@ -245,9 +309,22 @@ void worldTick(World& w, Rng& rng, Renderer& r) {
   for (Cloud& c : w.clouds) cloudStep(c);
   ambientStep(w, rng);
   stepHiker(w);
+  spineCritterScenes(w);
+  directorStep(w);
+  for (Bit& b : w.bits) bitStep(b, SS_TICK_DT);
   // The shadow in the lit tent breathes: rises up to 2 px and sinks, every 4.8 s.
   // (Whole pixels, so it dirties the tent four times a breath, not every tick.)
-  w.tent.shadow_y = w.tent.lit && w.tent.shadow ? -floorf(1.f + sinT((float)w.tick / (4.8f * (float)SS_TICK_HZ))) : 0.f;
+  // Frightened (shadow_jitter > 0) it holds its breath and trembles instead.
+  Tent& tent = w.tent;
+  const bool shown = tent.lit && tent.shadow;
+  const float tk = (float)w.tick;
+  // Trembling, he also hunches down (up to 3 px).
+  if (!shown) tent.shadow_y = 0.f;
+  else if (tent.shadow_jitter <= 0.f) tent.shadow_y = -floorf(1.f + sinT(tk / (4.8f * (float)SS_TICK_HZ)));
+  else tent.shadow_y = floorf(3.f * tent.shadow_jitter);
+  tent.shadow_shake = shown && tent.shadow_jitter > 0.f
+                          ? floorf(0.5f + 2.f * tent.shadow_jitter * sumSines(tk * 0.11f, 2))
+                          : 0.f;
   sortActors(w);
 
   WorldDirty& d = w.dirty;
@@ -307,9 +384,14 @@ void worldTick(World& w, Rng& rng, Renderer& r) {
   track(r, d.bag, bagBounds(w.bag), !bagSame(w.bag, d.bag_s));
   track(r, d.cairn, cairnBounds(w.cairn), !cairnSame(w.cairn, d.cairn_s));
   for (int i = 0; i < ITEM_COUNT; ++i) {
-    track(r, d.item[i], heldBounds(w, w.items[i].held, itemBounds((ItemId)i, w.items[i])),
-          !itemSame(w.items[i], d.item_s[i]));
+    track(r, d.item[i], itemTrackBounds(w, i), !itemSame(w.items[i], d.item_s[i]));
     d.item_s[i] = w.items[i];
+  }
+  // Critters move or fidget every tick they are in frame.
+  for (int i = 0; i < CRITTER_MAX; ++i) track(r, d.critter[i], w.critter_rect[i], !w.critter_rect[i].empty());
+  for (int i = 0; i < BITS_MAX; ++i) {
+    track(r, d.bit[i], bitBounds(w.bits[i]), !bitSame(w.bits[i], d.bit_s[i]));
+    d.bit_s[i] = w.bits[i];
   }
   track(r, d.steam, steamBounds(w.steam), !steamSame(w.steam, d.steam_s));
   track(r, d.skip, skipBounds(w.skip), !skipSame(w.skip, d.skip_s));
@@ -370,9 +452,13 @@ void worldDrawDynamic(const World& w, Surface& strip, const Rect& clip, const Pa
       case ACT_CAIRN: cairnDraw(w.cairn, strip, clip, pal); break;
       case ACT_ITEM: itemDraw((ItemId)a.idx, w.items[a.idx], strip, clip, pal); break;
       case ACT_LEAF: leafDraw(w.leaf, strip, clip, pal); break;
-      case ACT_FGPINE: {   // only over the hiker: elsewhere the cached pine is already right
-        const Rect c = clip.clipped(w.hiker_rect);
-        if (!c.empty()) landscapeDrawFgPine(w.land, a.idx, strip, c, pal);
+      case ACT_CRITTER: critterDraw(w.critters[a.idx], strip, pal, clip); break;
+      case ACT_BIT: bitDraw(w.bits[a.idx], strip, clip, pal); break;
+      case ACT_FGPINE: {   // only over its actor: elsewhere the cached pine is already right
+        const int owner = a.idx >> 1;
+        const Rect& over = owner == 0 ? w.hiker_rect : w.critter_rect[owner - 1];
+        const Rect c = clip.clipped(over);
+        if (!c.empty()) landscapeDrawFgPine(w.land, a.idx & 1, strip, c, pal);
         break;
       }
       default: break;

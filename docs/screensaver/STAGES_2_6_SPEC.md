@@ -154,29 +154,11 @@ on the fire-facing edge), not a glow.
 
 - Stage 2: built 2026-10-30, awaiting review. Build-up beat (13 s, 6 phases, 6 cache rebuilds per loop) and ambient layer (grass, stream highlights, fire and smoke, bird) in `world.*`, `buildup.*`, `ambient.*`. Ambient average 6.0 to 6.5 strips per frame, 0.135 ms/frame in the preview, `sizeof(App)` 58,600 bytes. Notes: `reviews/stage2/notes.md`.
 - Stage 3: module built, not yet placed in the scene
-- Stage 4: complete except the bear beat (stage 5) and the `--loops N` preview mode (paused, see notes). All 9 spine beats (bear a placeholder), 3 variants each, 6 calm fillers, loop fade and variable loop length 495..650 s. `sizeof(App)` 60,232 bytes; whole loop about 7.2 to 7.4 strips per frame, about 0.10 ms/frame. Notes: `reviews/stage4/notes.md`.
-- Stage 5: critter rigs built, not yet in the scene (`critters.*`, `tests/test_critters.cpp`; notes in `reviews/stage5/notes.md`). Minors scheduler not started.
+- Stage 4: complete (the bear beat landed with stage 5; the `--loops N` preview mode moves to the next task). All 9 spine beats, 3 variants each, 6 calm fillers, loop fade and variable loop length 495..650 s. `sizeof(App)` 60,232 bytes; whole loop about 7.2 to 7.4 strips per frame, about 0.10 ms/frame. Notes: `reviews/stage4/notes.md`.
+- Stage 5: critters in scene, bear beat and hooks done; minors pending. Critter director (`director.*`), 3 bear variants, dinner visitors, the raccoon theft, `Memory` (shoe, loop count). `sizeof(App)` 62,960 bytes; bear beat 8.5 to 9.1 strips per frame. Notes: `reviews/stage5/notes.md`.
 - Stage 6: not started
 
-## Deferred review fixes (apply after stage 4b lands)
+## Deferred review fixes
 
-From the independent review of afc5520 (stage 4a). Applied already:
-critter arrival pop (`critters.cpp`, `c.pose = c.from` at move and climb
-arrival) and the walk-cycle `sinf` -> `sinT` in `hiker.cpp`. Still to do:
-
-1. `tests/test_scene.cpp` in-frame checks pass vacuously: `appHikerRect`
-   is already clipped to the frame. Add an unclipped accessor and assert on it.
-2. `spine.cpp` setup shrug: the pack teleports ~34 px from behind his heels to
-   his hands in one tick. Put it down in front of him or tween it.
-3. `spine.cpp` stumble: `hikerSetPose(POSE_STAND)` while `fx.lean` is nonzero
-   doubles the lean at blend start. Subtract fx from `h.pose` before any
-   pose change inside an action.
-4. `world.cpp` walk arrival skips the last `feet.y` path step (≤ 0.5 px).
-   Snap `feet.y = fx.path_y1` on arrival.
-5. `critters.cpp` `startAction` resets `phase` on a mid-move gait switch (legs
-   snap once). Keep `phase` when `keepMoving`.
-6. `world.cpp` `sortActors` guards `WORLD_ACTOR_MAX` only for tufts and items;
-   guard every push once critters are appended.
-7. `reviews/stage5/notes.md` says the mirror check is pixel-exact; the test
-   allows 1 channel step and reports 1 differing pixel in 8.9 M. Correct the
-   notes.
+All seven (from the review of afc5520) were applied with the stage 5 critter
+work; see "In the scene" in `reviews/stage5/notes.md`.

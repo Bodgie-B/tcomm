@@ -34,6 +34,11 @@ struct Tent {
   bool shadow;       // the hiker's shadow on the wall (drawn when lit)
   float shadow_x;    // shadow center offset from pos.x
   float shadow_y;    // shadow offset in y (World breathes it, whole px)
+  // 0 calm .. 1 trembling (the bear beat). Above 0 he holds his breath (no
+  // breathing: the shadow freezes); World shakes it by up to 2 px in x,
+  // whole px, through shadow_shake, and hunches it down up to 3 px.
+  float shadow_jitter;
+  float shadow_shake;  // x offset World sets from shadow_jitter (whole px)
 };
 
 void tentInit(Tent& t, Vec2 pos);
@@ -112,6 +117,11 @@ struct Item {
   float size;        // scale, 1 normal
   float ground_y;    // held: ground under the hiker
   bool on_fire;      // sits on the fire (the pot): drawn just in front of the flames
+  // Held by a critter instead (with `held`): 1 + its World slot, 0 for the
+  // hiker. World keeps pos at that critter's paw; a stick then points from pos
+  // at `angle` turns from straight up, + toward `facing`.
+  uint8_t critter;
+  float angle;
 };
 
 Rect itemBounds(ItemId id, const Item& it);
@@ -161,6 +171,30 @@ struct Leaf {
 Rect leafBounds(const Leaf& l);
 void leafDraw(const Leaf& l, Surface& dst, const Rect& clip, const Palette& pal);
 bool leafSame(const Leaf& a, const Leaf& b);
+
+// Small things that fall or puff in the critter scenes. A pine cone (TRUNK)
+// falls under gravity to `ground_y`, bounces off it, and if `land_y` is lower
+// falls on to land there (a cone off the bear's head), then lies still. A dust
+// puff (SMOKE) swells, drifts up and shrinks away over BIT_DUST_S seconds.
+// bitStep moves them (World calls it every tick); drawn from the fields alone.
+enum BitKind : uint8_t { BIT_NONE = 0, BIT_CONE, BIT_DUST };
+#define BITS_MAX 4
+#define BIT_DUST_S 0.9f
+struct Bit {
+  uint8_t kind;
+  bool resting;      // cone: on the ground for good
+  uint8_t bounces;
+  Vec2 pos;
+  Vec2 vel;          // px/s
+  float ground_y;    // cone: first surface it meets
+  float land_y;      // cone: where it ends up
+  float t;           // seconds since it started
+  float spin;        // cone: turns
+};
+void bitStep(Bit& b, float dt);
+Rect bitBounds(const Bit& b);
+void bitDraw(const Bit& b, Surface& dst, const Rect& clip, const Palette& pal);
+bool bitSame(const Bit& a, const Bit& b);
 
 // ---- what the hiker holds that his rig does not draw ---------------------------
 

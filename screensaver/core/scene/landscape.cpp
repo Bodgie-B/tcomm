@@ -260,11 +260,11 @@ void drawCampPine(Surface& s, const Landscape& ls, const Palette& pal, const Rec
   const float fbot = base - (base - 318.f) * hs;   // lowest tier base; the trunk shows only below it
   const float wh = standWidth(h, hs);
   strokeCapsule(s, Vec2{cx, top + 30.f * hs}, Vec2{cx, base}, 9.f, pal[TRUNK], clip);
-  // The bag branch leaves the trunk inside the lowest tier (y 302), so its root
-  // is hidden by foliage, and pokes out past the canopy to the left, rising
-  // 8 px over 82 px. The food bag hangs from its tip in later stages.
-  strokeCapsule(s, Vec2{cx, base - (base - 302.f) * hs}, Vec2{cx - 82.f, base - (base - 294.f) * hs}, 5.f,
-                pal[TRUNK], clip);
+  // The bag branch leaves the trunk inside the upper tiers, so its root is
+  // hidden by foliage, and pokes out past the canopy to the left, rising
+  // 10 px over 82 px (landscape.h). The food bag hangs from its tip.
+  strokeCapsule(s, Vec2{cx, base - (base - (float)LS_BRANCH_ROOT_Y) * hs},
+                Vec2{cx - (float)LS_BRANCH_LEN, base - (base - (float)LS_BRANCH_TIP_Y) * hs}, 5.f, pal[TRUNK], clip);
   for (int i = p.tiers - 1; i >= 0; --i) {
     const Tier t = tierGeom(i, p.tiers, top, fbot, wh, fl(p.width_pct));
     drawTierTriangle(s, cx, t, pal[FOLIAGE], clip);
