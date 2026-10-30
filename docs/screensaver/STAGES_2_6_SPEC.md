@@ -48,9 +48,11 @@ handful of times per loop), never per frame.
 2. build-up in-progress layers (only during the build beat)
 3. stream highlights (ripples drift along the stream)
 4. ground actors sorted by base y, front-most last: tent, fire pit, props,
-   hiker, critters. A small insertion sort over at most ~24 entries per frame.
-5. smoke (above the fire, behind nothing that matters)
-6. foreground swaying tufts
+   hiker, critters, and the swaying tufts (sorted in, so a tuft at the back
+   of the clearing never draws over the hiker). A small insertion sort over
+   at most ~40 entries per frame. Foreground pines are redrawn over the hiker
+   where his bounds overlap them.
+5. smoke, last (it rises above everything near the fire)
 
 ### Dirty tracking
 
@@ -152,6 +154,6 @@ on the fire-facing edge), not a glow.
 
 - Stage 2: built 2026-10-30, awaiting review. Build-up beat (13 s, 6 phases, 6 cache rebuilds per loop) and ambient layer (grass, stream highlights, fire and smoke, bird) in `world.*`, `buildup.*`, `ambient.*`. Ambient average 6.0 to 6.5 strips per frame, 0.135 ms/frame in the preview, `sizeof(App)` 58,600 bytes. Notes: `reviews/stage2/notes.md`.
 - Stage 3: module built, not yet placed in the scene
-- Stage 4: not started
-- Stage 5: not started
+- Stage 4: beats 1 to 5 built; dinner, food bag, close and fillers pending. Hiker placed in the world, props (`props.*`), `LoopPlan` and the arrival, setup, firewood and fire beats with 3 variants each (`spine.*`); dinner, foodbag, bear and close are 8 s placeholders. `sizeof(App)` 59,696 bytes; spine average 7.4 to 7.7 strips per frame, about 0.10 ms/frame. Notes: `reviews/stage4/notes.md`.
+- Stage 5: critter rigs built, not yet in the scene (`critters.*`, `tests/test_critters.cpp`; notes in `reviews/stage5/notes.md`). Minors scheduler not started.
 - Stage 6: not started

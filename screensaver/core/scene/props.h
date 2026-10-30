@@ -1,0 +1,125 @@
+// Camp props: the tent, the pack on the ground, the food bag, the cairn and
+// small items. Plain data that lives by value in World; the spine beats set
+// the fields, World tracks their bounds and draws them in the ground-actor
+// sort. Every prop is drawn from its fields alone, and its bounds come from
+// the same geometry, so a prop can never draw outside what it marks dirty.
+//
+// Silhouette language follows the hiker: things he owns are ACTOR (the pack
+// is the same outline as the one on his back), wood is TRUNK, stones ROCK.
+#pragma once
+
+#include "../gfx/raster.h"
+#include "../palette.h"
+#include "hiker.h"
+
+namespace ss {
+
+// ---- tent ------------------------------------------------------------------
+
+enum TentState : uint8_t { TENT_PACKED = 0, TENT_RAISING, TENT_UP, TENT_COLLAPSED };
+
+// A ridge tent seen three-quarters on, door toward +x. The pole heights come
+// from `progress` (spread on the ground, back pole, front pole, pegged taut),
+// then `sag` slumps them and `bump` stretches them, so a beat can collapse a
+// half-raised tent or overshoot a raised one without a jump. `state` is the
+// story's view (PACKED draws nothing).
+struct Tent {
+  Vec2 pos;          // base center on the ground
+  uint8_t state;     // TentState
+  float progress;    // 0 fabric spread .. 1 pegged; UP is 1
+  float sag;         // 0 taut .. 1 slumped flat
+  float bump;        // extra pole height factor (overshoot), 0 at rest
+  float wobble;      // apex lean in px, + toward the door
+  bool lit;          // lantern inside: TENT_LIT body
+  bool shadow;       // the hiker's shadow on the wall (drawn when lit)
+  float shadow_x;    // shadow center offset from pos.x
+};
+
+void tentInit(Tent& t, Vec2 pos);
+Rect tentBounds(const Tent& t);
+void tentDraw(const Tent& t, Surface& s, const Rect& clip, const Palette& pal);
+bool tentSame(const Tent& a, const Tent& b);
+
+// ---- pack on the ground ------------------------------------------------------
+
+// Shown while the hiker's pack is off. `held`: World places it at his hands
+// each tick (he is moving it); otherwise it stands upright at `pos`.
+struct PackProp {
+  Vec2 pos;          // base center
+  int8_t facing;     // which way its back faces, as on the hiker
+  bool shown;
+  bool held;
+};
+
+Rect packBounds(const PackProp& p);
+void packDraw(const PackProp& p, Surface& s, const Rect& clip, const Palette& pal);
+bool packSame(const PackProp& a, const PackProp& b);
+
+// ---- food bag ------------------------------------------------------------------
+
+enum BagState : uint8_t { BAG_NONE = 0, BAG_CARRIED, BAG_HUNG, BAG_DROPPED };
+
+// HUNG: a sack on a line from the camp pine's branch tip; `line` and `swing`
+// let a beat hoist it and the bear shake it. DROPPED: lying at `pos`.
+// CARRIED: not drawn (the hiker draws CARRY_BAG).
+struct FoodBag {
+  uint8_t state;     // BagState
+  Vec2 tip;          // branch tip the line hangs from
+  float line;        // px from the tip to the sack's neck
+  float swing;       // radians from straight down, + toward +x
+  Vec2 pos;          // DROPPED: where it lies
+};
+
+void bagInit(FoodBag& b, Vec2 tip);
+Rect bagBounds(const FoodBag& b);
+void bagDraw(const FoodBag& b, Surface& s, const Rect& clip, const Palette& pal);
+bool bagSame(const FoodBag& a, const FoodBag& b);
+
+// ---- cairn ----------------------------------------------------------------------
+
+#define CAIRN_MAX 7
+
+// Flat stones stacked by the stream. `pop` 0..1 is the newest stone landing
+// (it drops in with an overshoot); 1 at rest.
+struct Cairn {
+  Vec2 pos;          // base center
+  uint8_t n;         // stones, 0..CAIRN_MAX
+  float pop;
+};
+
+Rect cairnBounds(const Cairn& c);
+void cairnDraw(const Cairn& c, Surface& s, const Rect& clip, const Palette& pal);
+bool cairnSame(const Cairn& a, const Cairn& b);
+
+// ---- small items ------------------------------------------------------------------
+
+// WOOD is the pile by the fire; `size` grows it (1 an armload, ~1.6 two).
+// STICK held is dragged: from the hiker's hands to the ground behind him.
+enum ItemId : uint8_t { ITEM_MUG = 0, ITEM_BOOK, ITEM_POT, ITEM_STICK, ITEM_SHOE, ITEM_WOOD, ITEM_COUNT };
+
+struct Item {
+  Vec2 pos;          // on the ground: base center; held: the hands (World sets it)
+  bool down;         // lying on the ground, drawn
+  bool held;         // carried in a way the rig does not draw (World sets pos, ground_y, facing)
+  int8_t facing;
+  float size;        // scale, 1 normal
+  float ground_y;    // held: ground under the hiker
+};
+
+Rect itemBounds(ItemId id, const Item& it);
+void itemDraw(ItemId id, const Item& it, Surface& s, const Rect& clip, const Palette& pal);
+bool itemSame(const Item& a, const Item& b);
+const char* itemName(ItemId id);
+
+// ---- what the hiker holds that his rig does not draw ---------------------------
+
+// Midpoint of the hiker's hands in frame space, from the composed pose. Mirrors
+// the forward kinematics in hiker.cpp (kept in step by a test in test_scene).
+Vec2 hikerHandsMid(const Hiker& h);
+
+// An armload far too big: logs piled on top of the carried wood (firewood beat
+// variant b). `k` 0..1 fades it in; 0 draws nothing.
+Rect armloadBounds(const Hiker& h, float k);
+void armloadDraw(const Hiker& h, float k, Surface& s, const Rect& clip, const Palette& pal);
+
+}  // namespace ss

@@ -66,7 +66,7 @@ int previewTicksForFrame(int fps, int frame);
 int previewTicksForFrameOpts(const PreviewOptions& o, int frame);
 
 // Log to stdout from now on, in previewTicks (so --skip ticks are included):
-//   "loop=L seed=S start tick=T"            a loop started (L from 0)
+//   "loop=L seed=S start tick=T plan=P"     a loop started (L from 0); P is appLoopPlan
 //   "tick=T loop=L seed=S beat=NAME"        the beat name changed (content compare)
 // T is the ticks simulated since the last (re)start, counted after the tick that
 // caused the event. The current loop and beat are logged immediately.

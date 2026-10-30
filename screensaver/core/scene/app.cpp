@@ -1,9 +1,10 @@
 // Screensaver application: implements ss_app.h.
 //
-// Stage 2: each loop opens with the build-up beat, then one long ambient beat
-// runs to the end of the 600 s loop. The World (world.h) holds everything
-// dynamic; App owns it by value with the timeline, palette and renderer, and
-// delegates drawing to it. Story beats replace the ambient beat in stage 4.
+// Each loop opens with the build-up beat, then the story spine (spine.h):
+// arrival, setup, firewood, fire and the later beats, each followed by a pause,
+// and an ambient beat to the end of the 600 s loop. The World (world.h) holds
+// everything dynamic; App owns it by value with the timeline, palette and
+// renderer, and delegates drawing to it.
 #include <math.h>
 #include <new>
 
@@ -40,12 +41,6 @@ namespace {
 constexpr float kMoodEps = 1.0f / 48.0f;
 constexpr float kWeatherEps = 0.02f;
 
-constexpr float kLoopSeconds = 600.f;
-
-// Ambient only: the ambient layer runs in worldTick on every tick regardless of
-// the beat, so this beat has nothing to drive yet.
-const Beat kAmbientBeat = {"ambient", kLoopSeconds - SS_BUILD_SECONDS, nullptr, nullptr, nullptr};
-
 void drawStatic(void* user, Surface& frame, const Palette& pal) {
   const App* a = static_cast<const App*>(user);
   worldDrawStatic(a->world, frame, pal, a->pal_mood);
@@ -76,9 +71,9 @@ void computeAppPalette(App* a) {
 void beginLoop(App* a) {
   a->rng.seed(a->loop_seed);
   worldBeginLoop(a->world, a->rng);
+  spinePlan(a->world.plan, a->rng, a->in);
   a->timeline.reset();
-  a->timeline.add(kBuildBeat);
-  a->timeline.add(kAmbientBeat);
+  spineBuildTimeline(a->timeline, a->world.plan);
   a->ctx = SceneCtx{a, &a->world, &a->rng, &a->in, &a->renderer, SS_TICK_DT};
   a->timeline.start(a->ctx);
 }
@@ -151,5 +146,15 @@ uint64_t appLoopSeed(const App* app) { return app->loop_seed; }
 uint32_t appTickCount(const App* app) { return app->timeline.tick_count; }
 int appBuildPhase(const App* app) { return app->world.build.phase; }
 uint32_t appAppBytes() { return (uint32_t)sizeof(App); }
+
+int appLoopPlan(const App* app, char* buf, size_t n) { return spineFormatPlan(app->world.plan, buf, n); }
+
+bool appHikerRect(const App* app, Rect* out) {
+  const World& w = app->world;
+  if (out) *out = w.hiker_rect;
+  return w.hiker.visible;
+}
+
+int appSpineOverruns(const App* app) { return app->world.spine.overruns; }
 
 }  // namespace ss

@@ -111,7 +111,9 @@ bool smokeGeom(const World& w, int i, Vec2& c, float& r) {
   // Grows fast, then shrinks away as it rises: fading without alpha.
   r = 13.f * minf(1.f, age * 3.f) * (1.f - age) * f.intensity;
   if (r < 0.6f) return false;
-  c.x = f.pos.x - 40.f * age * sqrtf(age) + 3.f * sinT(age * 1.3f + fl(i) * 0.27f);
+  const float drift = -40.f * age * sqrtf(age);
+  const float pulled = (w.amb.smoke_to_x - f.pos.x) * minf(1.f, age * 1.8f);
+  c.x = f.pos.x + lerp(drift, pulled, w.amb.smoke_pull) + 3.f * sinT(age * 1.3f + fl(i) * 0.27f);
   c.y = f.pos.y - 24.f - kSmokeRise * age;
   return true;
 }
@@ -177,6 +179,8 @@ void drawStones(const FirePit& f, Surface& s, const Rect& clip, Pixel col, bool 
 void ambientInit(World& w, Rng& rng) {
   Ambient& a = w.amb;
   a.wind_t = 0.f;
+  a.smoke_pull = a.smoke_pull_to = 0.f;
+  a.smoke_to_x = w.fire.pos.x;
   pickTufts(w);
   updateSway(w);
   for (int i = 0; i < AMB_GLINT_MAX; ++i) {
@@ -205,6 +209,10 @@ void ambientStep(World& w, Rng& rng) {
   if (ambientSubTick(w)) {
     a.wind_t += 2.f * dt;
     updateSway(w);
+    // Smoke bias moves on the sub-rate with the puffs, so their dirty marks cover it.
+    const float step = 2.f * dt / 1.2f;
+    const float d = a.smoke_pull_to - a.smoke_pull;
+    a.smoke_pull += d > step ? step : (d < -step ? -step : d);
   }
 
   for (int i = 0; i < AMB_GLINT_MAX; ++i) {
@@ -223,10 +231,13 @@ void ambientStep(World& w, Rng& rng) {
   }
 
   // Fire eases toward its state: about 1.8 s to catch, slower to die down.
+  // Kindling answers each blow within a third of a second and fades in one.
   FirePit& f = w.fire;
-  const float target = f.state == FIRE_LIT ? 1.f : (f.state == FIRE_EMBERS ? 0.25f : 0.f);
-  if (f.intensity < target) f.intensity = minf(target, f.intensity + dt / 1.8f);
-  else if (f.intensity > target) f.intensity = maxf(target, f.intensity - dt / 4.f);
+  const bool kindling = f.state == FIRE_KINDLING;
+  const float target = f.state == FIRE_LIT ? 1.f : (f.state == FIRE_EMBERS ? 0.25f : (kindling ? f.kindle : 0.f));
+  const float rise = kindling ? 0.35f : 1.8f, fall = kindling ? 1.0f : 4.f;
+  if (f.intensity < target) f.intensity = minf(target, f.intensity + dt / rise);
+  else if (f.intensity > target) f.intensity = maxf(target, f.intensity - dt / fall);
   if (f.intensity > 0.f) f.clock += dt;
 
   // The bird waits for the build to finish, then crosses every 40 to 90 s

@@ -470,6 +470,32 @@ void landscapeGenerate(Landscape& ls, Rng& rng) {
   generateMushroom(ls, rng);   // last, so earlier draws keep the stage 1 places per seed
 }
 
+bool landscapeStreamSpan(const Landscape& ls, float x, float& cy, float& half) {
+  for (int i = 0; i + 1 < LS_STREAM_PTS; ++i) {
+    const LsStreamPt& a = ls.stream[i];
+    const LsStreamPt& b = ls.stream[i + 1];
+    if (x <= a.x && x >= b.x) {
+      const float span = a.x - b.x;
+      const float t = span > 0.f ? (a.x - x) / span : 0.f;
+      cy = a.y + (b.y - a.y) * t;
+      half = (a.hw + (b.hw - a.hw) * t) * 1.06f;
+      return true;
+    }
+  }
+  return false;
+}
+
+Rect landscapeFgPineBounds(const Landscape& ls, int k) {
+  const LsPine& p = ls.fg[k ? 1 : 0];
+  const int hw = (int)ceilf(0.5f * fl(p.width_pct) * 0.01f * fl(p.h)) + 2;
+  return Rect{p.x - hw, p.base_y - p.h - 2, p.x + hw, p.base_y + 6};
+}
+
+void landscapeDrawFgPine(const Landscape& ls, int k, Surface& s, const Rect& clip, const Palette& pal) {
+  if (k) drawPine(s, ls.fg[1], pal[FOLIAGE_DARK], pal[TRUNK], 8.f, 0.28f, clip);
+  else drawPine(s, ls.fg[0], pal[FOLIAGE_DARK], pal[TRUNK], 7.f, 0.28f, clip);
+}
+
 LsStreamPt landscapeStreamAt(const Landscape& ls, float s) {
   const float last = fl(LS_STREAM_PTS - 1);
   s = s < 0.f ? 0.f : (s > last ? last : s);
@@ -739,7 +765,8 @@ void cloudGenerate(Cloud& c, Rng& rng, float x, float y, float speed_px_per_s) {
     const float u = c.n > 1 ? fl(i) / fl(c.n - 1) : 0.5f;
     const float env = 1.f - fabsf(2.f * u - 1.f);   // bigger puffs in the middle
     c.dx[i] = (u - 0.5f) * span + rng.range(-6.f, 6.f);
-    c.rx[i] = rng.range(20.f, 34.f) + env * rng.range(10.f, 26.f);
+    const float base_rx = rng.range(20.f, 34.f);   // one rng call per statement (evaluation order)
+    c.rx[i] = base_rx + env * rng.range(10.f, 26.f);
     c.ry[i] = minf(24.f, maxf(10.f, c.rx[i] * rng.range(0.38f, 0.5f)));
     c.dy[i] = -c.ry[i] * rng.range(0.6f, 1.0f);      // bottoms land within a few px of y
   }

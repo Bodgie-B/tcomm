@@ -46,6 +46,10 @@ struct Ambient {
   float sway[AMB_TUFT_MAX];         // current tip offset, px at an 18 px blade
   StreamGlint glint[AMB_GLINT_MAX];
   Bird bird;
+  // Smoke drift bias: 0 the wind has it, 1 every puff bends toward smoke_to_x.
+  // Beats set the target; the sub-tick step eases toward it.
+  float smoke_pull, smoke_pull_to;
+  float smoke_to_x;
 };
 
 // Loop start. Picks the swaying tufts (flags them in the landscape so the

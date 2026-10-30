@@ -99,6 +99,16 @@ LsStreamPt landscapeStreamAt(const Landscape& ls, float s);
 // Point index of the stream's tip for a reveal fraction 0..1.
 float landscapeStreamTip(float reveal);
 
+// Stream centerline y and drawn half width at frame x (the water polygon is
+// 1.06 x hw wide). False outside the stream's x range.
+bool landscapeStreamSpan(const Landscape& ls, float x, float& cy, float& half);
+
+// The two foreground pines stand in front of anything on the clearing. They
+// sit in the cache; when an actor walks behind one, worldDrawDynamic draws it
+// again over that actor, clipped to the actor's bounds.
+Rect landscapeFgPineBounds(const Landscape& ls, int k);
+void landscapeDrawFgPine(const Landscape& ls, int k, Surface& s, const Rect& clip, const Palette& pal);
+
 // Ridge crest y at an arbitrary x, linearly interpolated between the 16 px
 // samples (so it matches the drawn polygon edge exactly).
 float landscapeCrestAt(const Landscape& ls, int layer, float x);

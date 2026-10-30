@@ -86,8 +86,10 @@ static void logBeatChange(PreviewState& st) {
 }
 
 static void logLoopStart(PreviewState& st) {
-  printf("loop=%d seed=%llu start tick=%u\n", st.loop_index,
-         (unsigned long long)appLoopSeed(st.app), (unsigned)st.tick);
+  char plan[160];
+  appLoopPlan(st.app, plan, sizeof plan);
+  printf("loop=%d seed=%llu start tick=%u plan=%s\n", st.loop_index,
+         (unsigned long long)appLoopSeed(st.app), (unsigned)st.tick, plan);
   st.last_beat[0] = 0;   // the new loop's first beat is logged even if the name repeats
 }
 

@@ -61,5 +61,14 @@ uint32_t appTickCount(const App* app);
 int appBuildPhase(const App* app);
 // sizeof(App), for budget logs (must stay <= SS_APP_BYTES).
 uint32_t appAppBytes();
+// This loop's story variant picks, e.g. "arrival=1 setup=0 firewood=2 fire=1
+// dinner=0 foodbag=0 bear=0 close=0 fillers=none". Returns snprintf's count.
+int appLoopPlan(const App* app, char* buf, size_t n);
+// The frame area the hiker covers this tick (empty when out of frame);
+// returns whether he is visible.
+bool appHikerRect(const App* app, Rect* out);
+// Spine beats this loop that ended before their script did (0 when the
+// timing is right).
+int appSpineOverruns(const App* app);
 
 }  // namespace ss

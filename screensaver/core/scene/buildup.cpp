@@ -63,15 +63,20 @@ float phaseU(const BuildState& b, int phase) {
 void beatUpdate(SceneCtx& ctx, float t, float) {
   World& w = *ctx.w;
   buildSetProgress(w.build, t);
-  const float ft = buildFireT(w.build);
-  w.fire.stones = window(ft, 0.0f, 0.55f);
-  // A beat of stillness after the last stone, then it catches.
-  if (ft >= 0.65f && w.fire.state == FIRE_UNLIT) w.fire.state = FIRE_LIT;
+  // The ring of stones is laid; the hiker lights it in the fire beat.
+  w.fire.stones = window(buildFireT(w.build), 0.0f, 0.7f);
+}
+
+// Leaving the beat early (a jump) must still finish the build.
+void beatEnd(SceneCtx& ctx) {
+  World& w = *ctx.w;
+  buildSetProgress(w.build, 1.f);
+  w.fire.stones = 1.f;
 }
 
 }  // namespace
 
-const Beat kBuildBeat = {"build", SS_BUILD_SECONDS, nullptr, beatUpdate, nullptr};
+const Beat kBuildBeat = {"build", SS_BUILD_SECONDS, nullptr, beatUpdate, beatEnd};
 
 void buildReset(BuildState& b) { buildSetProgress(b, 0.f); }
 

@@ -1,8 +1,8 @@
 // The build-up beat: at the start of every loop the empty scene assembles
 // itself. The sky fades in from the horizon color, the ridges rise from behind
 // the ground line, the trees stand up with an overshoot, the stream rolls in
-// from the right, the plants pop (the mushroom last) and the fire pit is laid
-// and lit (brief section 6, beat 1).
+// from the right, the plants pop (the mushroom last) and the fire pit's stones
+// are laid (brief section 6, beat 1; the fire beat lights it).
 //
 // Mechanism: the static scene is split into layers in cache draw order. A
 // layer is either built (final pose), active (animating this phase) or not
@@ -75,7 +75,7 @@ float buildFireT(const BuildState& b);                        // 0..1 raw progre
 // Frame rows [y0, y1) the active layers of this phase can touch, for dirty marking.
 void buildPhaseRows(const BuildState& b, int& y0, int& y1);
 
-// The beat itself ("build"). Drives World::build and lays and lights the fire pit.
+// The beat itself ("build"). Drives World::build and lays the fire pit's stones.
 extern const Beat kBuildBeat;
 
 }  // namespace ss
