@@ -50,8 +50,8 @@ struct Timeline {
   // Advance one logical tick. Returns false once the last beat has ended.
   bool tick(SceneCtx& ctx);
 
-  // Queue an external event. Processed at the start of the next tick by the
-  // scene's event handler (see SceneCtx in the scene layer).
+  // Queue an external event. The scene drains the queue with takeEvents() at
+  // the start of its own tick. Returns false when the queue is full.
   bool post(Event e);
 
   // Drain up to `max` queued events into `out` (oldest first); returns how many
