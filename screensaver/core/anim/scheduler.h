@@ -37,7 +37,7 @@ struct Timeline {
   int count;
   int current;        // index of the running beat, or -1 before start / after end
   float elapsed;      // seconds into the current beat
-  uint32_t tick;      // ticks since loop start
+  uint32_t tick_count;   // ticks since loop start
 
   Event pending[SS_MAX_PENDING_EVENTS];
   int pending_count;
@@ -53,6 +53,10 @@ struct Timeline {
   // Queue an external event. Processed at the start of the next tick by the
   // scene's event handler (see SceneCtx in the scene layer).
   bool post(Event e);
+
+  // Drain up to `max` queued events into `out` (oldest first); returns how many
+  // were copied. Called by the scene at the start of its own tick.
+  int takeEvents(Event* out, int max);
 
   // Jump to a beat by index (preview "jump to beat"). Runs end/begin hooks.
   void jumpTo(SceneCtx& ctx, int index);
