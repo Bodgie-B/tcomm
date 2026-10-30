@@ -26,7 +26,8 @@ Early. The first board runs Waveshare's factory firmware and has been flashed an
 
 1. Read [`docs/CLAUDE_CODE_HANDOFF.md`](docs/CLAUDE_CODE_HANDOFF.md). It is written for a coding assistant but works as a plain project brief for people too.
 2. Check [`docs/design/`](docs/design/) for the GUI design brief.
-3. Build order: bring-up and demos, interface alone, radio, sound and rules, sensor, install. The done-when checks are in the handoff brief.
+3. The campsite screensaver (an animated idle mode for the panels) has its own brief in [`docs/screensaver/`](docs/screensaver/CAMPSITE_SCREENSAVER_BRIEF.md).
+4. Build order: bring-up and demos, interface alone, radio, sound and rules, sensor, install. The done-when checks are in the handoff brief.
 
 ## Working in this repo
 
