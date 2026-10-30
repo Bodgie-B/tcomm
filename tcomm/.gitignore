@@ -1,0 +1,20 @@
+# Secrets: keep ESP-NOW keys, Wi-Fi credentials and tokens out of git
+secrets.*
+*.secret
+*.env
+.env*
+config_local.*
+credentials.*
+
+# Build output and tool folders
+build/
+.pio/
+.vscode/
+.idea/
+managed_components/
+sdkconfig.old
+*.elf
+*.map
+
+# Firmware images (Waveshare's factory image is their file, not ours)
+*.bin
