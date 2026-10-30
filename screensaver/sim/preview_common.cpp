@@ -74,12 +74,43 @@ void previewShutdown(PreviewState& st) {
   st.fb = nullptr;
 }
 
+static void logBeatChange(PreviewState& st) {
+  const char* name = appBeatName(st.app);
+  if (strncmp(name, st.last_beat, sizeof st.last_beat - 1) == 0 &&
+      strlen(name) == strlen(st.last_beat))
+    return;
+  strncpy(st.last_beat, name, sizeof st.last_beat - 1);
+  st.last_beat[sizeof st.last_beat - 1] = 0;
+  printf("tick=%u loop=%d seed=%llu beat=%s\n", (unsigned)st.tick, st.loop_index,
+         (unsigned long long)appLoopSeed(st.app), name);
+}
+
+static void logLoopStart(PreviewState& st) {
+  printf("loop=%d seed=%llu start tick=%u\n", st.loop_index,
+         (unsigned long long)appLoopSeed(st.app), (unsigned)st.tick);
+  st.last_beat[0] = 0;   // the new loop's first beat is logged even if the name repeats
+}
+
+void previewEnableBeatLog(PreviewState& st) {
+  st.log_beats = true;
+  logLoopStart(st);
+  logBeatChange(st);
+}
+
 int previewTicks(PreviewState& st, int n) {
   int loops = 0;
   for (int i = 0; i < n; i++) {
     if (st.doorbell_at >= 0 && (long long)st.tick == st.doorbell_at) previewDoorbell(st);
-    if (appTick(st.app)) loops++;
+    bool new_loop = appTick(st.app);
+    if (new_loop) loops++;
     st.tick++;
+    if (st.log_beats) {
+      if (new_loop) {
+        st.loop_index++;
+        logLoopStart(st);
+      }
+      logBeatChange(st);
+    }
   }
   return loops;
 }
@@ -95,6 +126,10 @@ int previewTicksForFrame(int fps, int frame) {
   long long a = (long long)frame * SS_TICK_HZ / fps;
   long long b = (long long)(frame + 1) * SS_TICK_HZ / fps;
   return (int)(b - a);
+}
+
+int previewTicksForFrameOpts(const PreviewOptions& o, int frame) {
+  return o.every > 0 ? o.every : previewTicksForFrame(o.fps, frame);
 }
 
 void previewSetMood(PreviewState& st, float mood) {
@@ -175,7 +210,9 @@ void previewUsage(const char* prog, FILE* to) {
           "  --dog N             0 none, 1 Lucy, 2 Copper\n"
           "  --frames N          frames to write (default 100)\n"
           "  --fps N             render fps; ticks per frame = %d / fps (default 25)\n"
+          "  --every N           render one frame every N ticks (N >= 1; overrides --fps)\n"
           "  --skip N            ticks to simulate before the first frame\n"
+          "  --log-beats         print loop starts and beat changes (with tick numbers) to stdout\n"
           "  --out DIR           output directory for frame_%%05d.ppm (default ./frames)\n"
           "  --doorbell-at TICK  post a doorbell when the tick counter reaches TICK\n"
           "  --mood-sweep A B    change mood linearly from A to B over the frames\n"
@@ -256,6 +293,12 @@ void previewParseArgs(int argc, char** argv, PreviewOptions& o) {
       need(1);
       o.fps = (int)parseInt(prog, a, argv[++i]);
       if (o.fps < 1) bad(prog, "must be >= 1", a);
+    } else if (!strcmp(a, "--every")) {
+      need(1);
+      o.every = (int)parseInt(prog, a, argv[++i]);
+      if (o.every < 1) bad(prog, "must be >= 1", a);
+    } else if (!strcmp(a, "--log-beats")) {
+      o.log_beats = true;
     } else if (!strcmp(a, "--skip")) {
       need(1);
       o.skip = (int)parseInt(prog, a, argv[++i]);

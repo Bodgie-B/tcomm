@@ -6,6 +6,7 @@
 #ifdef _WIN32
 #include <direct.h>
 #define SS_MKDIR(p) _mkdir(p)
+#define SS_PATH_WIN 1
 #else
 #include <sys/stat.h>
 #define SS_MKDIR(p) mkdir(p, 0755)
@@ -14,19 +15,41 @@
 
 #include "preview_common.h"
 
+// Windows accepts both '/' and '\\' as separators and has drive prefixes ("C:", "C:\\");
+// elsewhere only '/' separates, so a backslash stays an ordinary filename character.
+static bool isSep(char c) {
+#ifdef SS_PATH_WIN
+  return c == '/' || c == '\\';
+#else
+  return c == '/';
+#endif
+}
+
+// A bare drive ("C:" or "C:\") cannot be created; it is the root of what follows.
+static bool isDriveRoot(const char* p, size_t len) {
+#ifdef SS_PATH_WIN
+  return (len == 2 && p[1] == ':') || (len == 3 && p[1] == ':' && isSep(p[2]));
+#else
+  (void)p;
+  (void)len;
+  return false;
+#endif
+}
+
 static bool mkdirP(const char* path) {
   char tmp[1024];
   size_t len = strlen(path);
   if (len == 0 || len >= sizeof tmp) return false;
   memcpy(tmp, path, len + 1);
   for (size_t i = 1; i < len; i++) {
-    if (tmp[i] == '/') {
+    if (isSep(tmp[i])) {
+      char sep = tmp[i];
       tmp[i] = 0;
-      if (SS_MKDIR(tmp) != 0 && errno != EEXIST) return false;
-      tmp[i] = '/';
+      if (!isDriveRoot(tmp, i) && SS_MKDIR(tmp) != 0 && errno != EEXIST) return false;
+      tmp[i] = sep;
     }
   }
-  if (SS_MKDIR(tmp) != 0 && errno != EEXIST) return false;
+  if (!isDriveRoot(tmp, len) && SS_MKDIR(tmp) != 0 && errno != EEXIST) return false;
   return true;
 }
 
@@ -51,6 +74,7 @@ int main(int argc, char** argv) {
     return 1;
   }
   st.doorbell_at = o.doorbell_at;
+  if (o.log_beats) previewEnableBeatLog(st);
 
   Clock::time_point wall0 = Clock::now();
   double sim_ms = 0.0;
@@ -67,7 +91,7 @@ int main(int argc, char** argv) {
       float u = o.frames > 1 ? (float)f / (float)(o.frames - 1) : 0.0f;
       previewSetMood(st, o.sweep_a + (o.sweep_b - o.sweep_a) * u);
     }
-    loops += previewStep(st, previewTicksForFrame(o.fps, f));
+    loops += previewStep(st, previewTicksForFrameOpts(o, f));
     sim_ms += msSince(t);
 
     char path[1200];

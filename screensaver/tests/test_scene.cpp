@@ -1,5 +1,6 @@
-// Scene tests: determinism, dirty-strip correctness, palette rebuild, the
-// reserved corner, and inspection images. Plain executable; returns non-zero on
+// Scene tests: determinism, dirty-strip correctness through the build-up and
+// the ambient layer, the ambient strip budget, palette rebuild, the reserved
+// corner, App size, and inspection images. Plain executable; returns non-zero on
 // failure. Writes landscape_*.ppm in the current directory (run from build/).
 #include "ss_app.h"
 
@@ -8,6 +9,10 @@
 #include <string.h>
 
 using namespace ss;
+
+// The reserved corner (scene/landscape.h; that header is core-internal).
+#define LS_QUIET_X0_T 660
+#define LS_QUIET_Y0_T 420
 
 static int g_fail = 0;
 #define CHECK(cond, ...)                                          \
@@ -78,52 +83,73 @@ static bool writePPM(const char* path, const Pixel* fb) {
   return true;
 }
 
-// (a) Same seed and inputs give identical frames; another seed differs.
+static void tickN(Rig& r, int n) {
+  for (int i = 0; i < n; ++i) appTick(r.app);
+}
+
+// Build-up ends at tick 325; 400 is well into the ambient beat.
+static const int kAfterBuild = 400;
+
+// (a) Same seed and inputs give identical frames during and after the
+// build-up; another seed differs. `a` renders every tick (incremental), `b`
+// only at the checkpoints (each a full rebuild), so this also checks that the
+// dirty strips reproduce a full render.
 static void testDeterminism() {
   Rig a, b, c;
   const Inputs in = makeInputs(3.f);
   CHECK(a.start(42, in) && b.start(42, in) && c.start(43, in), "start");
-  for (int t = 0; t < 60; ++t) { appTick(a.app); appTick(b.app); appTick(c.app); }
-  appRender(a.app, a.surf);
-  appRender(b.app, b.surf);
-  appRender(c.app, c.surf);
-  CHECK(sameFrame(a, b), "same seed differs at pixel %ld", firstDiff(a, b));
-  CHECK(!sameFrame(a, c), "seed+1 produced an identical frame");
+  static const int kAt[3] = {50, 300, 700};
+  int t = 0;
+  for (int k = 0; k < 3; ++k) {
+    for (; t < kAt[k]; ++t) {
+      appTick(a.app);
+      appTick(b.app);
+      appTick(c.app);
+      appRender(a.app, a.surf);
+    }
+    appInvalidate(b.app);
+    appRender(b.app, b.surf);
+    appRender(c.app, c.surf);
+    CHECK(sameFrame(a, b), "same seed differs at tick %d, pixel %ld", t, firstDiff(a, b));
+    CHECK(!sameFrame(a, c), "seed+1 produced an identical frame at tick %d", t);
+  }
   a.stop(); b.stop(); c.stop();
 }
 
-// (b) Only clouds move: few strips per frame, and the result equals a full render.
+// Incremental rendering equals a full render at every build-up phase and
+// through a long ambient run (more than one cloud wrap: 1080 px at 4 px/s is
+// 6750 ticks for the slower cloud).
 static void testDirtyStrips() {
   Rig a, b;
-  const Inputs in = makeInputs(3.f);
+  const Inputs in = makeInputs(4.f);
   CHECK(a.start(7, in) && b.start(7, in), "start");
   const int first = appRender(a.app, a.surf);
   CHECK(first == SS_STRIP_COUNT, "first render wrote %d strips, want %d", first, SS_STRIP_COUNT);
 
-  int worst = 0;
-  printf("strips per frame over 10 cloud-only ticks:");
-  for (int t = 0; t < 10; ++t) {
-    appTick(a.app);
-    appTick(b.app);
-    const int n = appRender(a.app, a.surf);
-    printf(" %d", n);
-    if (n > worst) worst = n;
-    CHECK(n <= 6, "tick %d wrote %d strips (max 6)", t, n);
-    CHECK(n >= 1, "tick %d wrote no strips although clouds moved", t);
+  // Checkpoints inside every build phase and at its boundaries (phase starts at
+  // ticks 45, 95, 165, 220, 290; the beat ends at 325).
+  static const int kAt[] = {1, 25, 44, 45, 46, 70, 95, 120, 150, 165, 190, 220, 240, 270, 290,
+                            300, 310, 320, 325, 326, 340, 360, 400};
+  int t = 0;
+  for (int at : kAt) {
+    for (; t < at; ++t) {
+      appTick(a.app);
+      appTick(b.app);
+      const int n = appRender(a.app, a.surf);
+      CHECK(n >= 0 && n <= SS_STRIP_COUNT, "tick %d wrote %d strips", t, n);
+    }
+    appInvalidate(b.app);
+    appRender(b.app, b.surf);
+    CHECK(sameFrame(a, b), "build-up: incremental differs from full at tick %d (phase %d), pixel %ld", t,
+          appBuildPhase(a.app), firstDiff(a, b));
   }
-  printf("  (max %d)\n", worst);
-  appInvalidate(b.app);
-  appRender(b.app, b.surf);
-  CHECK(sameFrame(a, b), "incremental render differs from full render at pixel %ld", firstDiff(a, b));
+  CHECK(appBuildPhase(a.app) == 6, "build-up not done by tick %d (phase %d)", t, appBuildPhase(a.app));
 
-  // Longer run, rendering every 5th tick, checked against a full render of the
-  // twin at checkpoints. 7000 ticks is more than one cloud wrap (1080 px at 4 px/s
-  // is 6750 ticks for the slower cloud, 4500 for the faster one).
-  for (int t = 0; t < 7000; ++t) {
+  for (int k = 0; k < 7000; ++k, ++t) {
     appTick(a.app);
     appTick(b.app);
-    if (t % 5 == 0) appRender(a.app, a.surf);
-    if (t % 700 == 699) {
+    if (k % 5 == 0) appRender(a.app, a.surf);
+    if (k % 700 == 699) {
       appRender(a.app, a.surf);
       appInvalidate(b.app);
       appRender(b.app, b.surf);
@@ -133,11 +159,42 @@ static void testDirtyStrips() {
   a.stop(); b.stop();
 }
 
+// (b) Strip budget with only the ambient layer running: average strips per
+// frame over ticks 400..900, rendering every tick.
+static void testAmbientBudget() {
+  static const uint64_t kSeeds[3] = {11, 7, 42};
+  for (uint64_t seed : kSeeds) {
+    Rig a;
+    CHECK(a.start(seed, makeInputs(3.f)), "start");
+    for (int t = 0; t < kAfterBuild; ++t) {
+      appTick(a.app);
+      appRender(a.app, a.surf);
+    }
+    long sum = 0;
+    int worst = 0, least = SS_STRIP_COUNT, frames = 0;
+    for (int t = kAfterBuild; t < 900; ++t) {
+      appTick(a.app);
+      const int n = appRender(a.app, a.surf);
+      sum += n;
+      ++frames;
+      if (n > worst) worst = n;
+      if (n < least) least = n;
+    }
+    const float avg = (float)sum / (float)frames;
+    printf("seed %d: ambient strips per frame over ticks %d..900: avg %.2f, min %d, max %d\n", (int)seed,
+           kAfterBuild, (double)avg, least, worst);
+    CHECK(avg <= 9.f, "seed %d: ambient average %.2f strips per frame (budget 9)", (int)seed, (double)avg);
+    CHECK(least >= 1, "seed %d: a frame wrote no strips although the stream flows", (int)seed);
+    a.stop();
+  }
+}
+
 // (c) A palette change rebuilds the cache and every strip.
 static void testPaletteRebuild() {
   Rig a;
   Inputs in = makeInputs(3.f);
   CHECK(a.start(5, in), "start");
+  tickN(a, kAfterBuild);
   appRender(a.app, a.surf);
   appTick(a.app);
   const int quiet = appRender(a.app, a.surf);
@@ -158,8 +215,8 @@ static void testPaletteRebuild() {
   appTick(a.app);
   CHECK(appRender(a.app, a.surf) == SS_STRIP_COUNT, "overcast change did not rebuild");
 
-  // A mood change below the 1/48 threshold keeps the palette: clouds still dirty
-  // a few strips, but not all of them.
+  // A mood change below the 1/48 threshold keeps the palette: the ambient
+  // layer still dirties some strips, but not all of them.
   appTick(a.app);
   appRender(a.app, a.surf);
   in.mood = 5.f + 1.f / 100.f;
@@ -179,7 +236,7 @@ static void testPaletteRebuild() {
   a.stop();
 }
 
-// Loop rollover: the placeholder beat is 600 s, then a new place is generated.
+// Loop rollover: build-up plus ambient beat is 600 s, then a new place is generated.
 static void testLoopRollover() {
   Rig a;
   CHECK(a.start(9, makeInputs(3.f)), "start");
@@ -198,7 +255,26 @@ static void testLoopRollover() {
   a.stop();
 }
 
-// (d) The bottom-right corner holds only ground and grass.
+// Count pixels in the reserved corner that are not ground, its dark side or grass.
+static int badCornerPixels(const Rig& a, const Palette& pal, const char* what, int seed, int tick, int shown) {
+  int bad = 0;
+  for (int y = LS_QUIET_Y0_T; y < SS_HEIGHT; ++y) {
+    for (int x = LS_QUIET_X0_T; x < SS_WIDTH; ++x) {
+      const Pixel p = a.fb[y * SS_WIDTH + x];
+      if (p != pal[GROUND] && p != pal[GROUND_DARK] && p != pal[GRASS]) {
+        if (shown + bad < 5) {
+          printf("%s seed %d tick %d: pixel (%d,%d) = %04x is not ground or grass\n", what, seed, tick, x, y, p);
+        }
+        ++bad;
+      }
+    }
+  }
+  return bad;
+}
+
+// (d) The bottom-right corner holds only ground and grass: 60 seeds over all
+// moods once the build-up is done, and 3 seeds x 2 moods at several ticks
+// during and after it.
 static void testQuietCorner() {
   int bad = 0;
   for (uint64_t seed = 1; seed <= 60; ++seed) {
@@ -207,22 +283,42 @@ static void testQuietCorner() {
     computePalette(in.mood, in.weather, pal);
     Rig a;
     CHECK(a.start(seed, in), "start");
+    tickN(a, 340);
     appRender(a.app, a.surf);
-    for (int y = 420; y < SS_HEIGHT; ++y) {
-      for (int x = 660; x < SS_WIDTH; ++x) {
-        const Pixel p = a.fb[y * SS_WIDTH + x];
-        if (p != pal[GROUND] && p != pal[GRASS]) {
-          if (bad < 5) printf("seed %d: pixel (%d,%d) = %04x is not ground or grass\n", (int)seed, x, y, p);
-          ++bad;
-        }
-      }
-    }
+    bad += badCornerPixels(a, pal, "built", (int)seed, 340, bad);
     a.stop();
   }
-  CHECK(bad == 0, "%d corner pixels are not GROUND or GRASS", bad);
+  static const float kMoods[2] = {3.f, 5.f};
+  static const int kAt[4] = {0, 100, 250, 500};
+  for (uint64_t seed = 1; seed <= 3; ++seed) {
+    for (float mood : kMoods) {
+      const Inputs in = makeInputs(mood);
+      Palette pal;
+      computePalette(in.mood, in.weather, pal);
+      Rig a;
+      CHECK(a.start(seed, in), "start");
+      int t = 0;
+      for (int at : kAt) {
+        for (; t < at; ++t) {
+          appTick(a.app);
+          appRender(a.app, a.surf);
+        }
+        appRender(a.app, a.surf);
+        bad += badCornerPixels(a, pal, "ticks", (int)seed, t, bad);
+      }
+      a.stop();
+    }
+  }
+  CHECK(bad == 0, "%d corner pixels are not GROUND, GROUND_DARK or GRASS", bad);
 }
 
-// (e) Inspection images.
+// sizeof(App) against the host budget.
+static void testAppSize() {
+  printf("sizeof(App) = %u bytes (budget %d)\n", (unsigned)appAppBytes(), SS_APP_BYTES);
+  CHECK(appAppBytes() <= (uint32_t)SS_APP_BYTES, "App is %u bytes", (unsigned)appAppBytes());
+}
+
+// (e) Inspection images, after the build-up.
 static void writeImages() {
   struct Shot { const char* path; float mood; bool night; };
   const Shot shots[4] = {{"landscape_day.ppm", 3.f, false},
@@ -232,6 +328,7 @@ static void writeImages() {
   for (const Shot& s : shots) {
     Rig a;
     CHECK(a.start(11, makeInputs(s.mood, s.night)), "start");
+    tickN(a, kAfterBuild);
     appRender(a.app, a.surf);
     CHECK(writePPM(s.path, a.fb), "could not write %s", s.path);
     a.stop();
@@ -239,8 +336,10 @@ static void writeImages() {
 }
 
 int main() {
+  testAppSize();
   testDeterminism();
   testDirtyStrips();
+  testAmbientBudget();
   testPaletteRebuild();
   testLoopRollover();
   testQuietCorner();

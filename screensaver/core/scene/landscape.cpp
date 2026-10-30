@@ -159,6 +159,7 @@ void generateTufts(Landscape& ls, Rng& rng) {
     if (streamContains(ls, x, y, 5.f)) continue;
     if (x + 10.f >= fl(LS_QUIET_X0) && y >= fl(LS_QUIET_Y0)) continue;   // quiet corner
     LsTuft& t = ls.tufts[ls.n_tufts++];
+    t.dyn = 0;
     t.x = toI16(x);
     t.y = toI16(y);
     t.n = (uint8_t)rng.rangeInt(2, 3);
@@ -185,6 +186,25 @@ void generateStars(Landscape& ls, Rng& rng) {
   }
 }
 
+// The mushroom: in the foreground right of center, on dry ground, clear of
+// rocks and of the reserved corner. Drawn ~14 px wide, ~14 px tall.
+void generateMushroom(Landscape& ls, Rng& rng) {
+  float x = 560.f, y = 462.f;
+  for (int tries = 0; tries < 60; ++tries) {
+    x = rng.range(470.f, 630.f);
+    y = rng.range(450.f, 470.f);
+    if (streamContains(ls, x, y - 7.f, 10.f)) continue;
+    bool clear = true;
+    for (int r = 0; r < ls.n_rocks && clear; ++r) {
+      const float dx = ls.rocks[r].p[2].x - x, dy = ls.rocks[r].p[0].y - y;
+      if (dx * dx + dy * dy < 24.f * 24.f) clear = false;
+    }
+    if (clear) break;
+  }
+  ls.mush_x = toI16(x);
+  ls.mush_y = toI16(y);
+}
+
 // ---- pines ---------------------------------------------------------------
 
 struct Tier { float apex_y, base_y, half_w; };
@@ -208,34 +228,45 @@ void drawTierTriangle(Surface& s, float cx, const Tier& t, Pixel col, const Rect
   fillPolygon(s, p, 3, col, clip);
 }
 
+// Width reference while a pine stands up: a little narrow while it grows, full
+// width from the moment it reaches its height (the overshoot only stretches).
+inline float standWidth(float h, float hs) { return h * (hs < 1.f ? 0.8f + 0.2f * hs : 1.f); }
+
 // Single-colour pine: trunk capsule plus stacked triangles, lowest tier first
-// so upper tiers sit in front.
+// so upper tiers sit in front. `hs` scales the height about the base (build-up).
 void drawPine(Surface& s, const LsPine& p, Pixel foliage, Pixel trunk, float trunk_w,
-              float trunk_frac, const Rect& clip) {
-  const float top = fl(p.base_y - p.h);
-  const float h = fl(p.h);
+              float trunk_frac, const Rect& clip, float hs = 1.f) {
+  if (hs <= 0.01f) return;
+  const float h = fl(p.h) * hs;
+  const float top = fl(p.base_y) - h;
   const float fbot = fl(p.base_y) - maxf(4.f, h * trunk_frac);
   const float cx = fl(p.x);
+  const float wh = standWidth(fl(p.h), hs);
   strokeCapsule(s, Vec2{cx, fbot - 3.f}, Vec2{cx, fl(p.base_y)}, trunk_w, trunk, clip);
   for (int i = p.tiers - 1; i >= 0; --i) {
-    drawTierTriangle(s, cx, tierGeom(i, p.tiers, top, fbot, h, fl(p.width_pct)), foliage, clip);
+    drawTierTriangle(s, cx, tierGeom(i, p.tiers, top, fbot, wh, fl(p.width_pct)), foliage, clip);
   }
 }
 
 // The bag-hanging pine: bare lower trunk, lit and dark foliage, one branch.
-void drawCampPine(Surface& s, const Landscape& ls, const Palette& pal, const Rect& clip) {
+// `hs` scales every height about the base (build-up).
+void drawCampPine(Surface& s, const Landscape& ls, const Palette& pal, const Rect& clip, float hs) {
+  if (hs <= 0.01f) return;
   const LsPine& p = ls.camp;
   const float cx = fl(p.x);
-  const float top = fl(p.base_y - p.h);
-  const float fbot = 318.f;   // lowest tier base; the trunk shows only below it
+  const float base = fl(p.base_y);
   const float h = fl(p.h);
-  strokeCapsule(s, Vec2{cx, top + 30.f}, Vec2{cx, fl(p.base_y)}, 9.f, pal[TRUNK], clip);
+  const float top = base - h * hs;
+  const float fbot = base - (base - 318.f) * hs;   // lowest tier base; the trunk shows only below it
+  const float wh = standWidth(h, hs);
+  strokeCapsule(s, Vec2{cx, top + 30.f * hs}, Vec2{cx, base}, 9.f, pal[TRUNK], clip);
   // The bag branch leaves the trunk inside the lowest tier (y 302), so its root
   // is hidden by foliage, and pokes out past the canopy to the left, rising
   // 8 px over 82 px. The food bag hangs from its tip in later stages.
-  strokeCapsule(s, Vec2{cx, 302.f}, Vec2{cx - 82.f, 294.f}, 5.f, pal[TRUNK], clip);
+  strokeCapsule(s, Vec2{cx, base - (base - 302.f) * hs}, Vec2{cx - 82.f, base - (base - 294.f) * hs}, 5.f,
+                pal[TRUNK], clip);
   for (int i = p.tiers - 1; i >= 0; --i) {
-    const Tier t = tierGeom(i, p.tiers, top, fbot, h, fl(p.width_pct));
+    const Tier t = tierGeom(i, p.tiers, top, fbot, wh, fl(p.width_pct));
     drawTierTriangle(s, cx, t, pal[FOLIAGE], clip);
     // Dark wedge on the lower left half: the lit side is the right.
     const float th = t.base_y - t.apex_y;
@@ -290,10 +321,19 @@ void drawSkyBody(const Landscape& ls, Surface& s, const Palette& pal, float mood
 
 // ---- ridges and trees ----------------------------------------------------
 
-void drawRidge(const Landscape& ls, Surface& s, int layer, Pixel col, const Rect& clip) {
+// `drop` 0..1 sinks the ridge until its highest point is just under the ground
+// line (build-up); 0 is in place.
+void drawRidge(const Landscape& ls, Surface& s, int layer, Pixel col, const Rect& clip, float drop) {
+  float dy = 0.f;
+  if (drop > 0.f) {
+    float top = ls.crest[layer][0];
+    for (int i = 1; i < LS_CREST_N; ++i) top = minf(top, ls.crest[layer][i]);
+    dy = drop * (fl(LS_GROUND_Y) + 2.f - top);
+    if (dy >= fl(LS_GROUND_Y) + 2.f - top) return;   // fully hidden behind the ground
+  }
   Vec2 p[LS_CREST_N + 2];
   for (int i = 0; i < LS_CREST_N; ++i) {
-    p[i] = Vec2{fl(LS_CREST_X0 + LS_CREST_STEP * i), ls.crest[layer][i]};
+    p[i] = Vec2{fl(LS_CREST_X0 + LS_CREST_STEP * i), ls.crest[layer][i] + dy};
   }
   p[LS_CREST_N] = Vec2{fl(LS_CREST_X0 + LS_CREST_STEP * (LS_CREST_N - 1)), fl(SS_HEIGHT + 2)};
   p[LS_CREST_N + 1] = Vec2{fl(LS_CREST_X0), fl(SS_HEIGHT + 2)};
@@ -302,7 +342,10 @@ void drawRidge(const Landscape& ls, Surface& s, int layer, Pixel col, const Rect
 
 // Serrated line along the near ridge. A polygon of m teeth has 2m+1 points on
 // top and m+1 along a lower edge 4 px under the crest: 3m+2 <= 64, so m <= 20.
-void drawFarTrees(const Landscape& ls, Surface& s, Pixel col, const Rect& clip) {
+// During the build-up each tooth stands up with buildTreeScale at its x; the
+// lower edge grows with it so nothing shows before the first tooth rises.
+void drawFarTrees(const Landscape& ls, Surface& s, Pixel col, const Rect& clip, const BuildState& b) {
+  const bool anim = !(b.built & BL_BIT(BL_FAR_TREES));
   const int kMaxTeeth = 20;
   int i = 0;
   while (i < ls.n_spikes) {
@@ -314,14 +357,16 @@ void drawFarTrees(const Landscape& ls, Surface& s, Pixel col, const Rect& clip) 
       const float x0 = fl(ls.spikes[i + j].x);
       const float x1 = fl(ls.spikes[i + j + 1].x);
       const float xm = 0.5f * (x0 + x1);
+      const float hs = anim ? buildTreeScale(b, xm) : 1.f;
       p[n++] = Vec2{x0, landscapeCrestAt(ls, 2, x0)};
-      p[n++] = Vec2{xm, landscapeCrestAt(ls, 2, xm) - fl(ls.spikes[i + j].h)};
+      p[n++] = Vec2{xm, landscapeCrestAt(ls, 2, xm) - fl(ls.spikes[i + j].h) * hs};
     }
     const float xe = fl(ls.spikes[i + m].x);
     p[n++] = Vec2{xe, landscapeCrestAt(ls, 2, xe)};
     for (int j = m; j >= 0; --j) {
       const float x = fl(ls.spikes[i + j].x);
-      p[n++] = Vec2{x, landscapeCrestAt(ls, 2, x) + 4.f};
+      const float depth = anim ? 4.f * minf(1.f, buildTreeScale(b, x)) : 4.f;
+      p[n++] = Vec2{x, landscapeCrestAt(ls, 2, x) + depth};
     }
     fillPolygon(s, p, n, col, clip);
     i += m;
@@ -422,30 +467,91 @@ void landscapeGenerate(Landscape& ls, Rng& rng) {
   generateRocks(ls, rng);
   generateTufts(ls, rng);
   generateStars(ls, rng);
+  generateMushroom(ls, rng);   // last, so earlier draws keep the stage 1 places per seed
 }
 
-void landscapeDrawStatic(const Landscape& ls, Surface& frame, const Palette& pal, float mood) {
-  const Rect clip = frame.bounds();
+LsStreamPt landscapeStreamAt(const Landscape& ls, float s) {
+  const float last = fl(LS_STREAM_PTS - 1);
+  s = s < 0.f ? 0.f : (s > last ? last : s);
+  int i = (int)s;
+  if (i > LS_STREAM_PTS - 2) i = LS_STREAM_PTS - 2;
+  const float f = s - fl(i);
+  const LsStreamPt& a = ls.stream[i];
+  const LsStreamPt& b = ls.stream[i + 1];
+  LsStreamPt r;
+  r.x = lerp(a.x, b.x, f);
+  r.y = lerp(a.y, b.y, f);
+  r.hw = lerp(a.hw, b.hw, f);
+  const float nx = lerp(a.nx, b.nx, f), ny = lerp(a.ny, b.ny, f);
+  float len = sqrtf(nx * nx + ny * ny);
+  if (len < 1e-4f) len = 1.f;
+  r.nx = nx / len;
+  r.ny = ny / len;
+  return r;
+}
 
-  // Sky: five flat bands.
-  static const int kBand[6] = {0, 58, 118, 178, 228, LS_HORIZON};
-  for (int b = 0; b < 5; ++b) {
-    fillRect(frame, Rect{0, kBand[b], SS_WIDTH, kBand[b + 1]}, pal[(Slot)(SKY0 + b)], clip);
+float landscapeStreamTip(float reveal) {
+  return clamp01(reveal) * (fl(LS_STREAM_PTS - 1) + LS_STREAM_TAPER);
+}
+
+namespace {
+
+float bankAt(const Landscape& ls, float s) {
+  const float last = fl(LS_STREAM_PTS - 1);
+  s = s < 0.f ? 0.f : (s > last ? last : s);
+  int i = (int)s;
+  if (i > LS_STREAM_PTS - 2) i = LS_STREAM_PTS - 2;
+  return lerp(ls.bank_w[i], ls.bank_w[i + 1], s - fl(i));
+}
+
+// A band along the stream between normal offsets lo = klo*hw + blo*bank and
+// hi = khi*hw + bhi*bank, revealed from the right edge up to point index `tip`.
+// Over the last LS_STREAM_TAPER units both offsets shrink to the centerline
+// along a square-root profile, so the leading edge is a rounded tongue.
+void drawStreamBand(const Landscape& ls, Surface& s, float tip, float klo, float blo, float khi,
+                    float bhi, Pixel col, const Rect& clip) {
+  const int kMax = LS_STREAM_PTS + 5;
+  float sv[kMax], fv[kMax];
+  int ns = 0;
+  const float last = fl(LS_STREAM_PTS - 1);
+  const float full_end = tip - LS_STREAM_TAPER;
+  for (int i = 0; i < LS_STREAM_PTS && fl(i) < full_end; ++i) {
+    sv[ns] = fl(i);
+    fv[ns] = 1.f;
+    ++ns;
   }
-
-  drawSkyBody(ls, frame, pal, mood, clip);
-
-  drawRidge(ls, frame, 0, pal[RIDGE_FAR], clip);
-  drawRidge(ls, frame, 1, pal[RIDGE_MID], clip);
-  drawRidge(ls, frame, 2, pal[RIDGE_NEAR], clip);
-  drawFarTrees(ls, frame, pal[TREES_FAR], clip);
-
-  for (int i = 0; i < ls.n_mid; ++i) {
-    drawPine(frame, ls.mid[i], pal[TREES_MID], pal[TREES_MID], 3.f, 0.12f, clip);
+  for (int j = 0; j <= 4; ++j) {
+    const float sj = full_end + LS_STREAM_TAPER * fl(j) * 0.25f;
+    if (sj < 0.f || sj > last) continue;
+    sv[ns] = sj;
+    fv[ns] = sqrtf(1.f - fl(j) * 0.25f);
+    ++ns;
   }
+  if (ns < 2) return;
+  Vec2 p[2 * kMax];
+  int n = 0;
+  for (int k = 0; k < ns; ++k) {
+    const LsStreamPt q = landscapeStreamAt(ls, sv[k]);
+    const float off = (khi * q.hw + bhi * bankAt(ls, sv[k])) * fv[k];
+    p[n++] = Vec2{q.x + q.nx * off, q.y + q.ny * off};
+  }
+  for (int k = ns - 1; k >= 0; --k) {
+    const LsStreamPt q = landscapeStreamAt(ls, sv[k]);
+    const float off = (klo * q.hw + blo * bankAt(ls, sv[k])) * fv[k];
+    p[n++] = Vec2{q.x + q.nx * off, q.y + q.ny * off};
+  }
+  fillPolygon(s, p, n, col, clip);
+}
 
-  // Ground and the dark strip along the stream's far bank.
-  fillRect(frame, Rect{0, 318, SS_WIDTH, SS_HEIGHT}, pal[GROUND], clip);
+// Far bank strip and water body. `reveal` < 1 rolls the stream in from the right.
+void drawStream(const Landscape& ls, Surface& frame, const Palette& pal, const Rect& clip, float reveal) {
+  if (reveal <= 0.f) return;
+  if (reveal < 1.f) {
+    const float tip = landscapeStreamTip(reveal);
+    drawStreamBand(ls, frame, tip, 0.8f, 0.f, 1.f, 1.f, pal[GROUND_DARK], clip);
+    drawStreamBand(ls, frame, tip, -1.f, 0.f, 1.f, 0.f, pal[WATER], clip);
+    return;
+  }
   {
     Vec2 p[2 * LS_STREAM_PTS];
     int n = 0;
@@ -460,8 +566,6 @@ void landscapeDrawStatic(const Landscape& ls, Surface& frame, const Palette& pal
     }
     fillPolygon(frame, p, n, pal[GROUND_DARK], clip);
   }
-
-  // Stream body, then ripples.
   {
     Vec2 p[2 * LS_STREAM_PTS];
     int n = 0;
@@ -475,26 +579,151 @@ void landscapeDrawStatic(const Landscape& ls, Surface& frame, const Palette& pal
     }
     fillPolygon(frame, p, n, pal[WATER], clip);
   }
-  for (int i = 0; i < ls.n_ripples; ++i) {
-    strokeCapsule(frame, ls.ripples[i].a, ls.ripples[i].b, 2.f, pal[WATER_LIGHT], clip);
+}
+
+// Sky bands, stars and sun or moon. `fade` < 1 pulls every sky slot toward the
+// horizon color (the build-up starts from a flat SKY4 field). The lowest band
+// runs down to the ground line so nothing shows behind the rising ridges.
+void drawSky(const Landscape& ls, Surface& frame, const Palette& pal0, float mood, float fade, const Rect& clip) {
+  Palette pal = pal0;
+  if (fade < 1.f) {
+    static const Slot kFade[6] = {SKY0, SKY1, SKY2, SKY3, SUN, STAR};
+    for (Slot k : kFade) pal.c[k] = mixRGB(pal0[SKY4], pal0[k], fade);
   }
+  static const int kBand[6] = {0, 58, 118, 178, 228, LS_GROUND_Y};
+  for (int b = 0; b < 5; ++b) {
+    fillRect(frame, Rect{0, kBand[b], SS_WIDTH, kBand[b + 1]}, pal[(Slot)(SKY0 + b)], clip);
+  }
+  drawSkyBody(ls, frame, pal, mood, clip);
+}
 
-  drawCampPine(frame, ls, pal, clip);
+// Rock scaled about its base center (build-up pop).
+void drawRock(const LsRock& r, Surface& s, Pixel col, const Rect& clip, float sc) {
+  if (sc <= 0.01f) return;
+  if (sc == 1.f) {
+    fillPolygon(s, r.p, 6, col, clip);
+    return;
+  }
+  float cx = 0.f, by = r.p[0].y;
+  for (int k = 0; k < 6; ++k) {
+    cx += r.p[k].x;
+    by = maxf(by, r.p[k].y);
+  }
+  cx *= 1.f / 6.f;
+  Vec2 q[6];
+  for (int k = 0; k < 6; ++k) q[k] = Vec2{cx + (r.p[k].x - cx) * sc, by + (r.p[k].y - by) * sc};
+  fillPolygon(s, q, 6, col, clip);
+}
 
-  for (int i = 0; i < ls.n_rocks; ++i) fillPolygon(frame, ls.rocks[i].p, 6, pal[ROCK], clip);
+void drawTuft(const LsTuft& t, Surface& s, Pixel col, const Rect& clip, float hs) {
+  if (hs <= 0.01f) return;
+  if (fl(t.y) < fl(clip.y0) || fl(t.y) - 22.f > fl(clip.y1)) return;
+  for (int k = 0; k < t.n; ++k) {
+    const float bx = fl(t.x + t.off[k]);
+    const Vec2 tri[3] = {{bx - 1.5f, fl(t.y)}, {bx + 1.5f, fl(t.y)},
+                         {bx + fl(t.lean[k]) * hs, fl(t.y) - fl(t.h[k]) * hs}};
+    fillPolygon(s, tri, 3, col, clip);
+  }
+}
 
-  // Foreground pines at the left edge: the taller one first.
-  drawPine(frame, ls.fg[1], pal[FOLIAGE_DARK], pal[TRUNK], 8.f, 0.28f, clip);
-  drawPine(frame, ls.fg[0], pal[FOLIAGE_DARK], pal[TRUNK], 7.f, 0.28f, clip);
+// The mushroom's entrance, p 0..1: the cap peeks out, holds a beat
+// (anticipation), then the whole thing pops with an overshoot and the cap
+// wobbles to rest. Pale stem, warm cap with two light spots.
+void drawMushroom(const Landscape& ls, Surface& s, const Palette& pal, const Rect& clip, float p) {
+  if (p <= 0.f) return;
+  float hs;
+  if (p < 0.2f) hs = 0.3f * easeOutCubic(p / 0.2f);
+  else if (p < 0.38f) hs = 0.3f;
+  else hs = 0.3f + 0.7f * easeOutBack((p - 0.38f) / 0.62f);
+  const float q = window(p, 0.38f, 1.f);
+  const float wob = 1.6f * sinT(q * 2.f) * (1.f - q);
+  const float x = fl(ls.mush_x), y = fl(ls.mush_y);
+  if (y + 2.f < fl(clip.y0) || y - 20.f > fl(clip.y1)) return;
+  const float cs = sqrtf(hs);
+  const float sx = x + wob, sy = y - 8.f * hs;   // stem top
+  strokeCapsule(s, Vec2{x, y}, Vec2{sx, sy}, 4.f, pal[WATER_LIGHT], clip);
+  const float rx = 7.f * cs, ry = 5.5f * cs, cy = sy + 1.f;
+  Vec2 cap[11];
+  for (int k = 0; k <= 8; ++k) {
+    const float a = fl(k) / 16.f;   // half a turn, right to left over the top
+    cap[k] = Vec2{sx + rx * cosT(a), cy - ry * sinT(a)};
+  }
+  cap[9] = Vec2{sx - rx * 0.7f, cy + 1.2f * cs};
+  cap[10] = Vec2{sx + rx * 0.7f, cy + 1.2f * cs};
+  fillPolygon(s, cap, 11, pal[FIRE], clip);
+  fillCircle(s, Vec2{sx - 2.5f * cs, cy - 2.4f * cs}, 1.1f * cs, pal[FIRE_CORE], clip);
+  fillCircle(s, Vec2{sx + 2.2f * cs, cy - 3.6f * cs}, 1.0f * cs, pal[FIRE_CORE], clip);
+}
 
-  for (int i = 0; i < ls.n_tufts; ++i) {
-    const LsTuft& t = ls.tufts[i];
-    for (int k = 0; k < t.n; ++k) {
-      const float bx = fl(t.x + t.off[k]);
-      const Vec2 tri[3] = {{bx - 1.5f, fl(t.y)}, {bx + 1.5f, fl(t.y)},
-                           {bx + fl(t.lean[k]), fl(t.y) - fl(t.h[k])}};
-      fillPolygon(frame, tri, 3, pal[GRASS], clip);
-    }
+void drawLayer(const Landscape& ls, int layer, Surface& s, const Palette& pal, float mood,
+               const BuildState& b, const Rect& clip) {
+  switch (layer) {
+    case BL_SKY:
+      drawSky(ls, s, pal, mood, buildSkyFade(b), clip);
+      break;
+    case BL_RIDGES:
+      for (int k = 0; k < 3; ++k) drawRidge(ls, s, k, pal[(Slot)(RIDGE_FAR + k)], clip, buildRidgeDrop(b, k));
+      break;
+    case BL_FAR_TREES:
+      drawFarTrees(ls, s, pal[TREES_FAR], clip, b);
+      break;
+    case BL_MID_PINES:
+      for (int i = 0; i < ls.n_mid; ++i) {
+        drawPine(s, ls.mid[i], pal[TREES_MID], pal[TREES_MID], 3.f, 0.12f, clip,
+                 buildTreeScale(b, fl(ls.mid[i].x)));
+      }
+      break;
+    case BL_GROUND:
+      fillRect(s, Rect{0, LS_GROUND_Y, SS_WIDTH, SS_HEIGHT}, pal[GROUND], clip);
+      break;
+    case BL_STREAM:
+      drawStream(ls, s, pal, clip, buildStreamReveal(b));
+      break;
+    case BL_CAMP_PINE:
+      drawCampPine(s, ls, pal, clip, buildNearTreeScale(b, 0));
+      break;
+    case BL_ROCKS:
+      for (int i = 0; i < ls.n_rocks; ++i) {
+        const LsRock& r = ls.rocks[i];
+        drawRock(r, s, pal[ROCK], clip, buildPlantScale(b, r.p[0].x, r.p[0].y));
+      }
+      break;
+    case BL_FG_PINES:   // the taller one first
+      drawPine(s, ls.fg[1], pal[FOLIAGE_DARK], pal[TRUNK], 8.f, 0.28f, clip, buildNearTreeScale(b, 2));
+      drawPine(s, ls.fg[0], pal[FOLIAGE_DARK], pal[TRUNK], 7.f, 0.28f, clip, buildNearTreeScale(b, 1));
+      break;
+    case BL_TUFTS:
+      for (int i = 0; i < ls.n_tufts; ++i) {
+        const LsTuft& t = ls.tufts[i];
+        if (t.dyn) continue;   // the swaying ones are drawn by ambient.cpp
+        drawTuft(t, s, pal[GRASS], clip, buildPlantScale(b, fl(t.x), fl(t.y)));
+      }
+      break;
+    case BL_MUSHROOM:
+      drawMushroom(ls, s, pal, clip, buildMushroomT(b));
+      break;
+    default:
+      break;
+  }
+}
+
+}  // namespace
+
+void landscapeDrawStatic(const Landscape& ls, Surface& frame, const Palette& pal, float mood,
+                         const BuildState& b) {
+  const Rect clip = frame.bounds();
+  // Before the sky is in the cache the build-up draws everything over it; a
+  // flat fill keeps the cache contents defined.
+  if (!buildCached(b, BL_SKY)) fillRect(frame, clip, pal[SKY4], clip);
+  for (int L = 0; L < BL_COUNT; ++L) {
+    if (buildCached(b, L)) drawLayer(ls, L, frame, pal, mood, b, clip);
+  }
+}
+
+void landscapeDrawLayers(const Landscape& ls, Surface& s, const Rect& clip, const Palette& pal,
+                         float mood, const BuildState& b, int first, int last) {
+  for (int L = first; L <= last && L < BL_COUNT; ++L) {
+    if (buildDrawn(b, L) && !buildCached(b, L)) drawLayer(ls, L, s, pal, mood, b, clip);
   }
 }
 
@@ -538,7 +767,8 @@ void cloudStep(Cloud& c) {
 }
 
 Rect cloudBounds(const Cloud& c) {
-  Rect r{(int)floorf(c.x + c.bx0), (int)floorf(c.y + c.by0), (int)ceilf(c.x + c.bx1),
+  const float xq = floorf(c.x);
+  Rect r{(int)floorf(xq + c.bx0), (int)floorf(c.y + c.by0), (int)ceilf(xq + c.bx1),
          (int)ceilf(c.y + c.by1)};
   return r.clipped(Rect{-100000, 0, 100000, LS_HORIZON});
 }
@@ -548,10 +778,11 @@ void cloudDraw(const Cloud& c, Surface& s, const Palette& pal, const Rect& clip)
   const Rect lim = clip.clipped(Rect{0, 0, SS_WIDTH, LS_HORIZON});
   if (lim.empty()) return;
   if (cloudBounds(c).clipped(lim).empty()) return;
+  const float xq = floorf(c.x);
   for (int i = 0; i < c.n; ++i) {
-    fillEllipse(s, Vec2{c.x + c.dx[i], c.y + c.dy[i]}, c.rx[i], c.ry[i], pal[CLOUD_LIT], lim);
+    fillEllipse(s, Vec2{xq + c.dx[i], c.y + c.dy[i]}, c.rx[i], c.ry[i], pal[CLOUD_LIT], lim);
   }
-  fillEllipse(s, Vec2{c.x + c.sdx, c.y + c.sdy}, c.srx, c.sry, pal[CLOUD_SHADE], lim);
+  fillEllipse(s, Vec2{xq + c.sdx, c.y + c.sdy}, c.srx, c.sry, pal[CLOUD_SHADE], lim);
 }
 
 }  // namespace ss

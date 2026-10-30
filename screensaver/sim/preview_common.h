@@ -21,6 +21,8 @@ struct PreviewOptions {
   int dog = 0;
   int frames = 100;
   int fps = 25;                 // render fps; ticks per frame = SS_TICK_HZ / fps
+  int every = 0;                // >0: ticks per frame, overrides fps
+  bool log_beats = false;       // print beat changes and loop starts to stdout
   int skip = 0;                 // ticks simulated before the first frame is written
   const char* out_dir = "frames";
   long long doorbell_at = -1;   // tick to post a doorbell at; -1 = never
@@ -39,6 +41,9 @@ struct PreviewState {
   uint32_t tick;            // ticks since the last (re)start
   int speed;                // tick multiplier used by front ends (1 normal, 8 fast-forward)
   long long doorbell_at;    // fire a doorbell when tick reaches this; -1 = never
+  bool log_beats;           // see previewEnableBeatLog
+  int loop_index;           // loops started so far (the first loop is 0)
+  char last_beat[48];       // beat name last logged; empty after a loop start
 };
 
 // Inputs from parsed options (mood, weather, night, status, dog, lookout).
@@ -57,6 +62,15 @@ int previewStep(PreviewState& st, int n);
 // Ticks to simulate for output frame number `frame` at the options' fps
 // (integer-exact, so 50 fps alternates 0 and 1 tick per frame).
 int previewTicksForFrame(int fps, int frame);
+// Same, but honouring o.every (a fixed tick count per frame) when it is set.
+int previewTicksForFrameOpts(const PreviewOptions& o, int frame);
+
+// Log to stdout from now on, in previewTicks (so --skip ticks are included):
+//   "loop=L seed=S start tick=T"            a loop started (L from 0)
+//   "tick=T loop=L seed=S beat=NAME"        the beat name changed (content compare)
+// T is the ticks simulated since the last (re)start, counted after the tick that
+// caused the event. The current loop and beat are logged immediately.
+void previewEnableBeatLog(PreviewState& st);
 
 void previewSetMood(PreviewState& st, float mood);
 void previewSetWeatherCode(PreviewState& st, int code);   // also marks have_outside

@@ -44,6 +44,13 @@ struct Renderer {
   // marked dirty.
   void setPalette(const Palette& p);
 
+  // Same palette, different static content (build-up phase boundary): rebuild
+  // the cache on the next frame and mark every strip dirty.
+  void invalidateCache() {
+    cache_valid = false;
+    markAllDirty();
+  }
+
   // Mark the strips covering frame rows [y0, y1) dirty. Call for every
   // dynamic element's bounding box, both its previous and current position.
   void markDirtyRows(int y0, int y1);

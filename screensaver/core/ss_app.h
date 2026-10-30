@@ -57,5 +57,9 @@ const char* appBeatName(const App* app);
 float appBeatProgress(const App* app);
 uint64_t appLoopSeed(const App* app);
 uint32_t appTickCount(const App* app);
+// Build-up phase: 0 sky, 1 ridges, 2 trees, 3 stream, 4 plants, 5 fire, 6 done.
+int appBuildPhase(const App* app);
+// sizeof(App), for budget logs (must stay <= SS_APP_BYTES).
+uint32_t appAppBytes();
 
 }  // namespace ss
