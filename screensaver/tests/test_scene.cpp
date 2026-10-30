@@ -1,7 +1,8 @@
 // Scene tests: determinism, dirty-strip correctness through the build-up and
 // the ambient layer, the ambient strip budget, palette rebuild, the reserved
-// corner, App size, the story spine (determinism, quiet corner over a loop,
-// every variant in frame and on time, strips and time per frame), props, and
+// corner, App size, the story spine (determinism, quiet corner over two loops,
+// every variant and filler in frame and on time, loop length, the loop fade,
+// strips and time per frame over a whole loop), props, and
 // inspection images. Plain executable; returns non-zero on failure. Writes
 // landscape_*.ppm and props_sheet.ppm in the current directory (run from build/).
 #include "ss_app.h"
@@ -242,20 +243,22 @@ static void testPaletteRebuild() {
   a.stop();
 }
 
-// Loop rollover: build-up plus ambient beat is 600 s, then a new place is generated.
+// Loop rollover: the loop ends with the close, at exactly the plan's length,
+// then a new place is generated.
 static void testLoopRollover() {
   Rig a;
   CHECK(a.start(9, makeInputs(3.f)), "start");
   const uint64_t seed0 = appLoopSeed(a.app);
+  const int want = (int)appLoopTicks(a.app);
   appRender(a.app, a.surf);
   int loops = 0, at = -1;
-  const int ticks = 600 * SS_TICK_HZ + 50;
+  const int ticks = want + 50;
   for (int t = 0; t < ticks; ++t) {
     if (appTick(a.app)) { ++loops; at = t + 1; }
   }
-  printf("loop rollover at tick %d (nominal %d)\n", at, 600 * SS_TICK_HZ);
-  CHECK(loops == 1, "expected one loop start in 600 s, got %d", loops);
-  CHECK(at == 600 * SS_TICK_HZ, "rollover at tick %d, want exactly %d", at, 600 * SS_TICK_HZ);
+  printf("loop rollover at tick %d (plan %d)\n", at, want);
+  CHECK(loops == 1, "expected one loop start in %d ticks, got %d", ticks, loops);
+  CHECK(at == want, "rollover at tick %d, want exactly %d", at, want);
   CHECK(appLoopSeed(a.app) != seed0, "loop seed did not change");
   CHECK(appRender(a.app, a.surf) == SS_STRIP_COUNT, "new loop did not rebuild the cache");
   a.stop();
@@ -295,7 +298,9 @@ static void testQuietCorner() {
     a.stop();
   }
   static const float kMoods[2] = {3.f, 5.f};
-  static const int kAt[4] = {0, 100, 250, 500};
+  // Tick 0 is black (a loop opens from the last one's fade), so the first
+  // sample is at 30, when the fade is gone.
+  static const int kAt[4] = {30, 100, 250, 500};
   for (uint64_t seed = 1; seed <= 3; ++seed) {
     for (float mood : kMoods) {
       const Inputs in = makeInputs(mood);
@@ -353,7 +358,7 @@ static void testSpineDeterminism() {
   Rig a, b;
   const Inputs in = makeInputs(3.f);
   CHECK(a.start(42, in) && b.start(42, in), "start");
-  static const int kAt[4] = {500, 1500, 2500, 3500};
+  static const int kAt[7] = {500, 1500, 2500, 3500, 6000, 9000, 12000};
   int t = 0;
   for (int at : kAt) {
     for (; t < at; ++t) {
@@ -370,18 +375,26 @@ static void testSpineDeterminism() {
   b.stop();
 }
 
-// The reserved corner stays ground and grass for a whole loop of story.
+// The reserved corner stays ground and grass for two whole loops of story,
+// sampled every 250 ticks (samples inside the loop fade, where everything
+// darkens on purpose, are skipped and counted).
 static void testSpineQuietCorner() {
-  int bad = 0;
+  int bad = 0, samples = 0, faded = 0;
   for (uint64_t seed = 1; seed <= 3; ++seed) {
     const Inputs in = makeInputs(3.f);
     Palette pal;
     computePalette(in.mood, in.weather, pal);
     Rig a;
     CHECK(a.start(seed, in), "start");
-    for (int t = 1; t < 600 * SS_TICK_HZ; ++t) {
-      appTick(a.app);
+    int loops = 0;
+    for (int t = 1; loops < 2; ++t) {
+      if (appTick(a.app)) ++loops;
       if (t % 250 == 0) {
+        if (appFade(a.app) > 0.f) {
+          ++faded;
+          continue;
+        }
+        ++samples;
         appInvalidate(a.app);
         appRender(a.app, a.surf);
         bad += badCornerPixels(a, pal, "spine", (int)seed, t, bad);
@@ -389,29 +402,47 @@ static void testSpineQuietCorner() {
     }
     a.stop();
   }
+  printf("spine quiet corner: %d samples over two loops x 3 seeds (%d in a fade skipped)\n", samples, faded);
   CHECK(bad == 0, "spine: %d corner pixels are not GROUND, GROUND_DARK or GRASS", bad);
+  CHECK(faded <= 6, "%d samples fell in a fade", faded);
 }
 
-static bool parsePlan(const App* a, int v[4]) {
+static const char* const kBeats[8] = {"arrival", "setup", "firewood", "fire", "dinner", "foodbag", "bear", "close"};
+static const char* const kFillers[6] = {"mug_sunset", "read", "cairn", "skip_stone", "cloud_watch", "stream_listen"};
+
+static bool parsePlan(const App* a, int v[8]) {
   char buf[200];
   appLoopPlan(a, buf, sizeof buf);
-  return sscanf(buf, "arrival=%d setup=%d firewood=%d fire=%d", &v[0], &v[1], &v[2], &v[3]) == 4;
+  return sscanf(buf, "arrival=%d setup=%d firewood=%d fire=%d dinner=%d foodbag=%d bear=%d close=%d", &v[0], &v[1],
+                &v[2], &v[3], &v[4], &v[5], &v[6], &v[7]) == 8;
 }
 
-// Every variant of the four built beats, found by trying seeds: while the
-// hiker is visible his bounds stay in the frame (and out of the reserved
-// corner), each beat ends with him in frame, and no script runs past its beat.
+static int beatIndex(const char* name, const char* const* names, int n) {
+  for (int i = 0; i < n; ++i)
+    if (strcmp(name, names[i]) == 0) return i;
+  return -1;
+}
+
+// Every variant of every beat, and every filler, found by trying seeds (cap
+// 60): while the hiker is visible his bounds stay in the frame (and out of
+// the reserved corner) for the whole loop; arrival to dinner and every filler
+// end with him in frame; the food bag and the close end with him in the tent;
+// no script runs past its beat.
 static void testSpineVariants() {
-  static const char* const kBeats[4] = {"arrival", "setup", "firewood", "fire"};
-  bool seen[4][3] = {};
+  static const int kVariants[8] = {3, 3, 3, 3, 3, 3, 1, 3};
+  bool seen[8][3] = {};
+  bool fseen[6] = {};
   int seeds_run = 0;
-  for (uint64_t seed = 1; seed <= 40; ++seed) {
+  for (uint64_t seed = 1; seed <= 60; ++seed) {
     Rig a;
     CHECK(a.start(seed, makeInputs(3.f)), "start");
-    int v[4];
+    int v[8];
     CHECK(parsePlan(a.app, v), "seed %d: plan line does not parse", (int)seed);
+    char plan[200];
+    appLoopPlan(a.app, plan, sizeof plan);
     bool fresh = false;
-    for (int b = 0; b < 4; ++b) fresh = fresh || !seen[b][v[b]];
+    for (int b = 0; b < 8; ++b) fresh = fresh || !seen[b][v[b]];
+    for (int f = 0; f < 6; ++f) fresh = fresh || (!fseen[f] && strstr(plan, kFillers[f]));
     if (!fresh) {
       a.stop();
       continue;
@@ -419,8 +450,9 @@ static void testSpineVariants() {
     ++seeds_run;
     char prev[32] = "build";
     int t = 0, bad = 0;
-    for (; t < 600 * SS_TICK_HZ && !beatIs(a.app, "dinner"); ++t) {
-      appTick(a.app);
+    bool rolled = false;
+    for (; !rolled; ++t) {
+      rolled = appTick(a.app);
       Rect r;
       const bool vis = appHikerRect(a.app, &r);
       if (vis && bad < 3) {
@@ -430,34 +462,125 @@ static void testSpineVariants() {
               appBeatName(a.app), r.x0, r.y0, r.x1, r.y1);
         if (!in_frame || corner) ++bad;
       }
+      if (rolled) break;   // the new loop's world: the close was checked by the last tick
       if (!beatIs(a.app, prev)) {   // a beat just ended
-        for (int b = 0; b < 4; ++b) {
-          if (strcmp(prev, kBeats[b]) != 0) continue;
+        const int b = beatIndex(prev, kBeats, 8);
+        const int f = beatIndex(prev, kFillers, 6);
+        if (b >= 0 && b <= 4) {
           CHECK(vis && r.x0 >= 0 && r.x1 <= SS_WIDTH, "seed %d: %s variant %d ends with the hiker out of frame",
                 (int)seed, kBeats[b], v[b]);
-          seen[b][v[b]] = true;
+        } else if (b == 5) {
+          CHECK(!vis, "seed %d: foodbag variant %d ends with the hiker outside the tent", (int)seed, v[b]);
         }
+        if (f >= 0) {
+          CHECK(vis && r.x0 >= 0 && r.x1 <= SS_WIDTH, "seed %d: filler %s ends with the hiker out of frame", (int)seed,
+                kFillers[f]);
+          fseen[f] = true;
+        }
+        if (b >= 0) seen[b][v[b]] = true;
         snprintf(prev, sizeof prev, "%s", appBeatName(a.app));
       }
+      if (beatIs(a.app, "close") && appBeatProgress(a.app) > 0.98f) {
+        CHECK(!vis, "seed %d: close variant %d ends with the hiker outside the tent", (int)seed, v[7]);
+        seen[7][v[7]] = true;
+      }
     }
-    CHECK(beatIs(a.app, "dinner"), "seed %d: never reached dinner (tick %d)", (int)seed, t);
-    CHECK(appSpineOverruns(a.app) == 0, "seed %d (arrival=%d setup=%d firewood=%d fire=%d): %d beat(s) overran",
-          (int)seed, v[0], v[1], v[2], v[3], appSpineOverruns(a.app));
     a.stop();
   }
   int missing = 0;
-  for (int b = 0; b < 4; ++b)
-    for (int k = 0; k < 3; ++k)
+  for (int b = 0; b < 8; ++b)
+    for (int k = 0; k < kVariants[b]; ++k)
       if (!seen[b][k]) {
         ++missing;
-        printf("variant %s %d never picked in 40 seeds\n", kBeats[b], k);
+        printf("variant %s %d never ran in 60 seeds\n", kBeats[b], k);
       }
-  printf("spine variants: all 12 run in %d seeds\n", seeds_run);
-  CHECK(missing == 0, "%d variants unseen", missing);
+  for (int f = 0; f < 6; ++f)
+    if (!fseen[f]) {
+      ++missing;
+      printf("filler %s never ran in 60 seeds\n", kFillers[f]);
+    }
+  printf("spine variants: all 22 variants and 6 fillers run in %d seeds\n", seeds_run);
+  CHECK(missing == 0, "%d variants or fillers unseen", missing);
 }
 
-// Strips and time per frame over the spine (render every tick), overall and in
-// the pauses, where only the ambient layer and a breathing hiker move.
+// No script overruns its beat, for 60 seeds (checked on the close's last
+// tick, before the rollover resets the count).
+static void testSpineOverruns() {
+  int bad = 0;
+  for (uint64_t seed = 1; seed <= 60; ++seed) {
+    Rig a;
+    CHECK(a.start(seed, makeInputs(3.f)), "start");
+    const uint32_t len = appLoopTicks(a.app);
+    for (uint32_t t = 0; t + 1 < len; ++t) appTick(a.app);
+    // One tick left: every beat but the close has ended, and the close counts
+    // an unfinished script when its fade starts.
+    const int n = appSpineOverruns(a.app);
+    if (n) {
+      char plan[200];
+      appLoopPlan(a.app, plan, sizeof plan);
+      printf("seed %d (%s): %d beat(s) overran\n", (int)seed, plan, n);
+      ++bad;
+    }
+    a.stop();
+  }
+  CHECK(bad == 0, "%d seeds had overrunning beats", bad);
+}
+
+// Loop length policy: 480 to 660 s for 20 seeds, and the rollover lands on it.
+static void testLoopLength() {
+  int lo = 1 << 30, hi = 0;
+  for (uint64_t seed = 1; seed <= 20; ++seed) {
+    Rig a;
+    CHECK(a.start(seed, makeInputs((float)(seed % 6))), "start");
+    const int len = (int)appLoopTicks(a.app);
+    lo = len < lo ? len : lo;
+    hi = len > hi ? len : hi;
+    CHECK(len >= 480 * SS_TICK_HZ && len <= 660 * SS_TICK_HZ, "seed %d: loop is %.1f s", (int)seed,
+          (double)len / SS_TICK_HZ);
+    if (seed <= 3) {
+      int at = -1;
+      for (int t = 0; t < len + 5 && at < 0; ++t)
+        if (appTick(a.app)) at = t + 1;
+      CHECK(at == len, "seed %d: rolled over at tick %d, plan says %d", (int)seed, at, len);
+    }
+    a.stop();
+  }
+  printf("loop length over 20 seeds: %.0f..%.0f s\n", (double)lo / SS_TICK_HZ, (double)hi / SS_TICK_HZ);
+}
+
+// The fade: none through the close until its last 2.5 s, black (1) on its
+// last tick, and gone again by tick 30 of the next loop.
+static void testLoopFade() {
+  for (uint64_t seed = 1; seed <= 3; ++seed) {
+    Rig a;
+    CHECK(a.start(seed, makeInputs(3.f)), "start");
+    CHECK(appFade(a.app) == 1.f, "seed %d: a loop does not open from black (fade %.3f)", (int)seed,
+          (double)appFade(a.app));
+    const uint32_t len = appLoopTicks(a.app);
+    float before_last = -1.f, mid_close = -1.f;
+    uint32_t t = 0;
+    for (; t + 1 < len; ++t) {
+      appTick(a.app);
+      if (beatIs(a.app, "close") && appBeatProgress(a.app) < 0.5f) mid_close = appFade(a.app);
+      if (t + 1 >= 30 && t + 1 < 40) CHECK(appFade(a.app) == 0.f, "seed %d: fade %.3f at tick %u", (int)seed,
+                                        (double)appFade(a.app), t + 1);
+    }
+    before_last = appFade(a.app);   // the close's second-to-last tick
+    const bool rolled = appTick(a.app);   // the close's last tick, then the new loop
+    CHECK(rolled, "seed %d: no rollover at the plan's length", (int)seed);
+    CHECK(mid_close == 0.f, "seed %d: fading already in the first half of the close (%.3f)", (int)seed,
+          (double)mid_close);
+    CHECK(before_last > 0.99f, "seed %d: fade %.4f one tick before the end", (int)seed, (double)before_last);
+    CHECK(appFade(a.app) == 1.f, "seed %d: the new loop opens at fade %.3f", (int)seed, (double)appFade(a.app));
+    for (int k = 0; k < 30; ++k) appTick(a.app);
+    CHECK(appFade(a.app) == 0.f, "seed %d: fade %.3f at tick 30 of the next loop", (int)seed, (double)appFade(a.app));
+    a.stop();
+  }
+}
+
+// Strips and time per frame over a whole loop (render every tick, build-up
+// excluded: it rebuilds the cache and has its own numbers), and in the pauses,
+// where only the ambient layer and a breathing hiker move.
 static void testSpineBudget() {
   static const uint64_t kSeeds[3] = {11, 7, 42};
   for (uint64_t seed : kSeeds) {
@@ -466,13 +589,13 @@ static void testSpineBudget() {
     long sum = 0, psum = 0;
     int frames = 0, pframes = 0, worst = 0;
     double us = 0.0;
-    for (int t = 0; t < 600 * SS_TICK_HZ; ++t) {
+    for (int t = 0;; ++t) {
       const auto t0 = std::chrono::steady_clock::now();
-      appTick(a.app);
+      const bool rolled = appTick(a.app);
       const int n = appRender(a.app, a.surf);
       const auto t1 = std::chrono::steady_clock::now();
-      if (beatIs(a.app, "dinner")) break;
-      if (t < 330) continue;   // the build-up rebuilds everything; it has its own numbers
+      if (rolled) break;
+      if (t < 330) continue;
       us += (double)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count() / 1000.0;
       sum += n;
       ++frames;
@@ -484,14 +607,15 @@ static void testSpineBudget() {
     }
     const float avg = frames ? (float)sum / (float)frames : 0.f;
     const float pavg = pframes ? (float)psum / (float)pframes : 0.f;
-    printf("seed %d: spine (arrival..fire) %d frames: avg %.2f strips, max %d, %.3f ms/frame; pauses avg %.2f strips\n",
+    printf("seed %d: whole loop %d frames: avg %.2f strips, max %d, %.3f ms/frame; pauses avg %.2f strips\n",
            (int)seed, frames, (double)avg, worst, frames ? us / 1000.0 / frames : 0.0, (double)pavg);
     CHECK(pavg <= 9.f, "seed %d: pauses average %.2f strips per frame (budget 9)", (int)seed, (double)pavg);
+    CHECK(avg <= 9.f, "seed %d: loop average %.2f strips per frame (budget 9)", (int)seed, (double)avg);
     a.stop();
   }
 }
 
-// hikerHandsMid (props.cpp) mirrors the rig's kinematics: the point just above
+// hikerHandsMid (props.cpp, from hikerHandPos in the rig): the point just above
 // the hands' midpoint is inside the carried wood in every pose and both facings.
 static void testHandsMid() {
   static Pixel buf[200 * 160];
@@ -582,14 +706,39 @@ static void testProps() {
   // Row 3: every item, both facings; the wood pile at 1 and 1.65; a dragged stick.
   for (int id = 0; id < ITEM_COUNT; ++id) {
     for (int f = 0; f < 2; ++f) {
-      Item it{Vec2{50.f + 120.f * (float)id + 50.f * (float)f, 300.f}, true, false, (int8_t)(f ? -1 : 1),
-              id == ITEM_WOOD && f ? 1.65f : 1.f, 300.f};
-      if (id == ITEM_STICK && f) {
+      Item it{Vec2{40.f + 105.f * (float)id + 45.f * (float)f, 300.f}, true, false, (int8_t)(f ? -1 : 1),
+              id == ITEM_WOOD && f ? 1.65f : 1.f, 300.f, false};
+      if ((id == ITEM_STICK || id == ITEM_FORK) && f) {   // dragged stick; fork standing in a hand
         it.down = false;
         it.held = true;
-        it.pos = Vec2{it.pos.x + 30.f, 270.f};
+        it.pos = Vec2{it.pos.x + (id == ITEM_STICK ? 30.f : 0.f), 270.f};
       }
       check(itemName((ItemId)id), itemBounds((ItemId)id, it), [&](Surface& d) { itemDraw((ItemId)id, it, d, all, pal); });
+    }
+  }
+  // Row 3b: a thrown bag with its rope, steam puffs, a skipped stone's rings
+  // (the stone in flight), a leaf at three turns.
+  {
+    FoodBag b;
+    bagInit(b, Vec2{560.f, 330.f});
+    b.state = BAG_FLYING;
+    b.pos = Vec2{600.f, 350.f};
+    b.rope = Vec2{620.f, 395.f};
+    b.swing = 0.6f;
+    check("bag flying", bagBounds(b), [&](Surface& d) { bagDraw(b, d, all, pal); });
+    for (int k = 0; k < 3; ++k) {
+      const Steam st{Vec2{660.f + 30.f * (float)k, 390.f}, 0.3f + 0.35f * (float)k, 5};
+      check("steam", steamBounds(st), [&](Surface& d) { steamDraw(st, d, all, pal); });
+    }
+    Skip sk;
+    sk.n = 4;
+    sk.p[0] = Vec2{300.f, 360.f};
+    for (int i = 1; i <= SKIP_MAX; ++i) sk.p[i] = Vec2{300.f + 34.f * (float)i, 375.f + 2.f * (float)i};
+    sk.t = skipHitTime(sk, 3) + 0.1f;
+    check("skip", skipBounds(sk), [&](Surface& d) { skipDraw(sk, d, all, pal); });
+    for (int k = 0; k < 3; ++k) {
+      const Leaf l{true, Vec2{480.f + 20.f * (float)k, 380.f}, 0.15f * (float)k, 380.f};
+      check("leaf", leafBounds(l), [&](Surface& d) { leafDraw(l, d, all, pal); });
     }
   }
   // Row 4: the armload over a walking hiker with wood.
@@ -619,6 +768,9 @@ int main() {
   testSpineDeterminism();
   testSpineQuietCorner();
   testSpineVariants();
+  testSpineOverruns();
+  testLoopLength();
+  testLoopFade();
   testSpineBudget();
   writeImages();
   if (g_fail) {

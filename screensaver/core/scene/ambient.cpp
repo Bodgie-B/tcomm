@@ -109,7 +109,7 @@ bool smokeGeom(const World& w, int i, Vec2& c, float& r) {
   float age = w.amb.wind_t / kSmokeLife + fl(i) / fl(AMB_SMOKE_MAX);
   age -= floorf(age);
   // Grows fast, then shrinks away as it rises: fading without alpha.
-  r = 13.f * minf(1.f, age * 3.f) * (1.f - age) * f.intensity;
+  r = 13.f * minf(1.f, age * 3.f) * (1.f - age) * f.intensity * w.amb.smoke_k;
   if (r < 0.6f) return false;
   const float drift = -40.f * age * sqrtf(age);
   const float pulled = (w.amb.smoke_to_x - f.pos.x) * minf(1.f, age * 1.8f);
@@ -181,6 +181,7 @@ void ambientInit(World& w, Rng& rng) {
   a.wind_t = 0.f;
   a.smoke_pull = a.smoke_pull_to = 0.f;
   a.smoke_to_x = w.fire.pos.x;
+  a.smoke_k = a.smoke_k_to = 1.f;
   pickTufts(w);
   updateSway(w);
   for (int i = 0; i < AMB_GLINT_MAX; ++i) {
@@ -213,6 +214,9 @@ void ambientStep(World& w, Rng& rng) {
     const float step = 2.f * dt / 1.2f;
     const float d = a.smoke_pull_to - a.smoke_pull;
     a.smoke_pull += d > step ? step : (d < -step ? -step : d);
+    const float kstep = 2.f * dt / 3.f;   // about 3 s to stop
+    const float dk = a.smoke_k_to - a.smoke_k;
+    a.smoke_k += dk > kstep ? kstep : (dk < -kstep ? -kstep : dk);
   }
 
   for (int i = 0; i < AMB_GLINT_MAX; ++i) {
@@ -234,7 +238,7 @@ void ambientStep(World& w, Rng& rng) {
   // Kindling answers each blow within a third of a second and fades in one.
   FirePit& f = w.fire;
   const bool kindling = f.state == FIRE_KINDLING;
-  const float target = f.state == FIRE_LIT ? 1.f : (f.state == FIRE_EMBERS ? 0.25f : (kindling ? f.kindle : 0.f));
+  const float target = f.state == FIRE_LIT ? f.fuel : (f.state == FIRE_EMBERS ? 0.25f : (kindling ? f.kindle : 0.f));
   const float rise = kindling ? 0.35f : 1.8f, fall = kindling ? 1.0f : 4.f;
   if (f.intensity < target) f.intensity = minf(target, f.intensity + dt / rise);
   else if (f.intensity > target) f.intensity = maxf(target, f.intensity - dt / fall);

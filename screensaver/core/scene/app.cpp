@@ -1,8 +1,8 @@
 // Screensaver application: implements ss_app.h.
 //
 // Each loop opens with the build-up beat, then the story spine (spine.h):
-// arrival, setup, firewood, fire and the later beats, each followed by a pause,
-// and an ambient beat to the end of the 600 s loop. The World (world.h) holds
+// arrival, setup, firewood, fire, dinner, food bag, bear and close, with pauses
+// and calm fillers between. The loop ends when the close does (8 to 11 min). The World (world.h) holds
 // everything dynamic; App owns it by value with the timeline, palette and
 // renderer, and delegates drawing to it.
 #include <math.h>
@@ -156,5 +156,7 @@ bool appHikerRect(const App* app, Rect* out) {
 }
 
 int appSpineOverruns(const App* app) { return app->world.spine.overruns; }
+uint32_t appLoopTicks(const App* app) { return spineLoopTicks(app->world.plan); }
+float appFade(const App* app) { return app->world.fade; }
 
 }  // namespace ss

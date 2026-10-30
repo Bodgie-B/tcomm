@@ -14,9 +14,6 @@ constexpr float kInvTwoPi = 1.f / (2.f * kPi);
 
 inline float minf(float a, float b) { return a < b ? a : b; }
 inline float maxf(float a, float b) { return a > b ? a : b; }
-inline Vec2 add(Vec2 a, Vec2 b) { return Vec2{a.x + b.x, a.y + b.y}; }
-inline Vec2 sub(Vec2 a, Vec2 b) { return Vec2{a.x - b.x, a.y - b.y}; }
-inline Vec2 mul(Vec2 a, float k) { return Vec2{a.x * k, a.y * k}; }
 inline Vec2 mixV(Vec2 a, Vec2 b, float t) { return Vec2{lerp(a.x, b.x, t), lerp(a.y, b.y, t)}; }
 inline bool sameV(Vec2 a, Vec2 b) { return a.x == b.x && a.y == b.y; }
 inline bool overlaps(const Rect& a, const Rect& b) { return !a.clipped(b).empty(); }
@@ -96,19 +93,9 @@ void tentGeom(const Tent& t, TentGeom& g) {
   g.guy1 = Vec2{fr.x + kGuyOut, y + 1.f};
 
   g.has_shadow = t.lit && t.shadow && hb > 30.f && hf > 30.f;
-  for (int i = 0; i < 12; ++i) g.shadow[i] = Vec2{x + t.shadow_x + kShadow[i][0], y - 3.f + kShadow[i][1]};
+  for (int i = 0; i < 12; ++i)
+    g.shadow[i] = Vec2{x + t.shadow_x + kShadow[i][0], y - 3.f + t.shadow_y + kShadow[i][1]};
 }
-
-// ---- hiker forward kinematics (mirrors hiker.cpp build()) ---------------------
-
-constexpr float kThigh = 0.235f, kShin = 0.235f, kUpper = 0.16f, kFore = 0.15f;
-constexpr float kTorsoTop = 0.235f, kShoulder = 0.25f, kNeck = 0.29f;
-constexpr float kHeadUp = 0.06f, kHeadFwd = 0.012f, kHeadR = 0.062f;
-constexpr float kTorsoW = 0.15f, kShinW = 0.075f, kFootW = 0.058f;
-constexpr float kHeel = 0.02f, kToe = 0.07f, kFootFollow = 0.75f;
-constexpr float kBreathAmp = 0.011f;
-
-inline Vec2 dirA(float a) { return Vec2{sinT(a * kInvTwoPi), cosT(a * kInvTwoPi)}; }
 
 // ---- pack --------------------------------------------------------------------
 
@@ -130,14 +117,20 @@ inline Vec2 packPt(const PackProp& p, float b, float u) {
 const float kSack[8][2] = {{-1.8f, 2.7f},  {1.8f, 2.7f},   {5.4f, 7.2f},   {5.9f, 11.7f},
                            {3.2f, 14.9f},  {-3.2f, 14.9f}, {-5.9f, 11.7f}, {-5.4f, 7.2f}};
 
-void sackPts(const FoodBag& b, Vec2 out[8], Vec2& neck) {
-  const float a = b.swing * kInvTwoPi;
+// The sack below `neck`, turned by `swing` radians.
+void sackAt(Vec2 neck, float swing, Vec2 out[8]) {
+  const float a = swing * kInvTwoPi;
   const float s = sinT(a), c = cosT(a);
-  neck = Vec2{b.tip.x + s * b.line, b.tip.y + c * b.line};
-  for (int i = 0; i < 8; ++i) {   // rotate with the line
+  for (int i = 0; i < 8; ++i) {
     const float dx = kSack[i][0], dy = kSack[i][1];
     out[i] = Vec2{neck.x + c * dx + s * dy, neck.y - s * dx + c * dy};
   }
+}
+
+void sackPts(const FoodBag& b, Vec2 out[8], Vec2& neck) {
+  const float a = b.swing * kInvTwoPi;
+  neck = Vec2{b.tip.x + sinT(a) * b.line, b.tip.y + cosT(a) * b.line};
+  sackAt(neck, b.swing, out);
 }
 
 // ---- cairn ----------------------------------------------------------------------
@@ -166,6 +159,10 @@ const Shape kMug = {4, {{-3.5f, 0.f}, {3.5f, 0.f}, {3.8f, -8.f}, {-3.8f, -8.f}}}
 const Shape kBook = {4, {{-7.f, 0.f}, {7.f, 0.f}, {8.f, -3.5f}, {-6.f, -3.5f}}};
 const Shape kPot = {4, {{-7.f, 0.f}, {7.f, 0.f}, {7.5f, -9.f}, {-7.5f, -9.f}}};
 const Shape kShoe = {6, {{-6.f, 0.f}, {7.f, 0.f}, {7.f, -2.5f}, {1.f, -4.f}, {0.f, -9.f}, {-6.f, -9.f}}};
+
+// Fork: handle and two tines (x0, y0, x1, y1, width), standing in a hand or lying flat.
+const float kForkUp[3][5] = {{0.f, 1.f, 0.f, -7.f, 1.5f}, {-1.1f, -7.f, -1.3f, -10.5f, 1.0f}, {1.1f, -7.f, 1.3f, -10.5f, 1.0f}};
+const float kForkFlat[3][5] = {{-5.f, -1.f, 3.f, -1.f, 1.5f}, {3.f, -2.1f, 6.5f, -2.3f, 1.0f}, {3.f, 0.1f, 6.5f, 0.3f, 1.0f}};
 
 inline Vec2 itemPt(const Item& it, float x, float y) {
   const float sx = it.facing < 0 ? -1.f : 1.f;
@@ -201,6 +198,7 @@ void tentInit(Tent& t, Vec2 pos) {
   t.lit = false;
   t.shadow = false;
   t.shadow_x = 0.f;
+  t.shadow_y = 0.f;
 }
 
 Rect tentBounds(const Tent& t) {
@@ -229,7 +227,7 @@ void tentDraw(const Tent& t, Surface& s, const Rect& clip, const Palette& pal) {
 bool tentSame(const Tent& a, const Tent& b) {
   return sameV(a.pos, b.pos) && a.state == b.state && a.progress == b.progress && a.sag == b.sag &&
          a.bump == b.bump && a.wobble == b.wobble && a.lit == b.lit && a.shadow == b.shadow &&
-         a.shadow_x == b.shadow_x;
+         a.shadow_x == b.shadow_x && a.shadow_y == b.shadow_y;
 }
 
 // ---- pack ------------------------------------------------------------------------
@@ -262,6 +260,7 @@ void bagInit(FoodBag& b, Vec2 tip) {
   b.line = 16.f;
   b.swing = 0.f;
   b.pos = tip;
+  b.rope = tip;
 }
 
 Rect bagBounds(const FoodBag& b) {
@@ -274,6 +273,12 @@ Rect bagBounds(const FoodBag& b) {
   } else if (b.state == BAG_DROPPED) {
     e.pt(Vec2{b.pos.x - 8.f, b.pos.y - 11.f});
     e.pt(Vec2{b.pos.x + 14.f, b.pos.y + 1.f});
+  } else if (b.state == BAG_FLYING) {
+    Vec2 sack[8];
+    sackAt(b.pos, b.swing, sack);
+    e.pt(b.pos, 1.f);
+    e.pt(b.rope, 1.f);
+    for (const Vec2& p : sack) e.pt(p);
   }
   return e.rect();
 }
@@ -289,11 +294,17 @@ void bagDraw(const FoodBag& b, Surface& s, const Rect& clip, const Palette& pal)
     fillEllipse(s, Vec2{b.pos.x, b.pos.y - 5.f}, 7.5f, 5.f, pal[ACTOR], clip);
     strokeCapsule(s, Vec2{b.pos.x + 6.f, b.pos.y - 5.5f}, Vec2{b.pos.x + 11.f, b.pos.y - 3.5f}, 2.6f, pal[ACTOR],
                   clip);
+  } else if (b.state == BAG_FLYING) {
+    Vec2 sack[8];
+    sackAt(b.pos, b.swing, sack);
+    strokeCapsule(s, b.rope, b.pos, 1.2f, pal[ACTOR], clip);
+    fillPolygon(s, sack, 8, pal[ACTOR], clip);
   }
 }
 
 bool bagSame(const FoodBag& a, const FoodBag& b) {
-  return a.state == b.state && sameV(a.tip, b.tip) && a.line == b.line && a.swing == b.swing && sameV(a.pos, b.pos);
+  return a.state == b.state && sameV(a.tip, b.tip) && a.line == b.line && a.swing == b.swing && sameV(a.pos, b.pos) &&
+         sameV(a.rope, b.rope);
 }
 
 // ---- cairn ----------------------------------------------------------------------------
@@ -361,6 +372,12 @@ Rect itemBounds(ItemId id, const Item& it) {
         e.pt(itemPt(it, l[2], l[3]), 0.5f * kLogW * it.size);
       }
       break;
+    case ITEM_FORK:
+      for (const auto& l : (it.held ? kForkUp : kForkFlat)) {
+        e.pt(itemPt(it, l[0], l[1]), 0.5f * l[4] * it.size);
+        e.pt(itemPt(it, l[2], l[3]), 0.5f * l[4] * it.size);
+      }
+      break;
     default:
       break;
   }
@@ -398,6 +415,9 @@ void itemDraw(ItemId id, const Item& it, Surface& s, const Rect& clip, const Pal
     case ITEM_WOOD:
       for (const auto& l : kLogs) capL(it, l[0], l[1], l[2], l[3], kLogW, s, pal[TRUNK], clip);
       break;
+    case ITEM_FORK:
+      for (const auto& l : (it.held ? kForkUp : kForkFlat)) capL(it, l[0], l[1], l[2], l[3], l[4], s, pal[ACTOR], clip);
+      break;
     default:
       break;
   }
@@ -405,49 +425,156 @@ void itemDraw(ItemId id, const Item& it, Surface& s, const Rect& clip, const Pal
 
 bool itemSame(const Item& a, const Item& b) {
   return sameV(a.pos, b.pos) && a.down == b.down && a.held == b.held && a.facing == b.facing && a.size == b.size &&
-         a.ground_y == b.ground_y;
+         a.ground_y == b.ground_y && a.on_fire == b.on_fire;
 }
 
 const char* itemName(ItemId id) {
-  static const char* const kNames[ITEM_COUNT] = {"mug", "book", "pot", "stick", "shoe", "wood"};
+  static const char* const kNames[ITEM_COUNT] = {"mug", "book", "pot", "stick", "shoe", "wood", "fork"};
   return id < ITEM_COUNT ? kNames[id] : "?";
 }
 
 // ---- hands and armload ------------------------------------------------------------------
 
-Vec2 hikerHandsMid(const Hiker& h) {
-  const float H = h.height;
-  const HikerPose& P = h.pose;
-  const float breath = (1.f - h.walk_w) * kBreathAmp * H * (0.5f + 0.5f * sinT(h.breath_phase));
-  const Vec2 hip{P.dx * H, 0.f};
-  const float lt = P.lean * kInvTwoPi;
-  const Vec2 up{sinT(lt), -cosT(lt)};
-  const Vec2 chest = add(hip, mul(up, kTorsoTop * H + breath));
-  const Vec2 shoulder = add(hip, mul(up, kShoulder * H + breath));
-  const Vec2 neck = add(hip, mul(up, kNeck * H + breath));
-  const float ht = (P.lean + P.head) * kInvTwoPi;
-  const Vec2 hu{sinT(ht), -cosT(ht)};
-  const Vec2 hf{cosT(ht), sinT(ht)};
-  const Vec2 head = add(neck, add(mul(hu, kHeadUp * H), mul(hf, kHeadFwd * H)));
+// ---- small effects -------------------------------------------------------------------
 
-  float low = maxf(hip.y, chest.y) + 0.5f * kTorsoW * H;
-  Vec2 mid{0.f, 0.f};
-  for (int i = 0; i < 2; ++i) {
-    const Vec2 knee = add(hip, mul(dirA(P.thigh[i]), kThigh * H));
-    const float shin = P.thigh[i] - P.knee[i];
-    const Vec2 ankle = add(knee, mul(dirA(shin), kShin * H));
-    const Vec2 fd = dirA(0.5f * kPi + kFootFollow * shin);
-    const Vec2 heel = sub(ankle, mul(fd, kHeel * H));
-    const Vec2 toe = add(ankle, mul(fd, kToe * H));
-    low = maxf(low, knee.y + 0.5f * kShinW * H);
-    low = maxf(low, maxf(heel.y, maxf(toe.y, ankle.y)) + 0.5f * kFootW * H);
-    const Vec2 elbow = add(shoulder, mul(dirA(P.shoulder[i]), kUpper * H));
-    const Vec2 hand = add(elbow, mul(dirA(P.shoulder[i] + P.elbow[i]), kFore * H));
-    mid = add(mid, mul(hand, 0.5f));
+namespace {
+
+// Steam: puffs leave the pot kSteamGap apart and each lives kSteamLife,
+// rising kSteamRise px (fast, then slowing) and fanning out side to side.
+constexpr float kSteamGap = 0.16f, kSteamLife = 0.85f, kSteamRise = 34.f;
+
+bool steamOn(const Steam& s) { return s.t >= 0.f && s.t < kSteamGap * (float)s.n + kSteamLife; }
+
+bool steamPuff(const Steam& s, int i, Vec2& c, float& r) {
+  const float a = s.t - kSteamGap * (float)i;
+  if (s.t < 0.f || a <= 0.f || a >= kSteamLife) return false;
+  const float u = a / kSteamLife;
+  r = (1.5f + 3.5f * minf(1.f, u * 4.f)) * (1.f - u * u);
+  if (r < 0.6f) return false;
+  const float side = (i & 1) ? 1.f : -1.f;
+  c = Vec2{s.at.x + side * (1.5f + 6.f * u) + 1.5f * (float)(i - 2), s.at.y - kSteamRise * easeOutCubic(u)};
+  return true;
+}
+
+// Skip: the first flight is longer; each hop after it is shorter and lower.
+constexpr float kSkipFlight = 0.45f, kSkipHop = 0.3f, kSkipDecay = 0.8f, kRingLife = 1.6f;
+
+void skipStone(const Skip& k, Vec2& c, bool& flying) {
+  flying = false;
+  c = k.p[0];
+  for (int i = 1; i <= k.n && i <= SKIP_MAX; ++i) {
+    const float t0 = skipHitTime(k, i - 1), t1 = skipHitTime(k, i);
+    if (k.t >= t0 && k.t < t1) {
+      const float u = (k.t - t0) / (t1 - t0);
+      const float h = i == 1 ? 8.f : 6.f * powf(0.7f, (float)(i - 2));
+      c = Vec2{lerp(k.p[i - 1].x, k.p[i].x, u), lerp(k.p[i - 1].y, k.p[i].y, u) - 4.f * h * u * (1.f - u)};
+      flying = true;
+      return;
+    }
   }
-  low = maxf(low, head.y + kHeadR * H);
-  const float sx = h.facing < 0 ? -1.f : 1.f;
-  return Vec2{h.feet.x + sx * mid.x, h.feet.y - low - P.lift * H + mid.y};
+}
+
+// Leaf outline along +x from the stem end, and the stem.
+const float kLeaf[6][2] = {{0.f, 0.f}, {1.6f, -1.7f}, {4.2f, -2.1f}, {6.8f, 0.f}, {4.2f, 1.9f}, {1.6f, 1.5f}};
+
+void leafPts(const Leaf& l, Vec2 out[6], Vec2& stem) {
+  const float c = cosT(l.rot), sn = sinT(l.rot);
+  for (int i = 0; i < 6; ++i)
+    out[i] = Vec2{l.pos.x + c * kLeaf[i][0] - sn * kLeaf[i][1], l.pos.y + sn * kLeaf[i][0] + c * kLeaf[i][1]};
+  stem = Vec2{l.pos.x - c * 2.f, l.pos.y - sn * 2.f};
+}
+
+}  // namespace
+
+Rect steamBounds(const Steam& s) {
+  if (!steamOn(s)) return kEmpty;
+  Ext e;
+  e.pt(Vec2{s.at.x - 16.f, s.at.y - kSteamRise - 6.f});
+  e.pt(Vec2{s.at.x + 16.f, s.at.y + 6.f});
+  return e.rect();
+}
+
+void steamDraw(const Steam& s, Surface& dst, const Rect& clip, const Palette& pal) {
+  if (!overlaps(steamBounds(s), clip)) return;
+  for (int i = 0; i < s.n; ++i) {
+    Vec2 c;
+    float r;
+    if (steamPuff(s, i, c, r)) fillEllipse(dst, c, r, r * 0.85f, pal[SMOKE], clip);
+  }
+}
+
+bool steamSame(const Steam& a, const Steam& b) { return sameV(a.at, b.at) && a.t == b.t && a.n == b.n; }
+
+float skipHitTime(const Skip& k, int i) {
+  if (i <= 0) return 0.f;
+  float t = kSkipFlight, hop = kSkipHop;
+  for (int j = 2; j <= i && j <= SKIP_MAX; ++j) {
+    t += hop;
+    hop *= kSkipDecay;
+  }
+  (void)k;
+  return t;
+}
+
+float skipEndTime(const Skip& k) { return skipHitTime(k, k.n) + kRingLife; }
+
+Rect skipBounds(const Skip& k) {
+  if (k.t < 0.f || k.t >= skipEndTime(k) || k.n == 0) return kEmpty;
+  Ext e;
+  for (int i = 0; i <= k.n && i <= SKIP_MAX; ++i) {
+    e.pt(Vec2{k.p[i].x - 15.f, k.p[i].y - 10.f});
+    e.pt(Vec2{k.p[i].x + 15.f, k.p[i].y + 6.f});
+  }
+  return e.rect();
+}
+
+void skipDraw(const Skip& k, Surface& dst, const Rect& clip, const Palette& pal) {
+  if (!overlaps(skipBounds(k), clip)) return;
+  for (int i = 1; i <= k.n && i <= SKIP_MAX; ++i) {
+    const float age = k.t - skipHitTime(k, i);
+    if (age < 0.f || age >= kRingLife) continue;
+    const float u = age / kRingLife;
+    const float r = 3.f + 11.f * easeOutCubic(u);
+    const float th = 0.6f + 1.6f * (1.f - u);
+    fillEllipse(dst, k.p[i], r, 0.32f * r, pal[WATER_LIGHT], clip);
+    const float ri = r - th, ryi = 0.32f * r - 0.6f * th;
+    if (ri > 0.5f && ryi > 0.4f) fillEllipse(dst, k.p[i], ri, ryi, pal[WATER], clip);
+  }
+  Vec2 c;
+  bool flying;
+  skipStone(k, c, flying);
+  if (flying) fillEllipse(dst, c, 1.8f, 1.3f, pal[ACTOR], clip);
+}
+
+bool skipSame(const Skip& a, const Skip& b) {
+  if (a.t != b.t || a.n != b.n) return false;
+  for (int i = 0; i <= SKIP_MAX; ++i)
+    if (!sameV(a.p[i], b.p[i])) return false;
+  return true;
+}
+
+Rect leafBounds(const Leaf& l) {
+  if (!l.on) return kEmpty;
+  Ext e;
+  e.pt(l.pos, 7.5f);
+  return e.rect();
+}
+
+void leafDraw(const Leaf& l, Surface& dst, const Rect& clip, const Palette& pal) {
+  if (!overlaps(leafBounds(l), clip)) return;
+  Vec2 p[6], stem;
+  leafPts(l, p, stem);
+  fillPolygon(dst, p, 6, pal[ACTOR], clip);
+  strokeCapsule(dst, stem, l.pos, 0.9f, pal[ACTOR], clip);
+}
+
+bool leafSame(const Leaf& a, const Leaf& b) {
+  return a.on == b.on && sameV(a.pos, b.pos) && a.rot == b.rot && a.base_y == b.base_y;
+}
+
+Vec2 hikerHandsMid(const Hiker& h) {
+  const Vec2 a = hikerHandPos(h, 0), b = hikerHandPos(h, 1);
+  return Vec2{0.5f * (a.x + b.x), 0.5f * (a.y + b.y)};
 }
 
 namespace {

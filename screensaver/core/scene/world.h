@@ -32,6 +32,7 @@ struct FirePit {
   uint8_t state;     // FireState
   float intensity;   // 0..1, eased toward the state's target by the ambient step
   float kindle;      // KINDLING target, 0..1
+  float fuel;        // LIT target, 0..1: 1 a fresh fire, lower as it burns down
   float stones;      // 0..1, the ring of stones being laid (1 = all down)
   float clock;       // flicker clock, seconds
 };
@@ -39,15 +40,15 @@ struct FirePit {
 // Ground actors are drawn far to near by base y. FGPINE is a foreground pine
 // drawn again over the hiker when he walks behind it (only inside his bounds).
 enum ActorKind : uint8_t {
-  ACT_FIRE = 0, ACT_TUFT, ACT_HIKER, ACT_TENT, ACT_PACK, ACT_BAG, ACT_CAIRN, ACT_ITEM, ACT_FGPINE
+  ACT_FIRE = 0, ACT_TUFT, ACT_HIKER, ACT_TENT, ACT_PACK, ACT_BAG, ACT_CAIRN, ACT_ITEM, ACT_FGPINE, ACT_LEAF
 };
 struct ActorRef {
   uint8_t kind;
   uint8_t idx;
   int16_t base_y;
 };
-// Fire 1, tufts 14, hiker 1, props 4 + 6 items, pines 2 = 28; the rest is
-// room for stage 5's critters.
+// Fire 1, tufts 14, hiker 1, props 4 + 7 items, leaf 1, pines 2 = 30; the
+// rest is room for stage 5's critters.
 #define WORLD_ACTOR_MAX 40
 
 // What the spine layers on top of the rig, applied by worldTick after
@@ -62,6 +63,9 @@ struct HikerFx {
   float reach;                     // 0..1 near arm swung out straight toward reach_to
   float reach_to;                  // its shoulder angle: ~1.3 ahead (into the fire), ~0.25 down (into the water)
   float armload;                   // 0..1 the comically big armload drawn over the carried wood
+  // Arm i (0 near) blended by arm_w[i] toward absolute shoulder and elbow
+  // angles (sips, bites, a shrug, a throw), before `reach` is applied.
+  float arm_w[2], arm_sh[2], arm_el[2];
 };
 
 // Previous bounds per element, so a move dirties both where it was and where it is.
@@ -75,6 +79,11 @@ struct WorldDirty {
   Rect hiker;
   Rect tent, pack, bag, cairn;
   Rect item[ITEM_COUNT];
+  Rect steam, skip, leaf;
+  Steam steam_s;
+  Skip skip_s;
+  Leaf leaf_s;
+  float fade;
   Tent tent_s;                     // prop state last tick (a prop that did not change marks nothing)
   PackProp pack_s;
   FoodBag bag_s;
@@ -101,6 +110,12 @@ struct World {
   FoodBag bag;
   Cairn cairn;
   Item items[ITEM_COUNT];
+  Steam steam;       // the pot boiling over (dinner b)
+  Skip skip;         // a skipped stone and its rings (skip_stone filler)
+  Leaf leaf;         // the leaf that lands on his knee (stream_listen filler)
+  // Whole-frame fade to ACTOR (near black): 0 none, 1 black. The close ends
+  // on 1; the build beat brings the next loop up from it.
+  float fade;
   LoopPlan plan;
   SpineState spine;
   int n_actors;

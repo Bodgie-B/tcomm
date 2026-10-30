@@ -61,14 +61,17 @@ void sortActors(World& w) {
     a[n++] = ActorRef{ACT_PACK, 0, w.pack.held ? held_y : baseY(w.pack.pos.y)};
   if (w.bag.state == BAG_HUNG) a[n++] = ActorRef{ACT_BAG, 0, (int16_t)(w.land.camp.base_y - 1)};
   else if (w.bag.state == BAG_DROPPED) a[n++] = ActorRef{ACT_BAG, 0, baseY(w.bag.pos.y)};
+  else if (w.bag.state == BAG_FLYING) a[n++] = ActorRef{ACT_BAG, 0, held_y};
   if (w.cairn.n > 0) a[n++] = ActorRef{ACT_CAIRN, 0, baseY(w.cairn.pos.y)};
   for (int i = 0; i < ITEM_COUNT && n < WORLD_ACTOR_MAX; ++i) {
     const Item& it = w.items[i];
     if (it.held) {
       if (h.visible) a[n++] = ActorRef{ACT_ITEM, (uint8_t)i, held_y};
     }
+    else if (it.on_fire) a[n++] = ActorRef{ACT_ITEM, (uint8_t)i, (int16_t)(w.fire.pos.y + 6.f)};   // in front of the flames
     else if (it.down) a[n++] = ActorRef{ACT_ITEM, (uint8_t)i, baseY(it.pos.y)};
   }
+  if (w.leaf.on && n < WORLD_ACTOR_MAX) a[n++] = ActorRef{ACT_LEAF, 0, baseY(w.leaf.base_y)};
   for (int i = 1; i < n; ++i) {
     const ActorRef key = a[i];
     int j = i - 1;
@@ -103,6 +106,11 @@ void stepHiker(World& w) {
   P.lean += fx.lean;
   P.head += fx.head;
   P.lift += fx.lift;
+  for (int i = 0; i < 2; ++i) {
+    if (fx.arm_w[i] <= 0.f) continue;
+    P.shoulder[i] = lerp(P.shoulder[i], fx.arm_sh[i], fx.arm_w[i]);
+    P.elbow[i] = lerp(P.elbow[i], fx.arm_el[i], fx.arm_w[i]);
+  }
   if (fx.reach > 0.f) {   // near arm out straight
     P.shoulder[0] = lerp(P.shoulder[0], fx.reach_to, fx.reach);
     P.elbow[0] = lerp(P.elbow[0], 0.12f, fx.reach);
@@ -125,12 +133,14 @@ void stepHiker(World& w) {
     w.pack.pos = Vec2{m.x, fminf(m.y + 13.f, h.feet.y + 3.f)};
     w.pack.facing = (int8_t)h.facing;
   }
-  for (Item& it : w.items) {
+  for (int i = 0; i < ITEM_COUNT; ++i) {
+    Item& it = w.items[i];
     if (!it.held) continue;
-    it.pos = m;
+    it.pos = i == ITEM_FORK ? hikerHandPos(h, 0) : m;   // the fork stands in his near hand
     it.facing = (int8_t)h.facing;
     it.ground_y = h.feet.y;
   }
+  if (w.bag.state == BAG_FLYING) w.bag.rope = hikerHandPos(h, 0);
 
   // What he covers, with everything he holds, so a foreground pine he walks
   // behind also covers the dragged stick.
@@ -172,6 +182,7 @@ void worldBeginLoop(World& w, Rng& rng) {
   f.clock = 0.f;
 
   f.kindle = 0.f;
+  f.fuel = 1.f;
 
   buildReset(w.build);
   ambientInit(w, rng);
@@ -188,13 +199,20 @@ void worldBeginLoop(World& w, Rng& rng) {
   fx.path_x0 = fx.path_y0 = fx.path_x1 = fx.path_y1 = 0.f;
   fx.lean = fx.head = fx.lift = fx.reach = fx.armload = 0.f;
   fx.reach_to = 1.3f;
+  for (int i = 0; i < 2; ++i) fx.arm_w[i] = fx.arm_sh[i] = fx.arm_el[i] = 0.f;
   w.hiker_rect = kEmpty;
   tentInit(w.tent, c.tent);
   w.pack = PackProp{c.pack, 1, false, false};
   bagInit(w.bag, Vec2{(float)(w.land.camp_x - 82), 294.f});
   w.cairn = Cairn{c.cairn, 0, 1.f};
-  for (Item& it : w.items) it = Item{c.wood, false, false, 1, 1.f, c.wood.y};
+  for (Item& it : w.items) it = Item{c.wood, false, false, 1, 1.f, c.wood.y, false};
   w.items[ITEM_WOOD].pos = c.wood;
+  w.steam = Steam{Vec2{0.f, 0.f}, -1.f, 0};
+  w.skip.n = 0;
+  w.skip.t = -1.f;
+  for (Vec2& p : w.skip.p) p = Vec2{0.f, 0.f};
+  w.leaf = Leaf{false, Vec2{0.f, 0.f}, 0.f, 0.f};
+  w.fade = 1.f;   // a loop opens from black; the build beat lifts it
 
   sortActors(w);
 
@@ -205,6 +223,11 @@ void worldBeginLoop(World& w, Rng& rng) {
   for (Rect& r : d.smoke) r = kEmpty;
   d.hiker = d.tent = d.pack = d.bag = d.cairn = kEmpty;
   for (Rect& r : d.item) r = kEmpty;
+  d.steam = d.skip = d.leaf = kEmpty;
+  d.steam_s = w.steam;
+  d.skip_s = w.skip;
+  d.leaf_s = w.leaf;
+  d.fade = w.fade;
   d.tent_s = w.tent;
   d.pack_s = w.pack;
   d.bag_s = w.bag;
@@ -222,9 +245,17 @@ void worldTick(World& w, Rng& rng, Renderer& r) {
   for (Cloud& c : w.clouds) cloudStep(c);
   ambientStep(w, rng);
   stepHiker(w);
+  // The shadow in the lit tent breathes: rises up to 2 px and sinks, every 4.8 s.
+  // (Whole pixels, so it dirties the tent four times a breath, not every tick.)
+  w.tent.shadow_y = w.tent.lit && w.tent.shadow ? -floorf(1.f + sinT((float)w.tick / (4.8f * (float)SS_TICK_HZ))) : 0.f;
   sortActors(w);
 
   WorldDirty& d = w.dirty;
+  // A fade that moved repaints every strip.
+  if (w.fade != d.fade) {
+    r.markAllDirty();
+    d.fade = w.fade;
+  }
   const BuildState& b = w.build;
 
   // Build-up: rebuild the cache when the set of cached layers changes (once
@@ -280,10 +311,16 @@ void worldTick(World& w, Rng& rng, Renderer& r) {
           !itemSame(w.items[i], d.item_s[i]));
     d.item_s[i] = w.items[i];
   }
+  track(r, d.steam, steamBounds(w.steam), !steamSame(w.steam, d.steam_s));
+  track(r, d.skip, skipBounds(w.skip), !skipSame(w.skip, d.skip_s));
+  track(r, d.leaf, leafBounds(w.leaf), !leafSame(w.leaf, d.leaf_s));
   d.tent_s = w.tent;
   d.pack_s = w.pack;
   d.bag_s = w.bag;
   d.cairn_s = w.cairn;
+  d.steam_s = w.steam;
+  d.skip_s = w.skip;
+  d.leaf_s = w.leaf;
 }
 
 void worldDrawStatic(const World& w, Surface& frame, const Palette& pal, float mood) {
@@ -313,8 +350,9 @@ void worldDrawDynamic(const World& w, Surface& strip, const Rect& clip, const Pa
   // 3. Build-up: the layers animating now and every built layer in front of them.
   landscapeDrawLayers(w.land, strip, clip, pal, mood, b, BL_RIDGES, BL_COUNT - 1);
 
-  // 4. Stream highlights.
+  // 4. Stream highlights, and a skipped stone's rings on the water.
   ambientDrawGlints(w, strip, clip, pal);
+  skipDraw(w.skip, strip, clip, pal);
 
   // 5. Ground actors far to near.
   for (int i = 0; i < w.n_actors; ++i) {
@@ -331,6 +369,7 @@ void worldDrawDynamic(const World& w, Surface& strip, const Rect& clip, const Pa
       case ACT_BAG: bagDraw(w.bag, strip, clip, pal); break;
       case ACT_CAIRN: cairnDraw(w.cairn, strip, clip, pal); break;
       case ACT_ITEM: itemDraw((ItemId)a.idx, w.items[a.idx], strip, clip, pal); break;
+      case ACT_LEAF: leafDraw(w.leaf, strip, clip, pal); break;
       case ACT_FGPINE: {   // only over the hiker: elsewhere the cached pine is already right
         const Rect c = clip.clipped(w.hiker_rect);
         if (!c.empty()) landscapeDrawFgPine(w.land, a.idx, strip, c, pal);
@@ -340,8 +379,16 @@ void worldDrawDynamic(const World& w, Surface& strip, const Rect& clip, const Pa
     }
   }
 
-  // 6. Smoke above the fire.
+  // 6. Smoke above the fire, and steam off a pot boiling over.
   ambientDrawSmoke(w, strip, clip, pal);
+  steamDraw(w.steam, strip, clip, pal);
+
+  // 7. The loop's fade, over everything.
+  if (w.fade > 0.f) {
+    const float a = w.fade >= 1.f ? 255.f : w.fade * 255.f + 0.5f;
+    const uint8_t alpha = (uint8_t)a;
+    for (int y = clip.y0; y < clip.y1; ++y) blendSpan(strip, y, clip.x0, clip.x1, pal[ACTOR], alpha);
+  }
 }
 
 }  // namespace ss

@@ -287,3 +287,108 @@ scratch slot for a tween's start value.
    left open in stage 3.
 4. **The tent is TENT orange in every mood.** At dusk the unlit tent may want a
    darker key. That is a palette decision.
+
+## Pause state (second half of stage 4, 2026-10-30)
+
+Stopped on request before the machine was powered off. The tree builds clean
+and all 6 ctest suites pass. Nothing committed.
+
+### Finished
+
+- **Dinner** (3 variants, `spine.cpp` kDinnerA/B/C, 38/41/33 s). a: mug from
+  where it lies or the pack (`AT_MUG`), sits, sips every 6 s via `fx.arm_*`,
+  leaves the mug by the fire. b: pot carried (CARRY_MUG proxy, pot drawn over
+  it), set on the fire (`Item::on_fire`, sorted in front of the flames), steam
+  burst (`Steam`, 3..5 puffs, `plan.steam_n`), half-yelp, hooks it off with
+  CARRY_STICK, eats from it. c: rummages, holds up `ITEM_FORK` at arm's length,
+  shrugs (lift 2 px + forearms out), quick bites, sets it down. Stage 5 hook:
+  `doit(hookDinnerCritters)` (empty) before the eating in each variant.
+- **Foodbag** (3 variants, 38/48/47 s; longer than the brief's ~30 s because
+  the pack, the bag pine and the tent door are ~600 px of walking). He stands
+  left of the branch tip facing the tree. a: sack on the rope, REACH_UP, line
+  eases up with easeOutBack. b: two wind-up swings per toss, `BAG_FLYING` with
+  the rope to his hand, two short tosses fall back into his hand, the third
+  goes over and hangs; damped 3-swing settle. c: strain (barely lifts,
+  trembling lean), head scratch, crouch and heave with a 35% overshoot. All end
+  at the tent door: hidden (`fx.on = false`), `tent.lit`, shadow, breathing
+  (`Tent::shadow_y`, whole px, from `w.tick` in worldTick).
+- **Bear** placeholder: 40 s, lit tent with shadow; `bearUpdate` burns
+  `fire.fuel` (new LIT target) from 1 to 0.45 over the beat.
+- **Close** (3 variants, 22/32/24 s): light out, `FIRE_EMBERS`, smoke stops
+  (`Ambient::smoke_k`, eased on the sub-tick), fade over the last 2.5 s
+  (`closeUpdate`, from the beat's t, so it is 1 on the last tick). b: emerges
+  (`doEmerge`), prods the fire twice (fuel flares), looks up 6 s, back in. c:
+  light flickers out/on twice then out. Stage 5 hook: `doit(hookTheft)`.
+- **Fade**: `World::fade`, blendSpan of ACTOR over every strip row last in
+  `worldDrawDynamic`; any change marks all strips. `worldBeginLoop` sets 1; the
+  build beat clears it over 1.1 s (0 by tick 30). `appFade()` added.
+- **Fillers** (6, `kFill*`, each starts by standing up wherever he is and ends
+  sitting at `camp.sit` facing the fire): mug_sunset 47 s, read 50 s (new
+  reading rock appended to `ls.rocks` in `spineLayout`, behind the fire on its
+  right), cairn 20 + 7 s per stone (4..6, `OP_REPEAT` loop), skip_stone 36 s
+  (`Skip` rings + stone), cloud_watch 58 s (LIE ~40 s, one shift), stream_listen
+  46 s (`Leaf`, ACTOR, rests on top of the knee, slides off when he stands and
+  stays on the ground). `spinePlan`: 2..4 fillers, weighted, no repeats
+  (mug_sunset x3 at mood >= 3.5); slots after fire and dinner, a 3rd after
+  dinner, with 4 the first after setup; each filler has its own pause.
+- **Loop length policy**: no final ambient beat; the loop ends with the close.
+  Pauses (8..20 s) are nudged round robin until the loop is 490..650 s.
+  `spineLoopTicks`, `appLoopTicks()`. Measured 495..650 s over 20 seeds.
+- **Interpreter**: `OP_GO` (auto route: behind the fire pit when crossing it,
+  a sideways waypoint when a move is steeper than wide), `OP_REPEAT`
+  (`repeatWhile(pred, back)`), `faceTo(anchor)`, new anchors, `SpineState::v0`
+  and `target`, `ScriptRun::beat_ticks/done_at`. `-DSS_SPINE_TRACE` prints where
+  each script ended in its beat (used to set the durations).
+- **Rig**: `hikerHandPos(h, i)` added to hiker.h/.cpp (approved); `hikerHandsMid`
+  in props.cpp now averages it (the mirrored kinematics are gone).
+  `HikerFx::arm_w/arm_sh/arm_el` blend each arm to absolute angles.
+- **Tests** (`test_scene`): rollover at the plan length; spine determinism at
+  500..12000; quiet corner every 250 ticks over two loops x 3 seeds (fade
+  samples skipped, <= 6); all 22 variants and 6 fillers in frame while visible
+  (seeds to 60; found in 6); arrival..dinner and fillers end in frame,
+  foodbag/close end in the tent; no overruns for 60 seeds (close counts an
+  unfinished script when its fade starts); loop length 480..660 s for 20 seeds;
+  fade 1 at the end, 0 by tick 30; whole-loop strips budget; props sheet has the
+  fork, flying bag, steam, rings and leaf. The stage 2 corner check's tick-0
+  sample moved to tick 30 (tick 0 is black by design).
+
+### Numbers
+
+`sizeof(App)` 60,232 bytes. Whole loop, render every tick, build excluded:
+seed 11 avg 7.16 strips (pauses 6.84), 0.103 ms/frame; seed 7 7.38 (7.26),
+0.107 ms; seed 42 7.26 (6.96), 0.756 ms (one noisy timing run; not
+re-measured). Max 15 strips during the fades.
+
+### Changed after viewing frames
+
+1. The leaf landed inside the knee silhouette (ACTOR on ACTOR) and vanished:
+   it now rests 3.5 px higher, tip up, so it shows on top of the knee.
+2. Standing right of the bag-branch tip he hid the branch: he now stands left
+   of the tip facing the tree, and the tosses were re-aimed.
+3. Tosses barely rose above his hand: apexes raised (44..58 px above the tip),
+   underarm sweep ends at 2.0 rad instead of 2.5.
+4. Foodbag overran every seed (walking): long walks at 36 px/s, durations set
+   from the trace (a 38, b 48, c 47).
+
+### Stubbed / not done
+
+- **`--loops N` in `ss_preview` is not started** (nor its README row). Plan:
+  in `preview_main.cpp`, when `--loops N` is given, loop `appTick` with no
+  render; on each tick that returns true print
+  `loop=L seed=S length=Ts plan=...` using the tick count before rollover
+  (or `appLoopTicks` read at loop start), stop after N; add the option to
+  `previewParseArgs`/`previewUsage` and the README table.
+- Not re-checked by eye: close a, the bear placeholder's burn-down, dinner b's
+  steam puffs at full frame rate (only coarse sheets), the loop fade-in.
+- Bear stays a placeholder for stage 5.
+
+### Open items
+
+1. The bag branch tip (y 294) is at the hiker's chest; the hung bag hangs at
+   his hip. Reads as "hung from a branch" but too low for the bear beat. A
+   higher branch is a landscape.cpp change (not made).
+2. The food bag beat runs 38..48 s, not ~30 s (walking distances).
+3. The shrug uses `fx.lift` (whole body up 2 px): the rig has no shoulder raise.
+4. The page turn is ~0.3 s, not 2 frames (2 ticks would not show at --every 4).
+5. Items left out (mug, pot, fork, book, leaf) stay for the rest of the loop,
+   ready for the stage 5 theft hook.

@@ -50,6 +50,9 @@ struct Ambient {
   // Beats set the target; the sub-tick step eases toward it.
   float smoke_pull, smoke_pull_to;
   float smoke_to_x;
+  // Smoke amount: 1 normal, 0 none (the fire put to bed). Eases toward
+  // smoke_k_to on the sub-tick, with the puffs.
+  float smoke_k, smoke_k_to;
 };
 
 // Loop start. Picks the swaying tufts (flags them in the landscape so the

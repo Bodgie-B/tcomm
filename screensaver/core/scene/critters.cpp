@@ -1278,6 +1278,7 @@ void critterTick(Critter& c, float dt) {
       c.blend_kind = BLEND_LAND;
       c.moving = false;
       c.gait_w = 0.f;
+      c.pose = c.from;   // this tick still shows the gait pose; the blend starts from it next tick
     }
   }
 
@@ -1292,6 +1293,7 @@ void critterTick(Critter& c, float dt) {
       startAction(c, CA_CLIMB, kArriveBlend);
       c.climbing = false;
       c.gait_w = 0.f;
+      c.pose = c.from;   // as above: no one-tick pop to the neutral pose
     } else if (step > 0.f) {
       c.feet.y += remain > 0.f ? step : -step;
     }

@@ -65,6 +65,9 @@ void beatUpdate(SceneCtx& ctx, float t, float) {
   buildSetProgress(w.build, t);
   // The ring of stones is laid; the hiker lights it in the fire beat.
   w.fire.stones = window(buildFireT(w.build), 0.0f, 0.7f);
+  // The loop opens from the last one's black: up over the first 1.1 s (clear
+  // by tick 30), while the sky is still a flat color.
+  w.fade = 1.f - easeInOut(clamp01(t * SS_BUILD_SECONDS / 1.1f));
 }
 
 // Leaving the beat early (a jump) must still finish the build.
@@ -72,6 +75,7 @@ void beatEnd(SceneCtx& ctx) {
   World& w = *ctx.w;
   buildSetProgress(w.build, 1.f);
   w.fire.stones = 1.f;
+  w.fade = 0.f;
 }
 
 }  // namespace

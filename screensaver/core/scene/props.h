@@ -33,6 +33,7 @@ struct Tent {
   bool lit;          // lantern inside: TENT_LIT body
   bool shadow;       // the hiker's shadow on the wall (drawn when lit)
   float shadow_x;    // shadow center offset from pos.x
+  float shadow_y;    // shadow offset in y (World breathes it, whole px)
 };
 
 void tentInit(Tent& t, Vec2 pos);
@@ -57,17 +58,20 @@ bool packSame(const PackProp& a, const PackProp& b);
 
 // ---- food bag ------------------------------------------------------------------
 
-enum BagState : uint8_t { BAG_NONE = 0, BAG_CARRIED, BAG_HUNG, BAG_DROPPED };
+enum BagState : uint8_t { BAG_NONE = 0, BAG_CARRIED, BAG_HUNG, BAG_DROPPED, BAG_FLYING };
 
 // HUNG: a sack on a line from the camp pine's branch tip; `line` and `swing`
 // let a beat hoist it and the bear shake it. DROPPED: lying at `pos`.
-// CARRIED: not drawn (the hiker draws CARRY_BAG).
+// CARRIED: not drawn (the hiker draws CARRY_BAG). FLYING: thrown; the sack's
+// neck is at `pos`, tilted by `swing`, with the rope trailing to `rope` (his
+// hand; World keeps it there).
 struct FoodBag {
   uint8_t state;     // BagState
   Vec2 tip;          // branch tip the line hangs from
   float line;        // px from the tip to the sack's neck
   float swing;       // radians from straight down, + toward +x
-  Vec2 pos;          // DROPPED: where it lies
+  Vec2 pos;          // DROPPED: where it lies; FLYING: the neck
+  Vec2 rope;         // FLYING: the rope's other end
 };
 
 void bagInit(FoodBag& b, Vec2 tip);
@@ -95,7 +99,10 @@ bool cairnSame(const Cairn& a, const Cairn& b);
 
 // WOOD is the pile by the fire; `size` grows it (1 an armload, ~1.6 two).
 // STICK held is dragged: from the hiker's hands to the ground behind him.
-enum ItemId : uint8_t { ITEM_MUG = 0, ITEM_BOOK, ITEM_POT, ITEM_STICK, ITEM_SHOE, ITEM_WOOD, ITEM_COUNT };
+// FORK held stands upright in his near hand (the dinner c gag); down it lies flat.
+enum ItemId : uint8_t {
+  ITEM_MUG = 0, ITEM_BOOK, ITEM_POT, ITEM_STICK, ITEM_SHOE, ITEM_WOOD, ITEM_FORK, ITEM_COUNT
+};
 
 struct Item {
   Vec2 pos;          // on the ground: base center; held: the hands (World sets it)
@@ -104,6 +111,7 @@ struct Item {
   int8_t facing;
   float size;        // scale, 1 normal
   float ground_y;    // held: ground under the hiker
+  bool on_fire;      // sits on the fire (the pot): drawn just in front of the flames
 };
 
 Rect itemBounds(ItemId id, const Item& it);
@@ -111,10 +119,52 @@ void itemDraw(ItemId id, const Item& it, Surface& s, const Rect& clip, const Pal
 bool itemSame(const Item& a, const Item& b);
 const char* itemName(ItemId id);
 
+// ---- small effects the spine drives ---------------------------------------------
+// Each is plain data set by a script action every tick (no randomness and no
+// clock of its own), drawn from its fields alone, with bounds from the same
+// geometry.
+
+// Steam boiling over from a pot: `n` (3..5) puffs burst from `at` one after
+// another and rise fast. `t` seconds since the burst; < 0 is off.
+struct Steam {
+  Vec2 at;
+  float t;
+  uint8_t n;
+};
+Rect steamBounds(const Steam& s);
+void steamDraw(const Steam& s, Surface& dst, const Rect& clip, const Palette& pal);
+bool steamSame(const Steam& a, const Steam& b);
+
+// A skipped stone: thrown from p[0], it touches the water at p[1..n] and sinks
+// at p[n]; each touch leaves a ring that spreads and thins. `t` seconds since
+// the throw; < 0 is off.
+#define SKIP_MAX 4
+struct Skip {
+  Vec2 p[SKIP_MAX + 1];
+  uint8_t n;
+  float t;
+};
+Rect skipBounds(const Skip& k);
+void skipDraw(const Skip& k, Surface& dst, const Rect& clip, const Palette& pal);
+bool skipSame(const Skip& a, const Skip& b);
+float skipHitTime(const Skip& k, int i);   // seconds after the throw the stone touches p[i]
+float skipEndTime(const Skip& k);          // the last ring has gone
+
+// One leaf (ACTOR, like every small silhouette), stem end at `pos`, turned by
+// `rot` turns. `base_y` sorts it among the ground actors.
+struct Leaf {
+  bool on;
+  Vec2 pos;
+  float rot;
+  float base_y;
+};
+Rect leafBounds(const Leaf& l);
+void leafDraw(const Leaf& l, Surface& dst, const Rect& clip, const Palette& pal);
+bool leafSame(const Leaf& a, const Leaf& b);
+
 // ---- what the hiker holds that his rig does not draw ---------------------------
 
-// Midpoint of the hiker's hands in frame space, from the composed pose. Mirrors
-// the forward kinematics in hiker.cpp (kept in step by a test in test_scene).
+// Midpoint of the hiker's hands in frame space (hikerHandPos for both).
 Vec2 hikerHandsMid(const Hiker& h);
 
 // An armload far too big: logs piled on top of the carried wood (firewood beat

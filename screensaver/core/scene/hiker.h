@@ -84,6 +84,9 @@ void hikerCarry(Hiker& h, CarryId c);
 void hikerTick(Hiker& h, float dt);                           // advances blend, walk, breathing; dt 0 recomposes
 Rect hikerBounds(const Hiker& h);                             // every pixel hikerDraw can touch, plus 2 px
 void hikerDraw(const Hiker& h, Surface& s, const Palette& pal, const Rect& clip);
+// Hand i (0 near, 1 far) in frame space, from the composed pose (breathing and
+// grounding included): where hikerDraw puts the end of that forearm.
+Vec2 hikerHandPos(const Hiker& h, int i);
 
 // The pose table entry for `p` (what a finished blend lands on exactly).
 const HikerPose& hikerPoseDef(PoseId p);

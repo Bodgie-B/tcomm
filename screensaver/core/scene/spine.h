@@ -10,8 +10,12 @@
 // hook counts an overrun (tests require zero).
 //
 // Loop timeline (spineBuildTimeline): build, arrival, setup, firewood, fire,
-// dinner, foodbag, bear, close, each but the last followed by a pause, then
-// "ambient" for whatever is left of the 600 s.
+// dinner, foodbag, bear, close, each but the last followed by a pause. Calm
+// fillers (2 to 4, hiker only) sit in the pauses after fire and dinner (and
+// after setup when there are 4), each with a pause of its own after it. The
+// loop ends when the close does (its last 2.5 s fade the frame to black), so
+// a loop's length is the sum of its beats: 480 to 660 s, the pauses stretched
+// or squeezed within 8 to 20 s to land there.
 #pragma once
 
 #include "../anim/rng.h"
@@ -27,16 +31,25 @@ enum SpineBeatId : uint8_t {
   SB_ARRIVAL = 0, SB_SETUP, SB_FIREWOOD, SB_FIRE, SB_DINNER, SB_FOODBAG, SB_BEAR, SB_CLOSE, SB_COUNT
 };
 
-// Calm fillers for the long gaps (picked but not scheduled yet: the second
-// half of stage 4 adds them).
-enum FillerId : uint8_t { FILL_CAIRN = 0, FILL_READ, FILL_MUG, FILL_VIEW, FILL_NAP, FILL_COUNT };
+// Calm fillers for the long gaps (brief section 8): the hiker alone, 30 to 60 s
+// each, with real stillness in them.
+enum FillerId : uint8_t {
+  FILL_MUG_SUNSET = 0, FILL_READ, FILL_CAIRN, FILL_SKIP_STONE, FILL_CLOUD_WATCH, FILL_STREAM_LISTEN, FILL_COUNT
+};
+
+#define SPINE_FILLER_MAX 4
 
 struct LoopPlan {
   uint8_t arrival, setup, firewood, fire, dinner, foodbag, bear, close;   // variant index per beat
   uint8_t n_fillers;
-  uint8_t filler[4];            // FillerId
-  uint8_t pause_s[SB_COUNT];    // seconds of stillness after each spine beat
+  uint8_t filler[SPINE_FILLER_MAX];          // FillerId, in play order
+  uint8_t filler_after[SPINE_FILLER_MAX];    // SpineBeatId each one follows
+  uint8_t filler_pause_s[SPINE_FILLER_MAX];  // seconds of stillness after each filler
+  uint8_t pause_s[SB_COUNT];    // seconds of stillness after each spine beat (none after close)
   uint8_t away_s;               // firewood: seconds out of frame on the first trip
+  uint8_t cairn_add;            // cairn filler: stones he adds (4..6, capped by CAIRN_MAX)
+  uint8_t skip_n;               // skip_stone filler: touches on the water (3, sometimes 4)
+  uint8_t steam_n;              // dinner b: steam puffs when the pot boils over (3..5)
 };
 
 // Variants built for a beat (1 for the placeholders), and a plan's pick.
@@ -44,6 +57,8 @@ int spineVariantCount(int beat);
 uint8_t spineVariant(const LoopPlan& p, int beat);
 const char* spineBeatName(int beat);
 const char* spineFillerName(int filler);
+// Seconds a filler lasts in this plan (the cairn grows with its stones).
+int spineFillerSeconds(const LoopPlan& p, int filler);
 
 // Where things are this loop, from the fire pit and the landscape. Frame px;
 // "feet" points are where the hiker stands to do the thing.
@@ -63,6 +78,16 @@ struct CampLayout {
   Vec2 ford0, ford1;   // arrival c: near and far bank of the crossing
   Vec2 edge_l, edge_r; // just out of frame, left and right
   Vec2 cairn;       // cairn base, on the bank
+  Vec2 pack_work;   // feet while getting things out of the pack (facing it, on its right)
+  Vec2 bag_work;    // feet under the bag branch
+  Vec2 door;        // feet at the tent door
+  Vec2 pot_down;    // dinner b: where the pot is set down off the fire
+  Vec2 view;        // mug_sunset: sits looking out over the valley
+  Vec2 read;        // read: sits with his back to the reading rock
+  Vec2 lie;         // cloud_watch: hips while lying in the grass
+  Vec2 listen;      // stream_listen: sits on the bank
+  Vec2 skip;        // skip_stone: crouches at the water
+  Vec2 stones[2];   // cairn: where he picks the flat stones, either side of it
 };
 
 struct Step;   // spine.cpp
@@ -73,6 +98,10 @@ struct ScriptRun {
   uint8_t i;           // step running
   bool entered;        // step i has started
   uint16_t ticks;      // ticks since step i started
+  uint8_t leg;         // OP_GO: 0 walking to `via`, 1 to `goal`
+  Vec2 via, goal;
+  uint16_t beat_ticks; // ticks the beat has run
+  uint16_t done_at;    // beat_ticks when the script finished (0 while running)
 };
 
 struct SpineState {
@@ -80,18 +109,24 @@ struct SpineState {
   ScriptRun run;
   uint8_t overruns;    // spine beats that ended before their script
   float u0;            // scratch value an action keeps across its ticks (start of a tween)
+  Vec2 v0;             // scratch point (where a tween started)
+  uint8_t target;      // scratch count (the cairn's stone count to reach)
 };
 
 // Loop start: pick every variant, pause and filler from the loop RNG.
 void spinePlan(LoopPlan& p, Rng& rng, const Inputs& in);
 // Loop start, after the fire pit is placed: camp layout and the props' homes.
 void spineLayout(World& w);
-// Add the build beat, the spine beats with their pauses, and a final ambient
-// beat that brings the loop to exactly SS_LOOP_SECONDS.
+// Add the build beat, then the spine beats, pauses and fillers in order. The
+// loop ends with the close.
 void spineBuildTimeline(Timeline& tl, const LoopPlan& p);
+// Ticks the timeline for `p` lasts (the loop's length).
+uint32_t spineLoopTicks(const LoopPlan& p);
 // "arrival=1 setup=0 ... fillers=cairn,read" (fillers=none when empty).
 int spineFormatPlan(const LoopPlan& p, char* buf, size_t n);
 
-#define SS_LOOP_SECONDS 600
+// Loop length policy: the plan lands every loop in this range (seconds).
+#define SS_LOOP_MIN_SECONDS 480
+#define SS_LOOP_MAX_SECONDS 660
 
 }  // namespace ss
