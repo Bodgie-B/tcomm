@@ -144,7 +144,7 @@ footer { color: var(--muted); font-size: 0.88rem; }
   <div class="hero-title col" style="max-width: var(--wide)">
     <div class="eyebrow">TComm · campsite screensaver · handoff for Mike · 30 Oct 2026</div>
     <h1>Stage 1 is done: <span>the landscape</span></h1>
-    <p class="lede">The screensaver can now paint its whole Firewatch-style valley, in any time of day and weather, on a PC. Nothing has run on your panel yet. That is Stage 2, and it is yours to drive.</p>
+    <p class="lede">The screensaver can now paint its whole Firewatch-style valley, in any time of day and weather, on a PC. Next comes the animation itself, all of it in the PC preview so it can be judged before it goes anywhere near the panel.</p>
   </div>
   <figure>
     <div class="frame">
@@ -161,8 +161,8 @@ footer { color: var(--muted); font-size: 0.88rem; }
     <div><span class="k">Where the code is</span><span class="v"><code>screensaver</code> branch</span><span class="d">On GitHub at Bodgie-B/tcomm. Not merged into <code>main</code> yet.</span></div>
     <div><span class="k">Size</span><span class="v">33 files · ~5,000 lines</span><span class="d">8 commits, about a third of it tests.</span></div>
     <div><span class="k">Tests</span><span class="v">4 of 4 pass</span><span class="d">Re-run on a Mac today with the strict build flags.</span></div>
-    <div><span class="k">On the panel</span><span class="v">Not yet <span class="pill next">stage 2</span></span><span class="d">Everything about the ESP32 is unverified until then.</span></div>
-    <div><span class="k">Next step needs</span><span class="v">You + the board</span><span class="d">Your laptop, the USB cable, and about an evening to set up.</span></div>
+    <div><span class="k">On the panel</span><span class="v">Not yet <span class="pill later">stage 7</span></span><span class="d">Hardware waits until the animation has been reviewed.</span></div>
+    <div><span class="k">Next step needs</span><span class="v">Your laptop <span class="pill next">stage 2</span></span><span class="d">Preview on Windows, then the scene build-up and ambient life.</span></div>
   </div>
 </section>
 
@@ -228,7 +228,7 @@ footer { color: var(--muted); font-size: 0.88rem; }
       <div class="box empty">
         <h3>port_esp32/ · the panel</h3>
         <span class="small">Hands core the panel's screen memory and a 25-per-second tick.</span>
-        <span><span class="pill next">stage 2 · empty</span></span>
+        <span><span class="pill later">stage 7 · empty</span></span>
       </div>
     </div>
   </div>
@@ -269,7 +269,7 @@ footer { color: var(--muted); font-size: 0.88rem; }
         <tr><td><code>test_scene</code></td><td>Clouds cost 5 strips a frame; a time-of-day jump rebuilds all 15; a loop rolls over at exactly 10 minutes; the status-chip corner stays clear.</td><td class="ok">Pass</td></tr>
         <tr><td>Live window</td><td><code>ss_window</code> had never been built against the real SDL2 library. It now compiles and ran for several seconds without crashing on macOS.</td><td class="ok">Runs</td></tr>
         <tr><td>Windows build</td><td>Not tried. The build settings use GCC/Clang options, so Visual Studio's compiler will not accept them; MSYS2 is the likely path.</td><td class="muted">Unverified</td></tr>
-        <tr><td>On the panel</td><td>Speed, memory and colors on the ESP32-S3.</td><td class="muted">Stage 2</td></tr>
+        <tr><td>On the panel</td><td>Speed, memory and colors on the ESP32-S3.</td><td class="muted">Stage 7</td></tr>
       </tbody>
     </table>
   </div>
@@ -307,7 +307,7 @@ footer { color: var(--muted); font-size: 0.88rem; }
 
 <section class="col" aria-labelledby="loose">
   <h2 id="loose">Loose ends from the Stage 1 review</h2>
-  <p>None of these block Stage 2. Most are best fixed while working on the board.</p>
+  <p>None of these block the next stage. The color items wait for the real panel; the rest can be picked up during the preview stages.</p>
   <ol class="plain">
     <li>Build the background through the small fast buffer instead of straight into the big slow memory, and time it on the board.</li>
     <li>A one-line safety check on memory alignment at start-up.</li>
@@ -321,25 +321,21 @@ footer { color: var(--muted); font-size: 0.88rem; }
 <section class="col" aria-labelledby="next">
   <h2 id="next">What's next</h2>
   <div class="callout">
-    <h3>Stage 2: on the board</h3>
-    <p>Get the same valley onto the panel with the clouds drifting. <b>Done when</b> the clouds move at a steady 20 or more frames per second with no tearing or picture shift, and the serial log shows frame time, memory use and flash use.</p>
-    <p>What Claude will need from you along the way:</p>
-    <ul class="plain">
-      <li>The Waveshare example you flashed from, or permission to download Waveshare's examples for the 4.3C, so the screen setup is read from their code rather than guessed.</li>
-      <li>A choice of tool: Arduino (what Waveshare's examples mostly use, and what the main TComm brief leans toward) or ESP-IDF. Claude can recommend one; it is a once-for-the-whole-project decision.</li>
-      <li>The COM port, confirmed each time before it flashes. It has been COM5. Claude must never erase the flash without asking you.</li>
-      <li>A short phone video of the panel at the end, so the colors can be judged on the real screen.</li>
-    </ul>
+    <h3>Animation first, board second</h3>
+    <p>The brief's original order put the panel right after the foundation. The order is now: build every animation stage in the PC preview, watch whole loops together, and only once the look and the story land does the work move to hardware. The PC preview was always meant to be the main development loop, and the creative work is the part worth judging early.</p>
+    <p>The trade is that hardware limits show up late. To keep that risk small, every preview stage reports strips redrawn per frame and PC frame time against a proposed budget, and nothing in the scene may need more memory than the panel's fast memory can hold. The first board run replaces the proposed numbers with measured ones.</p>
+    <p>Each stage ends with short preview videos in <code>docs/screensaver/reviews/</code> on GitHub, so both of us can watch and comment before the next stage builds on it.</p>
   </div>
   <h3>The whole road</h3>
   <ol class="road">
     <li class="done"><span class="n">1</span><span class="t"><b>Foundation <span class="pill done">done</span></b><span>Drawing engine, colors, timing, PC preview, static landscape.</span></span></li>
-    <li class="next"><span class="n">2</span><span class="t"><b>On the board <span class="pill next">next</span></b><span>Same landscape on the panel at 20+ fps, with logging.</span></span></li>
-    <li><span class="n">3</span><span class="t"><b>Build-up and ambient life</b><span>Scene assembles itself; grass sway, stream flow, fire flicker. Runs an hour without a glitch.</span></span></li>
-    <li><span class="n">4</span><span class="t"><b>The hiker</b><span>Walk cycle, breathing, poses. Reads clearly as a silhouette.</span></span></li>
-    <li><span class="n">5</span><span class="t"><b>Story spine</b><span>Arrive, set up camp, evening, bed, one beat at a time.</span></span></li>
-    <li><span class="n">6</span><span class="t"><b>Critters</b><span>Animals and the small-moment scheduler.</span></span></li>
-    <li><span class="n">7</span><span class="t"><b>Surprises and variety</b><span>Ten loops in a row with no two alike.</span></span></li>
+    <li class="next"><span class="n">2</span><span class="t"><b>Build-up and ambient life <span class="pill next">next</span></b><span>Preview running on Windows first. Then the scene assembles itself; grass sway, stream flow, fire flicker. Runs an hour without a glitch.</span></span></li>
+    <li><span class="n">3</span><span class="t"><b>The hiker</b><span>Walk cycle, breathing, poses. Reads clearly as a silhouette.</span></span></li>
+    <li><span class="n">4</span><span class="t"><b>Story spine</b><span>Arrive, set up camp, fire, dinner, bear, bed, each with variants.</span></span></li>
+    <li><span class="n">5</span><span class="t"><b>Critters</b><span>Animals and the small-moment scheduler.</span></span></li>
+    <li><span class="n">6</span><span class="t"><b>Surprises and variety</b><span>Ten loops in a row with no two alike.</span></span></li>
+    <li><span class="n">★</span><span class="t"><b>Review gate</b><span>Watch whole loops. Does the look hold up, is it calm, is it funny? Fixes stay in the preview until yes.</span></span></li>
+    <li><span class="n">7</span><span class="t"><b>On the board</b><span>Toolchain, Waveshare's panel setup, the ESP32 port. Steady 20+ fps, no tearing, with logging. Needs the board, the COM port and a phone video at the end.</span></span></li>
     <li><span class="n">8</span><span class="t"><b>Hooks into TComm</b><span>Status chip, doorbell reaction, touch to reveal the main screen in under half a second.</span></span></li>
     <li><span class="n">9</span><span class="t"><b>Night and weather</b><span>Reviewed in a dark room on the real panel.</span></span></li>
     <li><span class="n">10</span><span class="t"><b>Lookout scene</b><span>Plays only at real sunset.</span></span></li>
@@ -353,14 +349,15 @@ footer { color: var(--muted); font-size: 0.88rem; }
     <table>
       <thead><tr><th>Path (on the <code>screensaver</code> branch)</th><th>What it is</th></tr></thead>
       <tbody>
-        <tr><td><code>docs/screensaver/STAGE2_START_HERE.md</code></td><td>The briefing for your Claude Code: current state and the recommended path. Point Claude at this first.</td></tr>
+        <tr><td><code>docs/screensaver/START_HERE.md</code></td><td>The briefing for your Claude Code: current state, the reordered plan, the budget rules, and what each stage hands back. Point Claude at this first.</td></tr>
+        <tr><td><code>docs/screensaver/reviews/</code></td><td>Where each stage's review videos and notes will land.</td></tr>
         <tr><td><code>docs/screensaver/SCREENSAVER_HANDOFF.md</code></td><td>The detailed Stage 1 engineering notes.</td></tr>
         <tr><td><code>docs/screensaver/CAMPSITE_SCREENSAVER_BRIEF.md</code></td><td>The creative and engineering brief.</td></tr>
         <tr><td><code>docs/screensaver/stage1-report/</code></td><td>This page and its pictures.</td></tr>
         <tr><td><code>screensaver/core/</code></td><td>The screensaver itself.</td></tr>
         <tr><td><code>screensaver/sim/</code></td><td>The PC preview programs.</td></tr>
         <tr><td><code>screensaver/tests/</code></td><td>The four test programs.</td></tr>
-        <tr><td><code>screensaver/port_esp32/</code></td><td>Empty. Stage 2 fills it.</td></tr>
+        <tr><td><code>screensaver/port_esp32/</code></td><td>Empty. Stage 7 fills it.</td></tr>
       </tbody>
     </table>
   </div>
