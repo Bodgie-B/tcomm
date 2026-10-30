@@ -6,6 +6,7 @@
 //       1..6 force mood 0..5, M release forced mood, W cycle weather, N toggle night,
 //       D doorbell, S new random seed, R restart same seed, P write PPM screenshot,
 //       ESC quit. The HUD line is in the window title.
+#define SDL_MAIN_HANDLED
 #include <SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,6 +30,7 @@ int main(int argc, char* argv[]) {
   g_rng ^= (uint64_t)time(nullptr) * 0x2545F4914F6CDD1Dull;
   if (!g_rng) g_rng = 1;
 
+  SDL_SetMainReady();
   if (SDL_Init(SDL_INIT_VIDEO) != 0) {
     fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
     return 1;

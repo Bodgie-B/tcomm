@@ -7,9 +7,9 @@ brief: `docs/screensaver/CAMPSITE_SCREENSAVER_BRIEF.md`.
 
 - `core/` portable C++17. Scene, scheduler, palettes, rasterizer. Public interface
   is `core/ss_app.h`. No platform calls. Built with strict warnings (`-Werror`).
-  - `core/scene/app_stub.cpp` is a TEMPORARY stub of `ss_app.h` (bands plus a
-    moving square). It is replaced by `scene/app.cpp` in stage 1 task D; delete
-    it then.
+  - `core/scene/app.cpp` implements `ss_app.h`; `core/scene/landscape.*` holds
+    the per-loop landscape geometry and drawing; `core/render/` is the strip
+    renderer with the static layer cache.
 - `sim/` PC preview. `preview_common.*` is the shared driver, `preview_main.cpp`
   is the headless PPM renderer, `window_main.cpp` is the SDL2 window.
 - `port_esp32/` panel firmware glue (not started).

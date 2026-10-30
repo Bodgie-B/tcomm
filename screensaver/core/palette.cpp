@@ -214,6 +214,7 @@ void computePalette(float mood, const WeatherTint& w, Palette& out) {
   float m = fmodf(mood, n);
   if (m < 0.f) m += n;
   if (m >= n) m = 0.f;   // m + n can round up to exactly n for tiny negatives
+  if (!(m >= 0.f && m < n)) m = 0.f;   // NaN / inf mood
   int i0 = (int)floorf(m);
   if (i0 > SS_MOOD_COUNT - 1) i0 = SS_MOOD_COUNT - 1;
   const int i1 = (i0 + 1) % SS_MOOD_COUNT;   // mood 5.x blends toward key 0

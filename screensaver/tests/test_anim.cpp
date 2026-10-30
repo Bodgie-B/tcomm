@@ -209,11 +209,11 @@ static Beat makeBeat(int n, float dur) {
 }
 
 static int expectedTicksUntilEnd(const float* durs, int n) {
-  // Boundary rule (see scheduler.cpp): leftover carries across beats, so beat k
-  // ends on tick ceil(cumulative_seconds_k * SS_TICK_HZ).
-  double cum = 0.0;
-  for (int i = 0; i < n; ++i) cum += (double)durs[i];
-  return (int)ceil(cum * SS_TICK_HZ - 1e-6);
+  // Boundary rule (see scheduler.cpp): whole ticks per beat, nothing carried, so
+  // each beat lasts ceil(duration * SS_TICK_HZ) ticks and the run is their sum.
+  int total = 0;
+  for (int i = 0; i < n; ++i) total += (int)ceil((double)durs[i] * SS_TICK_HZ - 1e-6);
+  return total;
 }
 
 static void testTimelineRun() {
@@ -227,7 +227,7 @@ static void testTimelineRun() {
   CHECK(tl.current == 0 && tl.currentBeat() != nullptr && tl.progress() == 0.f, "start puts us in beat 0");
   CHECK(g_logN == 1 && g_log[0].kind == 'B' && g_log[0].beat == 0, "start calls begin(0)");
 
-  // Expected from SS_TICK_HZ: beat ends at ceil(cum*HZ): 25, 38, 88 -> 25+13+50.
+  // Expected from SS_TICK_HZ: ceil(dur*HZ) ticks per beat, ends at 25, 38, 88 -> 25+13+50.
   const int e0 = expectedTicksUntilEnd(durs, 1);
   const int e1 = expectedTicksUntilEnd(durs, 2) - e0;
   const int e2 = expectedTicksUntilEnd(durs, 3) - e0 - e1;
@@ -256,7 +256,7 @@ static void testTimelineRun() {
 
   CHECK(g_updates[0] == e0 && g_updates[1] == e1 && g_updates[2] == e2, "update counts %d %d %d, expected %d %d %d",
         g_updates[0], g_updates[1], g_updates[2], e0, e1, e2);
-  CHECK(g_firstT[0] == 0.f && fabsf(g_firstT[1]) < 1e-5f, "first update of a beat has t~0 (carried leftover is 0 or <1 tick): %g, %g", (double)g_firstT[0],
+  CHECK(g_firstT[0] == 0.f && g_firstT[1] == 0.f, "first update of a beat has t = 0 (nothing carries across beats): %g, %g", (double)g_firstT[0],
         (double)g_firstT[1]);
   CHECK(g_lastT[0] < 1.f && g_lastT[2] < 1.f && g_lastT[0] > 0.9f, "last t values %g %g", (double)g_lastT[0], (double)g_lastT[2]);
 

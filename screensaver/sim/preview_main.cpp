@@ -1,9 +1,15 @@
-// Headless preview: simulate, render, write DIR/frame_%05d.ppm. POSIX (mkdir).
+// Headless preview: simulate, render, write DIR/frame_%05d.ppm.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#ifdef _WIN32
+#include <direct.h>
+#define SS_MKDIR(p) _mkdir(p)
+#else
 #include <sys/stat.h>
+#define SS_MKDIR(p) mkdir(p, 0755)
+#endif
 #include <chrono>
 
 #include "preview_common.h"
@@ -16,11 +22,11 @@ static bool mkdirP(const char* path) {
   for (size_t i = 1; i < len; i++) {
     if (tmp[i] == '/') {
       tmp[i] = 0;
-      if (mkdir(tmp, 0777) != 0 && errno != EEXIST) return false;
+      if (SS_MKDIR(tmp) != 0 && errno != EEXIST) return false;
       tmp[i] = '/';
     }
   }
-  if (mkdir(tmp, 0777) != 0 && errno != EEXIST) return false;
+  if (SS_MKDIR(tmp) != 0 && errno != EEXIST) return false;
   return true;
 }
 

@@ -33,7 +33,8 @@ struct App;   // opaque to the host; defined in core/scene/app.cpp
 #define SS_APP_BYTES (96 * 1024)
 
 // Start the screensaver. `storage` is SS_APP_BYTES of host memory. `seed` picks
-// the first loop; later loops reseed from the host RNG via `next_seed`.
+// the first loop; later loops reseed from the loop's own RNG, so a first seed
+// fully determines the sequence of loops.
 App* appStart(void* storage, const HostAlloc& alloc, uint64_t seed, const Inputs& in);
 void appStop(App* app, const HostAlloc& alloc);
 

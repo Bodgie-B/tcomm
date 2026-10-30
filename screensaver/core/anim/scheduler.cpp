@@ -1,25 +1,35 @@
 // Fixed-timestep timeline. See scheduler.h.
 //
-// Boundary rule: a beat ends on the first tick whose accumulated elapsed time
-// reaches its duration (with a 0.1% of a tick tolerance for float drift). On
-// that tick the beat's update has already run with the pre-increment t, then
-// end() is called, current advances, elapsed = leftover (never negative), and
-// the new beat's begin() is called. The new beat's first update happens on the
-// next tick. Leftover carries across beats, so the total number of tick() calls
-// is ceil(sum(durations) * SS_TICK_HZ), whatever the beat split.
+// Boundary rule: time is counted in whole ticks, never accumulated as float
+// seconds. A beat lasts dur_ticks = max(1, ceil(duration * SS_TICK_HZ - 1e-3))
+// ticks (the 1e-3 keeps float noise in duration * HZ from adding a tick). Its
+// update runs on each of those ticks with t = beat_ticks / (dur_ticks - 1)
+// computed before the increment, so the first update has t = 0 and the last
+// has t = 1 exactly (a one-tick beat gets t = 1). After the last update, end() is called, current advances and the new
+// beat's begin() runs; its first update is on the next tick. Nothing carries
+// across beats, so the total number of tick() calls is the sum of the
+// per-beat dur_ticks and a 600 s beat at 25 Hz ends on tick 15000 exactly.
+// Timeline::elapsed is derived as beat_ticks * SS_TICK_DT for progress().
 #include "scheduler.h"
 #include "ease.h"
+
+#include <math.h>
 
 namespace ss {
 
 namespace {
-constexpr float kBoundaryEps = SS_TICK_DT * 0.001f;
+// Whole ticks a beat lasts; at least 1.
+uint32_t beatDurTicks(const Beat& b) {
+  const float x = ceilf(b.duration * (float)SS_TICK_HZ - 1e-3f);
+  return (x >= 1.f) ? (uint32_t)x : 1u;
+}
 }
 
 void Timeline::reset() {
   count = 0;
   current = -1;
   elapsed = 0.f;
+  beat_ticks = 0;
   tick_count = 0;
   pending_count = 0;
 }
@@ -42,6 +52,7 @@ void Timeline::insertAfterCurrent(const Beat& b) {
 void Timeline::start(SceneCtx& ctx) {
   tick_count = 0;
   elapsed = 0.f;
+  beat_ticks = 0;
   if (count <= 0) {
     current = -1;
     return;
@@ -55,19 +66,21 @@ bool Timeline::tick(SceneCtx& ctx) {
   if (current < 0 || current >= count) return false;
 
   const Beat& b = beats[current];
-  const float t = (b.duration > 0.f) ? clamp01(elapsed / b.duration) : 1.f;
+  const uint32_t dur_ticks = beatDurTicks(b);
+  // t spans 0 on the first update to exactly 1 on the last, so a beat's final
+  // pose is reached and the next beat can hold it.
+  const float t = dur_ticks > 1 ? clamp01((float)beat_ticks / (float)(dur_ticks - 1)) : 1.f;
   if (b.update) b.update(ctx, t, SS_TICK_DT);
 
-  elapsed += SS_TICK_DT;
-  if (elapsed + kBoundaryEps >= b.duration) {
-    float leftover = elapsed - b.duration;
-    if (leftover < 0.f) leftover = 0.f;
+  ++beat_ticks;
+  elapsed = (float)beat_ticks * SS_TICK_DT;
+  if (beat_ticks >= dur_ticks) {
     if (b.end) b.end(ctx);
     ++current;
-    elapsed = leftover;
+    beat_ticks = 0;
+    elapsed = 0.f;
     if (current >= count) {
       current = -1;
-      elapsed = 0.f;
       return false;
     }
     if (beats[current].begin) beats[current].begin(ctx);
@@ -95,6 +108,7 @@ void Timeline::jumpTo(SceneCtx& ctx, int index) {
   if (current >= 0 && current < count && beats[current].end) beats[current].end(ctx);
   current = index;
   elapsed = 0.f;
+  beat_ticks = 0;
   if (beats[current].begin) beats[current].begin(ctx);
 }
 

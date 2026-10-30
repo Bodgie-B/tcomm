@@ -36,7 +36,8 @@ struct Timeline {
   Beat beats[SS_MAX_BEATS];
   int count;
   int current;        // index of the running beat, or -1 before start / after end
-  float elapsed;      // seconds into the current beat
+  float elapsed;      // seconds into the current beat (derived from beat_ticks)
+  uint32_t beat_ticks;   // whole ticks run in the current beat; drives the beat boundary
   uint32_t tick_count;   // ticks since loop start
 
   Event pending[SS_MAX_PENDING_EVENTS];
