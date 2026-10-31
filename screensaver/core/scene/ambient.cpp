@@ -350,6 +350,12 @@ void ambientDrawSmoke(const World& w, Surface& s, const Rect& clip, const Palett
 void fireDraw(const FirePit& f, Surface& s, const Rect& clip, const Palette& pal) {
   if (!overlaps(fireBounds(f), clip)) return;
   drawStones(f, s, clip, pal[ROCK], false);
+  if (f.ash > 0.f && f.stones > 0.f) {   // last night's ash: a low grey mound, a dark char log across it
+    const float k = f.ash * f.stones;
+    fillEllipse(s, Vec2{f.pos.x, f.pos.y - 1.5f * k}, 10.f * k, 3.6f * k, mixRGB(pal[ROCK], pal[SMOKE], 0.55f), clip);
+    strokeCapsule(s, Vec2{f.pos.x - 6.f * k, f.pos.y - 1.f * k}, Vec2{f.pos.x + 5.f * k, f.pos.y - 3.2f * k}, 1.6f * k,
+                  mixRGB(pal[TRUNK], pal[ACTOR], 0.4f), clip);
+  }
   if (f.intensity > 0.03f) {
     const float I = f.intensity;
     const float H = 32.f * I, bw = 10.f + 3.f * I;   // about a third of the hiker's height

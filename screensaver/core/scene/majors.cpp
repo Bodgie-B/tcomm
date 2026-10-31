@@ -3444,11 +3444,22 @@ typedef void (*MajorTickFn)(World&, float);
 // Slots a major can go in (bits: 1 after setup, 2 after fire, 4 after dinner, 8 after foodbag).
 constexpr uint8_t kOut = 1 | 2 | 4, kTent = 8;
 
+// Families a major plays in (bit = SpineFamily). The evening keeps its full
+// pool. The morning and midday (SPINES_WEATHER_LOOKOUT_SPEC section 1): the
+// daylight majors and the stream vignettes; stargaze, firefly_jar,
+// shadow_theater and raccoon_pack stay the evening's. fishing_good is left out
+// of the morning (judgment call): it leaves a fish roasting over the fire for
+// the evening's dinner, and the morning has no dinner to eat it in. Midday has
+// it as the spec lists it (its implementer decides what lunch does with the fish).
+constexpr uint8_t kEve = 1u << SF_EVENING, kMorn = 1u << SF_MORNING, kMid = 1u << SF_MIDDAY;
+constexpr uint8_t kDay = kEve | kMorn | kMid;
+
 struct MajorDef {
   const char* name;
   uint8_t seconds[2];    // per variant (0 and 1; others use 0's)
   float weight;
   uint8_t slots;
+  uint8_t families;
   MajorBeginFn begin;
   MajorTickFn tick;
   const Step* steps[2];
@@ -3456,28 +3467,28 @@ struct MajorDef {
 };
 
 const MajorDef kMajors[MJ_COUNT] = {
-    {"squirrel_splash", {31, 31}, 1.f, kOut, beginSplash, tickSplash, {kSplash, kSplash}, {N(kSplash), N(kSplash)}},
-    {"deer_stick", {42, 42}, 1.f, kOut, beginDeer, tickDeer, {kDeer, kDeer}, {N(kDeer), N(kDeer)}},
-    {"pinecone", {30, 30}, 1.f, kOut, beginCone, tickCone, {kCone, kCone}, {N(kCone), N(kCone)}},
-    {"map_chase", {43, 43}, 1.f, kOut, beginMap, tickMap, {kMap, kMap}, {N(kMap), N(kMap)}},
-    {"fish_leap", {23, 37}, 1.f, kOut, beginFish, tickFish, {kFish, kFish}, {N(kFish), N(kFish)}},
-    {"raccoon_pack", {58, 26}, 1.f, kOut | kTent, beginRaccoon, tickRaccoon, {kRaccoonNap, kRaccoonTent},
+    {"squirrel_splash", {31, 31}, 1.f, kOut, kDay, beginSplash, tickSplash, {kSplash, kSplash}, {N(kSplash), N(kSplash)}},
+    {"deer_stick", {42, 42}, 1.f, kOut, kDay, beginDeer, tickDeer, {kDeer, kDeer}, {N(kDeer), N(kDeer)}},
+    {"pinecone", {30, 30}, 1.f, kOut, kDay, beginCone, tickCone, {kCone, kCone}, {N(kCone), N(kCone)}},
+    {"map_chase", {43, 43}, 1.f, kOut, kDay, beginMap, tickMap, {kMap, kMap}, {N(kMap), N(kMap)}},
+    {"fish_leap", {23, 37}, 1.f, kOut, kDay, beginFish, tickFish, {kFish, kFish}, {N(kFish), N(kFish)}},
+    {"raccoon_pack", {58, 26}, 1.f, kOut | kTent, kEve, beginRaccoon, tickRaccoon, {kRaccoonNap, kRaccoonTent},
      {N(kRaccoonNap), N(kRaccoonTent)}},
-    {"ants_cookie", {46, 46}, 1.f, kOut, beginAnts, tickAnts, {kAnts, kAnts}, {N(kAnts), N(kAnts)}},
-    {"shadow_theater", {44, 44}, 1.2f, kTent, beginTheater, tickTheater, {kTheater, kTheater},
+    {"ants_cookie", {46, 46}, 1.f, kOut, kDay, beginAnts, tickAnts, {kAnts, kAnts}, {N(kAnts), N(kAnts)}},
+    {"shadow_theater", {44, 44}, 1.2f, kTent, kEve, beginTheater, tickTheater, {kTheater, kTheater},
      {N(kTheater), N(kTheater)}},
-    {"ranger_ridge", {32, 32}, 1.f, kOut, beginRanger, tickRanger, {kRanger, kRanger}, {N(kRanger), N(kRanger)}},
-    {"echo", {34, 34}, 1.f, kOut, beginEcho, tickEcho, {kEcho, kEcho}, {N(kEcho), N(kEcho)}},
-    {"firefly_jar", {42, 42}, 1.5f, kOut, beginFireflies, tickFireflies, {kFireflies, kFireflies},
+    {"ranger_ridge", {32, 32}, 1.f, kOut, kDay, beginRanger, tickRanger, {kRanger, kRanger}, {N(kRanger), N(kRanger)}},
+    {"echo", {34, 34}, 1.f, kOut, kDay, beginEcho, tickEcho, {kEcho, kEcho}, {N(kEcho), N(kEcho)}},
+    {"firefly_jar", {42, 42}, 1.5f, kOut, kEve, beginFireflies, tickFireflies, {kFireflies, kFireflies},
      {N(kFireflies), N(kFireflies)}},
-    {"stargaze", {48, 48}, 1.5f, kOut, beginStars, tickStars, {kStars5, kStars5}, {N(kStars5), N(kStars5)}},
-    {"fishing_small", {60, 60}, 0.6f, kOut, beginFishing, tickFishSmall, {kFishSmall, kFishSmall},
+    {"stargaze", {48, 48}, 1.5f, kOut, kEve, beginStars, tickStars, {kStars5, kStars5}, {N(kStars5), N(kStars5)}},
+    {"fishing_small", {60, 60}, 0.6f, kOut, kDay, beginFishing, tickFishSmall, {kFishSmall, kFishSmall},
      {N(kFishSmall), N(kFishSmall)}},
     // fishing_log: plus its variant's seconds of empty scene (8..12).
-    {"fishing_log", {56, 56}, 0.6f, kOut, beginFishLog, tickFishLog, {kFishLog, kFishLog}, {N(kFishLog), N(kFishLog)}},
-    {"fishing_good", {50, 50}, 0.6f, 2, beginFishGood, tickFishGood, {kFishGood, kFishGood},
+    {"fishing_log", {56, 56}, 0.6f, kOut, kDay, beginFishLog, tickFishLog, {kFishLog, kFishLog}, {N(kFishLog), N(kFishLog)}},
+    {"fishing_good", {50, 50}, 0.6f, 2, (uint8_t)(kEve | kMid), beginFishGood, tickFishGood, {kFishGood, kFishGood},
      {N(kFishGood), N(kFishGood)}},
-    {"bathe", {54, 54}, 0.6f, 2 | 4, beginBathe, tickBathe, {kBathe, kBathe}, {N(kBathe), N(kBathe)}},
+    {"bathe", {54, 54}, 0.6f, 2 | 4, kDay, beginBathe, tickBathe, {kBathe, kBathe}, {N(kBathe), N(kBathe)}},
 };
 static_assert(MJ_COUNT == 16, "a row per major");
 
@@ -3607,7 +3618,7 @@ namespace {
 bool isFishing(int id) { return id == MJ_FISHING_SMALL || id == MJ_FISHING_LOG || id == MJ_FISHING_GOOD; }
 }  // namespace
 
-void majorsPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
+void majorsPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem, const MajorSlots& slots) {
   // Night: the stars are out (mood within half a step of 0 / 6) or night mode.
   float mood = in.mood - 6.f * floorf(in.mood / 6.f);
   const float dn = mood < 3.f ? mood : 6.f - mood;
@@ -3615,7 +3626,7 @@ void majorsPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
   const bool dusk = night || mood >= 4.5f;
 
   float base[MJ_COUNT];
-  for (int i = 0; i < MJ_COUNT; ++i) base[i] = kMajors[i].weight;
+  for (int i = 0; i < MJ_COUNT; ++i) base[i] = (kMajors[i].families >> slots.family) & 1u ? kMajors[i].weight : 0.f;
   if (!dusk) base[MJ_FIREFLY_JAR] = 0.f;
   if (!(in.night_mode || dn <= 0.3f)) base[MJ_STARGAZE] = 0.f;
   // The ring buffer: anything picked in the last MEMORY_RING picks is much
@@ -3637,7 +3648,7 @@ void majorsPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
   // How many: 2 to 4 (mostly 3). One rng call per statement throughout.
   static const float kHowMany[3] = {0.3f, 0.45f, 0.25f};
   const int want = 2 + rng.weighted(kHowMany, 3);
-  uint8_t free_slots = 1 | 2 | 4 | 8;
+  uint8_t free_slots = slots.open;
   int n = 0;
   uint16_t have = 0;
   uint8_t pick[SPINE_MAJOR_MAX] = {}, slot[SPINE_MAJOR_MAX] = {}, var[SPINE_MAJOR_MAX] = {};
@@ -3698,7 +3709,7 @@ void majorsPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
     ++n;
   }
   // Play order: by slot.
-  static const uint8_t kAfter[4] = {SB_SETUP, SB_FIRE, SB_DINNER, SB_FOODBAG};
+  const uint8_t* kAfter = slots.after;
   p.n_majors = 0;
   for (int s = 0; s < 4; ++s)
     for (int j = 0; j < n; ++j) {

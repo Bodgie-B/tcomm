@@ -113,10 +113,20 @@ struct MajorState {
 const char* majorName(int id);
 // Seconds a major's beat lasts with variant `var`.
 int majorSeconds(int id, int var);
+// Where a family's majors can go: up to 4 slots, the spine beat each one
+// follows (LoopPlan::major_after), and which are open (bit k: slot k). The
+// pool's slot bits (majors.cpp kMajors) are slot indices, so they mean the
+// evening's setup / fire / dinner / foodbag, or the morning's wake / coffee /
+// bag_down; a family's mask (kMajors families) says which majors it plays.
+struct MajorSlots {
+  uint8_t family;    // SpineFamily
+  uint8_t after[4];
+  uint8_t open;
+};
 // Pick this loop's majors (2..4) and their slots, variants and stillness into
 // the plan, and push them into the memory's ring. Called by spinePlan before
 // the loop-length trim (which may drop the last ones; see spinePlan).
-void majorsPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem);
+void majorsPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem, const MajorSlots& slots);
 // The beat for the plan's major i.
 Beat majorBeat(const LoopPlan& p, int i);
 

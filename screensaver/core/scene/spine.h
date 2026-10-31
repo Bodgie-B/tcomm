@@ -19,6 +19,10 @@
 // is the sum of its beats: 480 to 660 s. To land there the plan squeezes the
 // pauses (8 to 20 s), then drops fillers down to one, majors down to two, the
 // last filler, and shortens the still beats; then stretches the pauses.
+//
+// That is the evening family. A loop plays one family (SpineFamily below),
+// picked from the inputs at loop start; the functions here dispatch on
+// LoopPlan::family (spine_family.h; the morning is spine_morning.cpp).
 #pragma once
 
 #include "../anim/rng.h"
@@ -30,6 +34,19 @@ namespace ss {
 struct Inputs;
 struct World;
 struct Memory;
+
+// Which spine a loop plays (SPINES_WEATHER_LOOKOUT_SPEC.md section 1), picked
+// at loop start from the inputs alone (spineFamilyFor: no rng). Evening is
+// the stage 4 to 6 spine (arrival .. close); morning wakes in fog and breaks
+// camp (spine_morning.cpp). Midday and the Lookout are not built yet: they
+// play the evening until they are.
+enum SpineFamily : uint8_t { SF_EVENING = 0, SF_MORNING, SF_MIDDAY, SF_LOOKOUT, SF_COUNT };
+const char* spineFamilyName(int family);
+// The family this loop plays: in.spine_force when set, else the Lookout in
+// its window, the evening at night, the morning at mood [0.5, 2.5), midday at
+// [2.5, 3.5), the evening otherwise; then a family not built yet falls back
+// to the evening.
+uint8_t spineFamilyFor(const Inputs& in);
 
 enum SpineBeatId : uint8_t {
   SB_ARRIVAL = 0, SB_SETUP, SB_FIREWOOD, SB_FIRE, SB_DINNER, SB_FOODBAG, SB_BEAR, SB_CLOSE, SB_COUNT
@@ -72,6 +89,18 @@ struct LoopPlan {
   // setup ends with him patching the mouse hole in the tent.
   uint8_t cairn_start;
   bool patch;
+  // The family (SpineFamily). The fields above are the evening's (the morning
+  // reuses the pause, filler, major and cairn fields, with its own beat ids in
+  // filler_after, major_after and pause_s). The new families' variant per
+  // beat, in the family's beat order, and how many beats it has.
+  uint8_t family;
+  uint8_t fvar[8];
+  uint8_t n_fbeats;
+  // Morning: the fog it opens in (fog_steps x 0.05 added to the weather's fog),
+  // held until tick fog_t0 and lifted to 0 by tick fog_t1 (the end of the
+  // coffee beat's pause), in 0.05 steps.
+  uint8_t fog_steps;
+  uint32_t fog_t0, fog_t1;
 };
 
 // Variants a beat draws from at random, and a plan's pick. (Dinner also has
@@ -112,6 +141,8 @@ struct CampLayout {
   Vec2 listen;      // stream_listen: sits on the bank
   Vec2 skip;        // skip_stone: crouches at the water
   Vec2 stones[2];   // cairn: where he picks the flat stones, either side of it
+  // The morning's places (spine_morning.cpp sets them at loop start).
+  Vec2 guy_peg;     // feet at the guy line's peg, in front of the door
 };
 
 struct Step;   // spine.cpp
@@ -148,6 +179,13 @@ struct SpineState {
   float fear;          // what the shadow's jitter eases toward: 0 calm, ~0.05 frozen, 1 trembling
   float bag_v;         // the hung bag's swing speed, rad/s (a damped swing the bear sets off)
   bool bag_osc;        // the damped swing is running
+
+  // The other families' scratch (spine_morning.cpp): two points for the
+  // AT_FAM0/AT_FAM1 anchors, one critter slot (-1 none), its stage and clock.
+  Vec2 fp[2];
+  int8_t fcrit;
+  uint8_t fstage;
+  float ft;
 };
 
 // Loop start: pick every variant, pause, filler and major from the loop RNG,
@@ -156,6 +194,10 @@ struct SpineState {
 void spinePlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem);
 // Loop start, after the fire pit is placed: camp layout and the props' homes.
 void spineLayout(World& w);
+// Loop start, after the plan and memoryBeginLoop: what the family needs set
+// up before the first tick (the morning: the camp already pitched, the hiker
+// asleep in the tent, the fog). Nothing for the evening.
+void spineBeginLoop(World& w);
 // Add the build beat, then the spine beats, pauses and fillers in order. The
 // loop ends with the close.
 void spineBuildTimeline(Timeline& tl, const LoopPlan& p);
@@ -165,7 +207,8 @@ void spineBuildTimeline(Timeline& tl, const LoopPlan& p);
 void spineCritterScenes(World& w);
 // Ticks the timeline for `p` lasts (the loop's length).
 uint32_t spineLoopTicks(const LoopPlan& p);
-// "arrival=1 setup=0 ... fillers=cairn,read majors=echo,fish_leap" (none when empty).
+// "family=evening arrival=1 setup=0 ... fillers=cairn,read majors=echo,fish_leap"
+// (none when empty); the morning lists its own beats after family=morning.
 int spineFormatPlan(const LoopPlan& p, char* buf, size_t n);
 
 // Loop length policy: the plan lands every loop in this range (seconds).

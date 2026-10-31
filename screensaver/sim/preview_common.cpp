@@ -31,6 +31,7 @@ Inputs previewInputsFromOptions(const PreviewOptions& o) {
   in.dog_out = o.dog;
   in.night_mode = o.night;
   in.lookout_window = o.lookout;
+  in.spine_force = (uint8_t)o.spine;
   return in;
 }
 
@@ -241,6 +242,8 @@ void previewUsage(const char* prog, FILE* to) {
           "  --fog F             0..1\n"
           "  --night             night mode on, night_dim = 1\n"
           "  --lookout           inside the sunset window (Lookout spine)\n"
+          "  --spine NAME        evening morning midday lookout: play that spine family whatever the\n"
+          "                      inputs say (midday and lookout are not built yet: they play the evening)\n"
           "  --status N          other floor status 0..5\n"
           "  --dog N             0 none, 1 Lucy, 2 Copper\n"
           "  --frames N          frames to write (default 100)\n"
@@ -316,6 +319,16 @@ void previewParseArgs(int argc, char** argv, PreviewOptions& o) {
       o.night = true;
     } else if (!strcmp(a, "--lookout")) {
       o.lookout = true;
+    } else if (!strcmp(a, "--spine")) {
+      need(1);
+      static const char* const kFam[4] = {"evening", "morning", "midday", "lookout"};
+      const char* name = argv[++i];
+      int f = -1;
+      for (int k = 0; k < 4; k++)
+        if (!strcmp(name, kFam[k])) f = k;
+      if (f < 0) bad(prog, "unknown spine family", name);
+      if (f >= 2) fprintf(stderr, "%s: --spine %s is not built yet: the loop plays the evening\n", prog, name);
+      o.spine = 1 + f;
     } else if (!strcmp(a, "--status")) {
       need(1);
       o.status = (int)parseInt(prog, a, argv[++i]);

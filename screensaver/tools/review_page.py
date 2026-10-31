@@ -23,10 +23,12 @@ def parse_loops(text):
         if not m:
             continue
         plan_txt = m.group(4)
-        plan, fillers, majors = {}, [], []
+        plan, fillers, majors, family = {}, [], [], "evening"
         for tok in plan_txt.split():
             k, _, v = tok.partition("=")
-            if k == "fillers":
+            if k == "family":   # spine family (plan lines from before the families have none)
+                family = v
+            elif k == "fillers":
                 fillers = [] if v == "none" else v.split(",")
             elif k == "majors":
                 majors = [] if v == "none" else v.split(",")
@@ -36,7 +38,8 @@ def parse_loops(text):
                 except ValueError:
                     plan[k] = v
         rows.append({"loop": int(m.group(1)), "seed": int(m.group(2)), "length": int(m.group(3)),
-                     "plan": plan, "fillers": fillers, "majors": majors, "memory": m.group(5).strip()})
+                     "family": family, "plan": plan, "fillers": fillers, "majors": majors,
+                     "memory": m.group(5).strip()})
     return rows
 
 

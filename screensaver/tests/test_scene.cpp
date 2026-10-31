@@ -420,7 +420,9 @@ static const char* const kFillers[7] = {"mug_sunset", "read",          "cairn", 
 static bool parsePlan(const App* a, int v[8]) {
   char buf[200];
   appLoopPlan(a, buf, sizeof buf);
-  return sscanf(buf, "arrival=%d setup=%d firewood=%d fire=%d dinner=%d foodbag=%d bear=%d close=%d", &v[0], &v[1],
+  const char* ev = "family=evening ";   // the evening's plan line (spine families)
+  if (strncmp(buf, ev, strlen(ev)) != 0) return false;
+  return sscanf(buf + strlen(ev), "arrival=%d setup=%d firewood=%d fire=%d dinner=%d foodbag=%d bear=%d close=%d", &v[0], &v[1],
                 &v[2], &v[3], &v[4], &v[5], &v[6], &v[7]) == 8;
 }
 

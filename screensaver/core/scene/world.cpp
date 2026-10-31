@@ -89,7 +89,7 @@ void sortActors(World& w) {
     if (!w.crit[i].in_use || !w.critters[i].visible) continue;
     // A climbing critter sorts by the trunk's foot, not its own feet up the trunk.
     const float y = w.critters[i].pose.climb > 0.5f ? (float)w.land.camp.base_y + 1.f : w.critters[i].feet.y;
-    L.add(ACT_CRITTER, (uint8_t)i, baseY(y));
+    L.add(ACT_CRITTER, (uint8_t)i, w.crit[i].sort_y ? w.crit[i].sort_y : baseY(y));
     addPines(L, w, w.critter_rect[i], i + 1);
   }
   for (int i = 0; i < BITS_MAX; ++i) {
@@ -411,7 +411,8 @@ void worldTick(World& w, Rng& rng, Renderer& r) {
   track(r, d.bird, ambientBirdBounds(w), w.amb.bird.active);
 
   const FirePit& f = w.fire;
-  const bool fire_changed = f.intensity > 0.f || f.intensity != d.fire_int || f.stones != d.fire_stones;
+  const bool fire_changed =
+      f.intensity > 0.f || f.intensity != d.fire_int || f.stones != d.fire_stones || f.ash != d.fire_ash;
   track(r, d.fire, fireBounds(f), fire_changed);
 
   for (int i = 0; i < AMB_GLINT_MAX; ++i) track(r, d.glint[i], ambientGlintBounds(w, i), true);
@@ -423,6 +424,7 @@ void worldTick(World& w, Rng& rng, Renderer& r) {
 
   d.fire_int = f.intensity;
   d.fire_stones = f.stones;
+  d.fire_ash = f.ash;
 
   // The hiker breathes, so while he is in frame he is redrawn every tick.
   track(r, d.hiker, w.hiker_rect, w.hiker.visible);

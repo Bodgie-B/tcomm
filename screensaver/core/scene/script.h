@@ -42,7 +42,10 @@ enum Anchor : uint8_t {
   AT_STONE,        // cairn: the next flat stone, alternating sides
   AT_CAIRN_WORK,   // cairn: beside it, on the side he comes from
   AT_CAIRN,
-  AT_M0, AT_M1, AT_M2, AT_M3   // the running major's own points (MajorState::p)
+  AT_M0, AT_M1, AT_M2, AT_M3,  // the running major's own points (MajorState::p)
+  // The morning's (spine_morning.cpp).
+  AT_GUY_PEG,      // feet at the guy line's peg, in front of the tent's door
+  AT_FAM0, AT_FAM1 // a family beat's own points (SpineState::fp)
 };
 
 typedef void (*ActFn)(World& w, float u);

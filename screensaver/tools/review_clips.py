@@ -88,9 +88,19 @@ def parse_memory(text):
     return mem
 
 
+def plan_family(rest):
+    """The spine family a plan line names ('family=morning wake=1 ...'); lines
+    from before the families went in have none and are the evening."""
+    m = re.search(r"(?:^|\s)family=(\w+)", rest or "")
+    return m.group(1) if m else "evening"
+
+
 def parse_plan(rest):
-    """'arrival=0 ... fillers=a,b majors=c,d memory=k=v k=v' ->
-    (plan dict, fillers list, majors list, memory dict). 'none' lists are empty."""
+    """'family=evening arrival=0 ... fillers=a,b majors=c,d memory=k=v k=v' ->
+    (plan dict, fillers list, majors list, memory dict). 'none' lists are empty.
+    The family token is not numeric, so it stays out of the plan dict (see
+    plan_family); the morning's beats (wake=.. leave=..) go in it (its fog=.. after
+    the majors does not)."""
     plan, fillers, majors, memory = {}, [], [], {}
     if not rest:
         return plan, fillers, majors, memory
@@ -124,6 +134,7 @@ def parse_log(text):
             if loop == 0 and info is None:
                 plan, fillers, majors, memory = parse_plan(m.group(4))
                 info = {"loop_seed": seed, "start_tick": tick, "plan": plan,
+                        "family": plan_family(m.group(4)),
                         "fillers": fillers, "majors": majors, "memory": memory,
                         "line": line.strip()}
             elif loop != 0 and end_tick is None:

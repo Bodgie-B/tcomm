@@ -31,6 +31,7 @@ struct App {
   bool pal_night;
 
   uint32_t events_seen;   // drained events; ignored until later stages
+  uint16_t pal_rebuilds;  // computeAppPalette calls this loop (appPaletteRebuilds)
 
   Renderer renderer;      // last: it carries the 51 KB strip buffer
 };
@@ -58,22 +59,39 @@ float moodDistance(float a, float b) {
   return d > 3.f ? (float)SS_MOOD_COUNT - d : d;
 }
 
-void computeAppPalette(App* a) {
+// The weather the palette is computed from: the inputs', plus the fog the
+// scene adds (the morning opens in fog, World::fog_extra). Untouched when it
+// adds none, so a loop without it is bit for bit what it was.
+WeatherTint sceneWeather(const App* a) {
   WeatherTint w = a->in.weather;
+  if (a->world.fog_extra > 0.f) {
+    const float f = w.fog + a->world.fog_extra;
+    w.fog = f > 1.f ? 1.f : f;
+  }
+  return w;
+}
+
+void computeAppPalette(App* a) {
+  WeatherTint w = sceneWeather(a);
+  a->pal_weather = w;
   if (a->in.night_mode && w.night_dim < 1.f) w.night_dim = 1.f;   // night mode alone must dim
   computePalette(a->in.mood, w, a->pal);
   a->pal_mood = a->in.mood;
-  a->pal_weather = a->in.weather;
   a->pal_night = a->in.night_mode;
   a->renderer.setPalette(a->pal);   // forces a cache rebuild and marks every strip
+  if (a->pal_rebuilds < 0xFFFF) ++a->pal_rebuilds;
 }
 
 // Generate a loop's geometry from the loop seed and restart the timeline.
 void beginLoop(App* a) {
   a->rng.seed(a->loop_seed);
   worldBeginLoop(a->world, a->rng);
+  // The family is a function of the inputs alone: it costs the loop rng nothing.
+  a->world.plan.family = spineFamilyFor(a->in);
   spinePlan(a->world.plan, a->rng, a->in, a->world.memory);
   memoryBeginLoop(a->world, a->rng);
+  spineBeginLoop(a->world);
+  a->pal_rebuilds = 0;
   a->timeline.reset();
   spineBuildTimeline(a->timeline, a->world.plan);
   a->ctx = SceneCtx{a, &a->world, &a->rng, &a->in, &a->renderer, SS_TICK_DT};
@@ -112,7 +130,7 @@ bool appTick(App* a) {
   a->events_seen += (uint32_t)a->timeline.takeEvents(ev, SS_MAX_PENDING_EVENTS);
 
   // Palette follows the inputs only when they moved enough to matter.
-  const WeatherTint& w = a->in.weather;
+  const WeatherTint w = sceneWeather(a);
   if (moodDistance(a->in.mood, a->pal_mood) > kMoodEps ||
       fabsf(w.overcast - a->pal_weather.overcast) > kWeatherEps ||
       fabsf(w.fog - a->pal_weather.fog) > kWeatherEps ||
@@ -187,6 +205,8 @@ bool appBusy(const App* app) { return app->world.busy; }
 int appSpineOverruns(const App* app) { return app->world.spine.overruns; }
 uint32_t appLoopTicks(const App* app) { return spineLoopTicks(app->world.plan); }
 float appFade(const App* app) { return app->world.fade; }
+int appPaletteRebuilds(const App* app) { return app->pal_rebuilds; }
+int appSpineFamily(const App* app) { return app->world.plan.family; }
 
 const char* appMinorName(const App* app) { return minorsName(app->world); }
 int appMinorCount(const App* app) { return app->world.minors.fired; }

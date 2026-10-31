@@ -49,6 +49,8 @@ struct TentGeom {
   int n_body;     // 5, or 9 with the mouse hole
   Vec2 door[3];
   bool has_door;
+  Vec2 flap[3];   // the open flap (door > 0): over the dark opening `door`
+  bool has_flap;
   Vec2 guy0, guy1;
   bool has_guy;
   Vec2 shadow[12];
@@ -97,6 +99,17 @@ void tentGeom(const Tent& t, TentGeom& g) {
   g.door[0] = mixV(fa, mixV(fl, fr, 0.5f), 0.22f);
   g.door[1] = mixV(fl, fr, 0.3f);
   g.door[2] = mixV(fl, fr, 0.8f);
+  // Unzipped: the flap's free corner rolls from the bottom left up toward the
+  // right side of the opening (it stays inside the door triangle, so inside
+  // the body's bounds).
+  g.has_flap = g.has_door && t.door > 0.f;
+  if (g.has_flap) {
+    const float k = t.door > 1.f ? 1.f : t.door;
+    const Vec2 roll = mixV(g.door[2], g.door[0], 0.42f);
+    g.flap[0] = g.door[0];
+    g.flap[1] = mixV(g.door[1], mixV(roll, g.door[2], 0.35f), k);
+    g.flap[2] = g.door[2];
+  }
 
   g.has_guy = p >= 0.85f && t.sag < 0.5f;
   g.guy0 = fa;
@@ -118,7 +131,8 @@ constexpr float kRollB = 0.15f, kRollU = 0.315f, kRollR = 0.05f;
 
 inline Vec2 packPt(const PackProp& p, float b, float u) {
   const float sx = p.facing < 0 ? -1.f : 1.f;
-  return Vec2{p.pos.x - sx * (b - kPackMid) * kPackH, p.pos.y - (u - kPackFoot) * kPackH};
+  const float H = kPackH * p.pop;   // (exact at pop 1: the evening's pack is what it was)
+  return Vec2{p.pos.x - sx * (b - kPackMid) * H, p.pos.y - (u - kPackFoot) * H};
 }
 
 // ---- food bag ------------------------------------------------------------------
@@ -254,6 +268,7 @@ void tentInit(Tent& t, Vec2 pos) {
   t.shadow_jitter = 0.f;
   t.shadow_shake = 0.f;
   t.bite = false;
+  t.door = 0.f;
 }
 
 Rect tentBounds(const Tent& t) {
@@ -275,23 +290,29 @@ void tentDraw(const Tent& t, Surface& s, const Rect& clip, const Palette& pal) {
   const Pixel body = t.lit ? pal[TENT_LIT] : pal[TENT];
   if (g.has_guy) strokeCapsule(s, g.guy0, g.guy1, 1.2f, mixRGB(pal[TENT], pal[ACTOR], 0.6f), clip);
   fillPolygon(s, g.body, g.n_body, body, clip);
-  if (g.has_door) fillPolygon(s, g.door, 3, mixRGB(body, pal[ACTOR], 0.45f), clip);
+  if (g.has_flap) {   // the dark inside, then the flap rolled back over its right side
+    fillPolygon(s, g.door, 3, mixRGB(body, pal[ACTOR], 0.85f), clip);
+    fillPolygon(s, g.flap, 3, mixRGB(body, pal[ACTOR], 0.3f), clip);
+  } else if (g.has_door) {
+    fillPolygon(s, g.door, 3, mixRGB(body, pal[ACTOR], 0.45f), clip);
+  }
   if (g.has_shadow) fillPolygon(s, g.shadow, 12, pal[ACTOR], clip);
 }
 
 bool tentSame(const Tent& a, const Tent& b) {
   return sameV(a.pos, b.pos) && a.state == b.state && a.progress == b.progress && a.sag == b.sag &&
          a.bump == b.bump && a.wobble == b.wobble && a.lit == b.lit && a.shadow == b.shadow &&
-         a.shadow_x == b.shadow_x && a.shadow_y == b.shadow_y && a.shadow_shake == b.shadow_shake && a.bite == b.bite;
+         a.shadow_x == b.shadow_x && a.shadow_y == b.shadow_y && a.shadow_shake == b.shadow_shake && a.bite == b.bite &&
+         a.door == b.door;
 }
 
 // ---- pack ------------------------------------------------------------------------
 
 Rect packBounds(const PackProp& p) {
-  if (!p.shown) return kEmpty;
+  if (!p.shown || p.pop <= 0.02f) return kEmpty;
   Ext e;
   for (const auto& k : kPack) e.pt(packPt(p, k[0], k[1]));
-  e.pt(packPt(p, kRollB, kRollU), kRollR * kPackH + 1.f);
+  e.pt(packPt(p, kRollB, kRollU), kRollR * kPackH * p.pop + 1.f);
   return e.rect();
 }
 
@@ -300,11 +321,11 @@ void packDraw(const PackProp& p, Surface& s, const Rect& clip, const Palette& pa
   Vec2 pts[8];
   for (int i = 0; i < 8; ++i) pts[i] = packPt(p, kPack[i][0], kPack[i][1]);
   fillPolygon(s, pts, 8, pal[ACTOR], clip);
-  fillCircle(s, packPt(p, kRollB, kRollU), kRollR * kPackH, pal[ACTOR], clip);
+  fillCircle(s, packPt(p, kRollB, kRollU), kRollR * kPackH * p.pop, pal[ACTOR], clip);
 }
 
 bool packSame(const PackProp& a, const PackProp& b) {
-  return sameV(a.pos, b.pos) && a.facing == b.facing && a.shown == b.shown && a.held == b.held;
+  return sameV(a.pos, b.pos) && a.facing == b.facing && a.shown == b.shown && a.held == b.held && a.pop == b.pop;
 }
 
 // ---- food bag ------------------------------------------------------------------------

@@ -39,6 +39,7 @@ struct FirePit {
   float fuel;        // LIT target, 0..1: 1 a fresh fire, lower as it burns down
   float stones;      // 0..1, the ring of stones being laid (1 = all down)
   float clock;       // flicker clock, seconds
+  float ash;         // 0..1 last night's ash, a low grey mound in the pit (the morning); 0 none
 };
 
 // Ground actors are drawn far to near by base y. FGPINE is a foreground pine
@@ -87,6 +88,7 @@ struct CritterSlot {
   float flee_x;      // CM_FLEE target, off-frame
   bool path_on;      // feet.y follows (x0,y0)-(x1,y1) while it moves (moves only change x)
   float path_x0, path_y0, path_x1, path_y1;
+  int16_t sort_y;    // nonzero: sorts among the ground actors at this base y (a bird on the tent's ridge)
 };
 
 // Memory (what survives from one loop to the next) is in memory.h.
@@ -144,6 +146,7 @@ struct WorldDirty {
   float u;
   float fire_stones; // fire pit state last tick
   float fire_int;
+  float fire_ash;
 };
 
 struct World {
@@ -177,6 +180,10 @@ struct World {
   // Whole-frame fade to ACTOR (near black): 0 none, 1 black. The close ends
   // on 1; the build beat brings the next loop up from it.
   float fade;
+  // Fog the scene adds to the weather's (0..1; the app adds it in
+  // computeAppPalette, clamped). The morning opens in it and lifts it in 0.05
+  // steps, each a palette change and a cache rebuild.
+  float fog_extra;
   LoopPlan plan;
   SpineState spine;
   int n_actors;

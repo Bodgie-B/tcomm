@@ -17,6 +17,7 @@ struct PreviewOptions {
   float fog = 0.0f;
   bool night = false;
   bool lookout = false;
+  int spine = 0;                // 0 auto; 1 + SpineFamily forces it (--spine evening|morning|midday|lookout)
   int status = 0;
   int dog = 0;
   int frames = 100;

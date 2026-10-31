@@ -90,6 +90,7 @@ int directorSpawn(World& w, CritterKind k, Vec2 feet, int facing) {
     s.path_on = false;
     s.path_x0 = s.path_x1 = feet.x;
     s.path_y0 = s.path_y1 = feet.y;
+    s.sort_y = 0;
     w.critter_rect[i] = Rect{0, 0, 0, 0};
     return i;
   }
@@ -104,6 +105,7 @@ void directorRelease(World& w, int slot) {
   s.mode = CM_FREE;
   s.flags = 0;
   s.path_on = false;
+  s.sort_y = 0;
   w.critters[slot].visible = false;
   w.critter_rect[slot] = Rect{0, 0, 0, 0};
   // Anything it held is dropped where it is.

@@ -23,6 +23,9 @@ struct Inputs {
   int dog_out;            // 0 none, 1 Lucy, 2 Copper
   bool night_mode;        // night rule in force (dim, no large bright areas)
   bool lookout_window;    // true inside the sunset window: play the Lookout spine
+  // 0: the loop's spine family follows the inputs (scene/spine.h
+  // spineFamilyFor); 1 + SpineFamily forces one (preview --spine). Read at loop start.
+  uint8_t spine_force;
 };
 
 struct App;   // opaque to the host; defined in core/scene/app.cpp
@@ -94,6 +97,11 @@ int appSpineOverruns(const App* app);
 uint32_t appLoopTicks(const App* app);
 // Whole-frame fade to near black, 0 none .. 1 black (the end and start of a loop).
 float appFade(const App* app);
+// Palette recomputes (each a cache rebuild) since this loop started, the
+// loop's own start included (the morning's fog lift steps it).
+int appPaletteRebuilds(const App* app);
+// This loop's spine family (scene/spine.h SpineFamily).
+int appSpineFamily(const App* app);
 // The minor effect running now ("chipmunk_cross", ...; "" when none), how
 // many started this loop, and the critters they hold now (CT_MINOR slots).
 const char* appMinorName(const App* app);

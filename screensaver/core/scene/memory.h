@@ -15,6 +15,8 @@
 // |                | uses a stick off the wood pile, and clears the flag                  |
 // | ring, sets     | the last MEMORY_RING majors picked and the last loops' sets: avoided |
 // | brave, persona | which critter kinds are bold this loop; re-rolled every 2 loops      |
+// | last_family,   | the family and variants the last loop played (the morning draws a   |
+// |   last_fvar    | variant it played last time a quarter as often)                      |
 // | loop_count     | loops started, this one included                                    |
 #pragma once
 
@@ -46,6 +48,11 @@ struct Memory {
   uint8_t mouse_tent_runs;     // this loop: times the mouse_tent minor ran (memoryNoteMouseTent)
   uint16_t brave;        // bit k: critter kind k is bold (else shy) this loop
   uint8_t persona_age;   // loops the current brave/shy split has lasted
+  // The family the last loop played (SpineFamily) and its variant per beat
+  // (LoopPlan::fvar), so a family's plan can make the same variant twice
+  // running less likely. Not printed by memoryFormat.
+  uint8_t last_family;
+  uint8_t last_fvar[8];
 };
 
 // Loop start, after worldBeginLoop (one rng call, every loop): the cairn from

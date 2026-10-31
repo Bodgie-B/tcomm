@@ -40,6 +40,10 @@ struct Tent {
   float shadow_jitter;
   float shadow_shake;  // x offset World sets from shadow_jitter (whole px)
   bool bite;           // a mouse hole bitten out of the base, front right (memory, stage 6)
+  // 0 the door flap zipped shut .. 1 rolled open (the morning: he unzips it
+  // from inside). The opening behind it is drawn dark; the flap folds back
+  // toward the front corner, inside the tent's own outline.
+  float door;
 };
 
 void tentInit(Tent& t, Vec2 pos);
@@ -56,6 +60,7 @@ struct PackProp {
   int8_t facing;     // which way its back faces, as on the hiker
   bool shown;
   bool held;
+  float pop = 1.f;   // scale about its base, 1 normal (the morning's build pops it in)
 };
 
 Rect packBounds(const PackProp& p);

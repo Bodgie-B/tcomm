@@ -23,6 +23,7 @@
 #include "../ss_app.h"
 #include "director.h"
 #include "script.h"
+#include "spine_family.h"
 #include "world.h"
 
 namespace ss {
@@ -2206,6 +2207,20 @@ const char* const kBeatNames[SB_COUNT] = {"arrival", "setup", "firewood", "fire"
 const char* const kFillerNames[FILL_COUNT] = {"mug_sunset", "read", "cairn", "skip_stone", "cloud_watch",
                                               "stream_listen", "birds_on_water"};
 
+// Fillers per family (bit = SpineFamily): the evening all of them; the morning
+// read, cairn, cloud_watch, stream_listen and birds_on_water; midday all but
+// mug_sunset (SPINES_WEATHER_LOOKOUT_SPEC section 1).
+constexpr uint8_t kFE = 1u << SF_EVENING, kFM = 1u << SF_MORNING, kFD = 1u << SF_MIDDAY;
+const uint8_t kFillerFamilies[FILL_COUNT] = {
+    kFE,                          // mug_sunset
+    kFE | kFM | kFD,              // read
+    kFE | kFM | kFD,              // cairn
+    kFE | kFD,                    // skip_stone
+    kFE | kFM | kFD,              // cloud_watch
+    kFE | kFM | kFD,              // stream_listen
+    kFE | kFM | kFD,              // birds_on_water
+};
+
 // ---- the interpreter ------------------------------------------------------------------
 
 Vec2 anchorPos(const World& w, uint8_t at) {
@@ -2244,6 +2259,9 @@ Vec2 anchorPos(const World& w, uint8_t at) {
     case AT_M1:
     case AT_M2:
     case AT_M3: return w.major.p[at - AT_M0];
+    case AT_GUY_PEG: return c.guy_peg;
+    case AT_FAM0:
+    case AT_FAM1: return w.spine.fp[at - AT_FAM0];
     case AT_CAIRN_WORK: {
       const float side = w.hiker.feet.x < w.cairn.pos.x ? -1.f : 1.f;
       return Vec2{w.cairn.pos.x + 13.f * side, w.cairn.pos.y - 2.f};
@@ -2577,6 +2595,37 @@ int spineFillerSeconds(const LoopPlan& p, int f) {
   return kFillerSeconds[f];
 }
 
+bool spineFillerAllowed(int family, int f) {
+  return f >= 0 && f < FILL_COUNT && family >= 0 && family < SF_COUNT && ((kFillerFamilies[f] >> family) & 1u);
+}
+
+Beat spineFillerBeat(const LoopPlan& p, int f) {
+  if (f == FILL_BIRDS_ON_WATER)
+    return Beat{kFillerNames[f], (float)spineFillerSeconds(p, f), birdsFillerBegin, birdsFillerUpdate, birdsFillerEnd};
+  return Beat{kFillerNames[f], (float)spineFillerSeconds(p, f), kFillerBegin[f], beatUpdate, beatEnd};
+}
+
+const char* spineFamilyName(int family) {
+  static const char* const kNames[SF_COUNT] = {"evening", "morning", "midday", "lookout"};
+  return family >= 0 && family < SF_COUNT ? kNames[family] : "?";
+}
+
+uint8_t spineFamilyFor(const Inputs& in) {
+  uint8_t f = SF_EVENING;
+  if (in.spine_force >= 1 && in.spine_force <= SF_COUNT) {
+    f = (uint8_t)(in.spine_force - 1);
+  } else if (in.lookout_window) {
+    f = SF_LOOKOUT;
+  } else if (!in.night_mode) {
+    const float m = in.mood - 6.f * floorf(in.mood / 6.f);   // wrapped into [0, 6)
+    if (m >= 0.5f && m < 2.5f) f = SF_MORNING;
+    else if (m >= 2.5f && m < 3.5f) f = SF_MIDDAY;
+  }
+  // Not built yet: they play the evening until they are.
+  if (f == SF_MIDDAY || f == SF_LOOKOUT) f = SF_EVENING;
+  return f;
+}
+
 namespace {
 
 // Whole seconds of everything but the pauses.
@@ -2589,28 +2638,33 @@ int busySeconds(const LoopPlan& p) {
   return s;
 }
 
-int pauseSeconds(const LoopPlan& p) {
-  int s = 0;
-  for (int b = 0; b + 1 < SB_COUNT; ++b) s += p.pause_s[b];
-  for (int i = 0; i < p.n_fillers; ++i) s += p.filler_pause_s[i];
-  return s;
-}
+int pauseSeconds(const LoopPlan& p) { return spinePauseSeconds(p, SB_COUNT - 1); }
 
 // The pause slots in use, in timeline order, as pointers into the plan.
-int pauseSlots(LoopPlan& p, uint8_t* slot[SB_COUNT + SPINE_FILLER_MAX]) {
+int pauseSlots(LoopPlan& p, int beat_pauses, uint8_t* slot[SB_COUNT + SPINE_FILLER_MAX]) {
   int n = 0;
-  for (int b = 0; b + 1 < SB_COUNT; ++b) slot[n++] = &p.pause_s[b];
+  for (int b = 0; b < beat_pauses; ++b) slot[n++] = &p.pause_s[b];
   for (int i = 0; i < p.n_fillers; ++i) slot[n++] = &p.filler_pause_s[i];
   return n;
 }
+
+// The evening's filler slots in play order: after dinner; then fire and
+// dinner; a third after dinner too; with four, the first goes after setup.
+void eveningFillerSlots(LoopPlan& p) {
+  static const uint8_t kSlots[SPINE_FILLER_MAX + 1][SPINE_FILLER_MAX] = {
+      {0, 0, 0, 0}, {SB_DINNER, 0, 0, 0}, {SB_FIRE, SB_DINNER, 0, 0}, {SB_FIRE, SB_DINNER, SB_DINNER, 0},
+      {SB_SETUP, SB_FIRE, SB_DINNER, SB_DINNER}};
+  for (int i = 0; i < SPINE_FILLER_MAX; ++i) p.filler_after[i] = i < p.n_fillers ? kSlots[p.n_fillers][i] : 0;
+}
+
+const FitSpec kEveningFit = {busySeconds, SB_COUNT - 1, eveningFillerSlots};
 
 // Aim inside the policy range with a margin, so no rounding lands on its edge.
 constexpr int kAimMin = SS_LOOP_MIN_SECONDS + 10, kAimMax = SS_LOOP_MAX_SECONDS - 10;
 constexpr uint8_t kPauseMin = 8, kPauseMax = 20;
 
-}  // namespace
-
-void spinePlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
+// The evening's plan (the stage 4 to 6 spine; approved, do not change).
+void eveningPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
   // One rng call per statement: argument evaluation order differs between
   // compilers, and the board must replay the PC preview.
   uint8_t v[SB_COUNT];
@@ -2655,7 +2709,8 @@ void spinePlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
   p.skip_n = rng.chance(0.35f) ? 4 : 3;
   p.steam_n = (uint8_t)rng.rangeInt(3, 5);
 
-  majorsPlan(p, rng, in, mem);
+  static const MajorSlots kEveningSlots = {SF_EVENING, {SB_SETUP, SB_FIRE, SB_DINNER, SB_FOODBAG}, 1 | 2 | 4 | 8};
+  majorsPlan(p, rng, in, mem, kEveningSlots);
   // fishing_good leaves a fish roasting over the fire: dinner is the fish.
   auto hasMajor = [&p](int id) {
     for (int i = 0; i < p.n_majors; ++i)
@@ -2664,22 +2719,27 @@ void spinePlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
   };
   if (hasMajor(MJ_FISHING_GOOD)) p.dinner = SPINE_DINNER_FISH;
 
+  spineFitLength(p, mem, kEveningFit);
+}
+
+}  // namespace
+
+int spinePauseSeconds(const LoopPlan& p, int beat_pauses) {
+  int s = 0;
+  for (int b = 0; b < beat_pauses; ++b) s += p.pause_s[b];
+  for (int i = 0; i < p.n_fillers; ++i) s += p.filler_pause_s[i];
+  return s;
+}
+
+void spineFitLength(LoopPlan& p, Memory& mem, const FitSpec& f) {
   // Loop length policy. Squeeze the pauses (round robin, a second at a time,
   // down to 8 s); while still too long, drop fillers down to one, majors down
   // to two, the last filler, then shorten the still beats round the majors;
   // then stretch the pauses (up to 20 s) until the loop is long enough.
-  auto setFillerSlots = [&p]() {
-    // Slots in play order: after dinner; then fire and dinner; a third after
-    // dinner too; with four, the first goes after setup.
-    static const uint8_t kSlots[SPINE_FILLER_MAX + 1][SPINE_FILLER_MAX] = {
-        {0, 0, 0, 0}, {SB_DINNER, 0, 0, 0}, {SB_FIRE, SB_DINNER, 0, 0}, {SB_FIRE, SB_DINNER, SB_DINNER, 0},
-        {SB_SETUP, SB_FIRE, SB_DINNER, SB_DINNER}};
-    for (int i = 0; i < SPINE_FILLER_MAX; ++i) p.filler_after[i] = i < p.n_fillers ? kSlots[p.n_fillers][i] : 0;
-  };
-  setFillerSlots();
-  auto total = [&p]() { return busySeconds(p) + pauseSeconds(p); };
+  f.filler_slots(p);
+  auto total = [&p, &f]() { return f.busy(p) + spinePauseSeconds(p, f.beat_pauses); };
   uint8_t* slot[SB_COUNT + SPINE_FILLER_MAX];
-  int ns = pauseSlots(p, slot);
+  int ns = pauseSlots(p, f.beat_pauses, slot);
   for (int guard = 0, k = 0; guard < 400 && total() > kAimMax; ++guard, k = (k + 1) % ns)
     if (*slot[k] > kPauseMin) --*slot[k];
   auto dropFiller = [&]() {
@@ -2687,7 +2747,7 @@ void spinePlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
     p.filler[p.n_fillers] = 0;
     p.filler_after[p.n_fillers] = 0;
     p.filler_pause_s[p.n_fillers] = 0;
-    setFillerSlots();
+    f.filler_slots(p);
   };
   while (total() > kAimMax && p.n_fillers > 1) dropFiller();
   while (total() > kAimMax && p.n_majors > 2) {
@@ -2718,7 +2778,7 @@ void spinePlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
     uint8_t& st = (k & 1) ? p.major_post_s[k >> 1] : p.major_pre_s[k >> 1];
     if (st > 4) --st;
   }
-  ns = pauseSlots(p, slot);
+  ns = pauseSlots(p, f.beat_pauses, slot);
   for (int guard = 0, k = 0; guard < 400 && total() < kAimMin; ++guard, k = (k + 1) % ns)
     if (*slot[k] < kPauseMax) ++*slot[k];
   uint16_t set = 0;
@@ -2728,6 +2788,21 @@ void spinePlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
   }
   memoryPushSet(mem, set);
   mem.last_n = p.n_majors;
+}
+
+void spinePlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
+  if (p.family == SF_MORNING) {
+    morningPlan(p, rng, in, mem);
+  } else {
+    p.family = SF_EVENING;
+    eveningPlan(p, rng, in, mem);
+  }
+  mem.last_family = p.family;
+  for (int i = 0; i < 8; ++i) mem.last_fvar[i] = p.fvar[i];
+}
+
+void spineBeginLoop(World& w) {
+  if (w.plan.family == SF_MORNING) morningLayout(w);
 }
 
 void spineLayout(World& w) {
@@ -2806,12 +2881,17 @@ void spineLayout(World& w) {
   sp.fear = 0.f;
   sp.bag_v = 0.f;
   sp.bag_osc = false;
+  sp.fp[0] = sp.fp[1] = Vec2{0.f, 0.f};
+  sp.fcrit = -1;
+  sp.fstage = 0;
+  sp.ft = 0.f;
 }
 
 void spineCritterScenes(World& w) {
   deerTick(w);
   chipTick(w);
   thiefTick(w);
+  if (w.plan.family == SF_MORNING) morningTick(w);
   // The bag's damped swing once something hit it (about 1 swing a second,
   // settling over a few seconds, like the foodbag beat's settle).
   SpineState& sp = w.spine;
@@ -2831,6 +2911,7 @@ void spineCritterScenes(World& w) {
 }
 
 void spineBuildTimeline(Timeline& tl, const LoopPlan& p) {
+  if (p.family == SF_MORNING) return morningBuildTimeline(tl, p);
   tl.add(kBuildBeat);
   for (int b = 0; b < SB_COUNT; ++b) {
     tl.add(Beat{kBeatNames[b], (float)beatSeconds(p, b), kBegin[b], kUpdate[b], kEnd[b]});
@@ -2838,11 +2919,7 @@ void spineBuildTimeline(Timeline& tl, const LoopPlan& p) {
     tl.add(Beat{"pause", (float)p.pause_s[b], nullptr, nullptr, nullptr});
     for (int i = 0; i < p.n_fillers; ++i) {
       if (p.filler_after[i] != b) continue;
-      const int f = p.filler[i];
-      if (f == FILL_BIRDS_ON_WATER)
-        tl.add(Beat{kFillerNames[f], (float)spineFillerSeconds(p, f), birdsFillerBegin, birdsFillerUpdate, birdsFillerEnd});
-      else
-        tl.add(Beat{kFillerNames[f], (float)spineFillerSeconds(p, f), kFillerBegin[f], beatUpdate, beatEnd});
+      tl.add(spineFillerBeat(p, p.filler[i]));
       tl.add(Beat{"pause", (float)p.filler_pause_s[i], nullptr, nullptr, nullptr});
     }
     for (int i = 0; i < p.n_majors; ++i) {
@@ -2855,6 +2932,7 @@ void spineBuildTimeline(Timeline& tl, const LoopPlan& p) {
 }
 
 uint32_t spineLoopTicks(const LoopPlan& p) {
+  if (p.family == SF_MORNING) return morningLoopTicks(p);
   // Every beat is whole seconds except the build, which is whole ticks.
   const uint32_t build = (uint32_t)ceilf(SS_BUILD_SECONDS * (float)SS_TICK_HZ - 1e-3f);
   const int rest = busySeconds(p) - (int)(SS_BUILD_SECONDS + 0.5f) + pauseSeconds(p);
@@ -2863,7 +2941,8 @@ uint32_t spineLoopTicks(const LoopPlan& p) {
 
 int spineFormatPlan(const LoopPlan& p, char* buf, size_t n) {
   if (!buf || n == 0) return 0;
-  int k = snprintf(buf, n, "arrival=%d setup=%d firewood=%d fire=%d dinner=%d foodbag=%d bear=%d close=%d fillers=",
+  if (p.family == SF_MORNING) return morningFormatPlan(p, buf, n);
+  int k = snprintf(buf, n, "family=evening arrival=%d setup=%d firewood=%d fire=%d dinner=%d foodbag=%d bear=%d close=%d fillers=",
                    p.arrival, p.setup, p.firewood, p.fire, p.dinner, p.foodbag, p.bear, p.close);
   if (k < 0 || (size_t)k >= n) return k;
   auto put = [&](const char* str) {
