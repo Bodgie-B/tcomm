@@ -3188,8 +3188,10 @@ void tickBathe(World& w, float dt) {
     const float since = m.t - m.tc;
     for (int i = 0; i < (int)m.var; ++i) {
       const float at = 1.3f * (float)i;
-      if (since < at || (m.count >> i) & 1u) continue;
-      m.count = (uint8_t)(m.count | (1u << i));
+      // Surfaced bits live in stage[2] (no critter uses it): the shake-off
+      // step reuses m.count as its drop counter, which respawned the fish.
+      if (since < at || (m.stage[2] >> i) & 1u) continue;
+      m.stage[2] = (uint8_t)(m.stage[2] | (1u << i));
       const float s = m.u0 + 0.32f + 0.12f * (float)i;
       const float lane = (i == 1 ? -0.35f : 0.15f) + 0.05f * (float)i;
       if (Glyph* g = glyphNew(w, GL_SHAPE, streamPoint(w, s, lane), 0)) {
@@ -3570,6 +3572,8 @@ void majorEnd(SceneCtx& ctx) {
   w.tent.wobble = 0.f;
   w.fx.stomp = 0.f;     // (the stream majors' walk and waterline; their scripts end with both off)
   w.fx.wade = false;
+  w.hiker.hat_on = true;              // an overrun must not leave him hatless or holding the rod
+  if (w.hiker.carry == CARRY_ROD) hikerCarry(w.hiker, CARRY_NONE);
   m.on = false;
   w.busy = false;
 }
@@ -3645,6 +3649,9 @@ void majorsPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
       // back; the night after it brought it back, only the tent side.
       if (i == MJ_RACCOON_PACK && mem.shoe_taken) allowed &= kOut;
       if (i == MJ_RACCOON_PACK && sequel) allowed &= kTent;
+      // Fishing with a stick needs the wood pile, which only exists after the
+      // firewood beat, so a rod-less fishing major cannot go in slot 1.
+      if (mem.rod_lost && isFishing(i)) allowed &= (uint8_t)~1u;
       wt[i] = allowed ? base[i] : 0.f;
       for (int j = 0; j < n; ++j) {
         if (pick[j] == i) wt[i] = 0.f;

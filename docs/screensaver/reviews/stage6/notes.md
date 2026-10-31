@@ -478,7 +478,7 @@ Pixar short; the gutting and the dead fish are implied and cartoonish.
   log and the dead fish move along the stream by its point index, as the glints
   do (`streamOn`). Drops are glyph dots with a velocity that stop at the ground
   (not the minors' DROP bits, which turn into rings on the water).
-- **Planner**: weight 1 each; fishing_good S2 only, bathe S2/S3, the other two
+- **Planner**: weight 0.6 each (so a stream scene plays about every other loop); fishing_good S2 only, bathe S2/S3, the other two
   S1..S3; at most one fishing major a loop (they share the rod). `spinePlan`
   sets `dinner = 3` when fishing_good is placed, and the length trim never drops
   fishing_good. `spineVariantCount` still draws dinner from 0..2.

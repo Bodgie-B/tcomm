@@ -323,20 +323,6 @@
       "bytes": 70617
     },
     {
-      "name": "loop_overview_seed1",
-      "beat": "loop_overview",
-      "kind": "overview",
-      "variant": null,
-      "seed": 1,
-      "start_tick": 0,
-      "seconds": 81.24,
-      "mood": 4.0,
-      "night": false,
-      "file": "clips/loop_overview_seed1.mp4",
-      "poster": "clips/loop_overview_seed1.png",
-      "bytes": 501154
-    },
-    {
       "name": "arrival_a",
       "beat": "arrival",
       "kind": "beat",
@@ -419,20 +405,6 @@
       "file": "clips/mug_sunset.mp4",
       "poster": "clips/mug_sunset.png",
       "bytes": 154152
-    },
-    {
-      "name": "bathe",
-      "beat": "bathe",
-      "kind": "major",
-      "variant": null,
-      "seed": 2,
-      "start_tick": 9900,
-      "seconds": 54.0,
-      "mood": 4.0,
-      "night": false,
-      "file": "clips/bathe.mp4",
-      "poster": "clips/bathe.png",
-      "bytes": 181283
     },
     {
       "name": "foodbag_c",
@@ -867,6 +839,20 @@
       "file": "clips/stargaze.mp4",
       "poster": "clips/stargaze.png",
       "bytes": 76519
+    },
+    {
+      "name": "bathe",
+      "beat": "bathe",
+      "kind": "major",
+      "variant": null,
+      "seed": 2,
+      "start_tick": 9900,
+      "seconds": 54.0,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/bathe.mp4",
+      "poster": "clips/bathe.png",
+      "bytes": 174231
     }
   ],
   "plans": [
@@ -894,33 +880,6 @@
       "memory": {},
       "line": "loop=0 seed=1 start tick=0 plan=arrival=2 setup=1 firewood=1 fire=0 dinner=0 foodbag=0 bear=1 close=0 fillers=cloud_watch,stream_listen majors=pinecone,map_chase",
       "seed": 1,
-      "mood": 4.0,
-      "night": false
-    },
-    {
-      "loop_seed": 2,
-      "start_tick": 0,
-      "plan": {
-        "arrival": 0,
-        "setup": 2,
-        "firewood": 1,
-        "fire": 0,
-        "dinner": 2,
-        "foodbag": 2,
-        "bear": 0,
-        "close": 1
-      },
-      "fillers": [
-        "read",
-        "mug_sunset"
-      ],
-      "majors": [
-        "fish_leap",
-        "bathe"
-      ],
-      "memory": {},
-      "line": "loop=0 seed=2 start tick=0 plan=arrival=0 setup=2 firewood=1 fire=0 dinner=2 foodbag=2 bear=0 close=1 fillers=read,mug_sunset majors=fish_leap,bathe",
-      "seed": 2,
       "mood": 4.0,
       "night": false
     },
@@ -2013,6 +1972,33 @@
       "seed": 12,
       "mood": 0.0,
       "night": true
+    },
+    {
+      "loop_seed": 2,
+      "start_tick": 0,
+      "plan": {
+        "arrival": 0,
+        "setup": 2,
+        "firewood": 1,
+        "fire": 0,
+        "dinner": 2,
+        "foodbag": 2,
+        "bear": 0,
+        "close": 1
+      },
+      "fillers": [
+        "read",
+        "mug_sunset"
+      ],
+      "majors": [
+        "fish_leap",
+        "bathe"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=2 start tick=0 plan=arrival=0 setup=2 firewood=1 fire=0 dinner=2 foodbag=2 bear=0 close=1 fillers=read,mug_sunset majors=fish_leap,bathe",
+      "seed": 2,
+      "mood": 4.0,
+      "night": false
     }
   ],
   "missing_variants": {
