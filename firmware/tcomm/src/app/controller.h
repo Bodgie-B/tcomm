@@ -62,6 +62,10 @@ class Platform {
   virtual void display_test_next() {}
   virtual bool strip_drawing() { return false; }
   virtual void toggle_strip_drawing() {}
+  // Wi-Fi updates (docs/wifi-updates.md), on the panel only: whether the updater is installed, and
+  // restarting into it.
+  virtual bool updater_installed() { return false; }
+  virtual void start_updater() {}
 };
 
 // ---- What the interface draws. Plain data, rebuilt by Controller::tick(). ----

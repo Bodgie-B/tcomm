@@ -43,6 +43,8 @@ class Actions {
   virtual void clean_screen(bool on) = 0;
   virtual void preview(tc::Sound s, uint8_t volume) = 0;
   virtual bool floor_locked() { return false; }  // Settings hides the floor swap when true
+  virtual bool updater_installed() { return false; }  // Settings > Update over Wi-Fi
+  virtual void start_updater() {}
   virtual DemoInfo demo_info() = 0;
   virtual void demo(DemoAction a) = 0;
   // The calendar. save_event returns the event's id, or 0 if it couldn't be kept (the calendar is

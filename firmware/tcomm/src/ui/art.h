@@ -22,7 +22,7 @@ void sky(gfx::Canvas &c, tc::Phase ph, float p, bool moon);  // 800 x 480, opaqu
 // The scenery's width at the strip's right end, with the dog in or out (spec section 4e).
 constexpr int kStripSceneryIn = 299, kStripSceneryOut = 118;
 void strip(gfx::Canvas &c, tc::Phase ph, float p, bool moon, bool dog_out, float holiday_x,
-           tc::DayIcon icon = tc::DayIcon::Holly);
+           tc::DayIcon icon = tc::DayIcon::Tree);
 // A day's icon for the date strip (holidays, birthdays, anniversaries), in its own colours, in a
 // size x size box at (x, y). Holly is the Christmas board's sprig (49 x 56).
 void day_icon(gfx::Canvas &c, tc::DayIcon i, float x, float y, float size);

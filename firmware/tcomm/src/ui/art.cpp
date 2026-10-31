@@ -68,8 +68,8 @@ void strip(Canvas &c, tc::Phase ph, float p, bool moon, bool dog_out, float holi
   bool holiday = holiday_x > 0;
   float W = holiday ? 49.0f : (float)(dog_out ? kStripSceneryOut : kStripSceneryIn);
   float left = holiday ? holiday_x - 55.3f : w - W;  // the board's region ends 6 px before the message
-  if (holiday && icon != tc::DayIcon::Holly) {
-    // Another day's icon in the holly's place, without the disc (they'd overlap).
+  if (holiday) {
+    // The day's icon where the boards had their holly, without the sun or moon (they'd overlap).
     day_icon(c, icon, left + 4, 6, 44);
   } else if (moon) {
     // A crescent: the moon, then a disc of the strip's colour over it, 5 right and 3 up.
@@ -85,10 +85,7 @@ void strip(Canvas &c, tc::Phase ph, float p, bool moon, bool dog_out, float holi
   }
   Paint pt{};
   pt.strip = base;
-  if (holiday) {
-    if (icon == tc::DayIcon::Holly) boardart::draw(c, boardart::kStripHolly, pt, left, 0, &rr);
-  }
-  else {
+  if (!holiday) {
     const boardart::Group &g = dog_out ? boardart::kStripOut : boardart::kStripIn;
     c.set_clip(&rr);
     for (int i = 0; i < g.n; i++)
@@ -118,15 +115,18 @@ void floor_tile(Canvas &c, tc::Floor f, int st, tc::Mode m) {
   c.multiply_alpha(0.9f);
 }
 
-// A little light green in the Outside tile's trees and their reflections, which the boards have in
-// taupe (Mike, 2026-10-31). Found by the boards' own day colour, so a regenerated
-// board_art_data.h keeps the change. Day, evening, night.
+// Mike's colours for the Outside tile (2026-10-31): a little light green in the trees and their
+// reflections, which the boards have in taupe, and a very little light blue in the lake and its
+// ripples. Found by the boards' own day colour, so a regenerated board_art_data.h keeps the
+// change. Day, evening, night.
 struct Recolour {
   uint32_t board, rgb[3];
 };
-static const Recolour kOutsideTrees[] = {
+static const Recolour kOutsideRecolour[] = {
     {0xA89C84, {0x9CA886, 0x8B9675, 0x324540}},  // the trees
     {0xBBAE93, {0xB3BD9E, 0x9FA888, 0x35473F}},  // their reflections in the lake
+    {0xF2E7D2, {0xE6ECE6, 0xD5D9CF, 0x13212A}},  // the lake
+    {0xF7F1E4, {0xF7FAF7, 0xE9ECE6, 0x2C3842}},  // its ripples
 };
 
 void outside_tile(Canvas &c, tc::Mode m) {
@@ -141,7 +141,7 @@ void outside_tile(Canvas &c, tc::Mode m) {
   for (int i = 0; i < g.n; i++) {
     const boardart::Shape &s = g.shapes[i];
     Color col = boardart::colour(s, pt);
-    for (const Recolour &r : kOutsideTrees)
+    for (const Recolour &r : kOutsideRecolour)
       if (s.rgb[0] == r.board) col = hex(r.rgb[pt.mode < 0 || pt.mode > 2 ? 0 : pt.mode]);
     boardart::draw_shape(c, s, col);
   }
@@ -497,9 +497,97 @@ void day_icon(Canvas &c, tc::DayIcon icon, float x, float y, float size) {
   const Color cream = hex(0xFBF1DC), red = hex(0xC8372D), blue = hex(0x2F4A8A), gold = hex(0xE8B23A);
   const Color green = hex(0x2F7A44), brown = hex(0x8A5A34), steel = hex(0xB9C2C9), pink = hex(0xE9A0B4);
   switch (icon) {
-    case tc::DayIcon::Holly: {
-      Paint pt{};
-      boardart::draw(c, boardart::kStripHolly, pt, x - 4 * k, y - 6 * k);
+    case tc::DayIcon::Tree: {  // Christmas (Mike, 2026-10-31; the boards had holly)
+      c.fill_rect(X(19.5f), Y(35), X(24.5f), Y(42), brown);
+      const float tiers[3][3][2] = {{{6, 37}, {38, 37}, {22, 18}}, {{9, 29}, {35, 29}, {22, 11}}, {{12, 21}, {32, 21}, {22, 5}}};
+      const Color shades[3] = {hex(0x2F7A44), hex(0x378A4E), hex(0x409A58)};
+      for (int i = 0; i < 3; i++) POLY(tiers[i], 3, shades[i]);
+      const struct {
+        float x, y;
+        Color col;
+      } balls[6] = {{14, 34, red}, {29, 33, gold}, {21, 30.5f, hex(0x7FB7E0)}, {17, 25, gold}, {27, 24, red}, {22, 16.5f, pink}};
+      for (const auto &b : balls) D(b.x, b.y, 1.6f, b.col);
+      float star[10][2];
+      for (int i = 0; i < 10; i++) {
+        float a = -kPi / 2 + kPi * i / 5, r = i % 2 ? 1.9f : 4.4f;
+        star[i][0] = 22 + cosf(a) * r;
+        star[i][1] = 5.5f + sinf(a) * r;
+      }
+      POLY(star, 10, gold);
+      break;
+    }
+    case tc::DayIcon::Washington: {  // Presidents' Day: his bust on a gold coin, facing left
+      D(22, 22, 19.5f, gold);
+      c.ring(X(22), Y(22), 19.5f * k, 17.6f * k, hex(0xC9932A));
+      const float bust[][2] = {{23, 6.5f},  {19, 7.5f},     {16.5f, 10},  {15.5f, 13},   {15.6f, 14.6f}, {13, 18.6f},
+                               {15.2f, 19.4f}, {15, 21},    {15.6f, 22.3f}, {15.2f, 23.8f}, {16.4f, 26},  {19, 27.2f},
+                               {19.6f, 29.5f}, {16.5f, 32.5f}, {14, 36.5f}, {30, 36.5f},   {30.5f, 32},   {27.5f, 29.5f},
+                               {29.8f, 27.5f}, {30.6f, 24},  {29.2f, 20.5f}, {29.5f, 15},  {27.5f, 9}};
+      POLY(bust, 23, hex(0x8A5A1E));
+      D(25, 16.5f, 2.2f, hex(0xA87A2E));  // the rolled hair over his ear
+      const float bow[][2] = {{29.5f, 23}, {33, 21}, {33, 25}};
+      POLY(bow, 3, hex(0x5E3A12));  // the ribbon on his queue
+      D(18, 14.8f, 0.7f, hex(0x5E3A12));
+      break;
+    }
+    case tc::DayIcon::JuneteenthFlag: {  // the holiday's own flag (Mike, 2026-10-31)
+      L(7, 5, 7, 41, 2.6f, cream);  // the pole
+      D(7, 4.5f, 2.2f, gold);
+      c.fill_rect(X(8.5f), Y(8), X(39), Y(30), blue);
+      // The burst around the star: a white twelve-point star with a blue one inside it, for an outline.
+      float burst[24][2];
+      for (int pass = 0; pass < 2; pass++) {
+        for (int i = 0; i < 24; i++) {
+          float a = -kPi / 2 + kPi * i / 12, r = (i % 2 ? 4.2f : 6.4f) - pass * 1.3f;
+          burst[i][0] = 23.75f + cosf(a) * r;
+          burst[i][1] = 16 + sinf(a) * r;
+        }
+        POLY(burst, 24, pass ? blue : cream);
+      }
+      // The red lower half, below an arc that rises toward the middle: a new horizon.
+      float red_part[11][2];
+      for (int i = 0; i < 9; i++) {
+        float t = i / 8.0f, u = 2 * t - 1;
+        red_part[i][0] = 8.5f + t * 30.5f;
+        red_part[i][1] = 20.5f + 3.5f * u * u;
+      }
+      red_part[9][0] = 39, red_part[9][1] = 30;
+      red_part[10][0] = 8.5f, red_part[10][1] = 30;
+      POLY(red_part, 11, red);
+      float star[10][2];
+      for (int i = 0; i < 10; i++) {
+        float a = -kPi / 2 + kPi * i / 5, r = i % 2 ? 1.3f : 3.2f;
+        star[i][0] = 23.75f + cosf(a) * r;
+        star[i][1] = 16 + sinf(a) * r;
+      }
+      POLY(star, 10, cream);
+      break;
+    }
+    case tc::DayIcon::FoldedFlag: {  // Memorial Day: the folded flag in its case
+      const float frame[][2] = {{1.5f, 36}, {42.5f, 36}, {22, 15.5f}};
+      POLY(frame, 3, hex(0xB98A4A));  // light wood, to stand out from the strip
+      const float field[][2] = {{5.5f, 33.8f}, {38.5f, 33.8f}, {22, 17.3f}};
+      POLY(field, 3, blue);
+      const float rows[4][3] = {{31, 10, 7}, {27.5f, 14, 5}, {24, 18, 3}, {20.5f, 22, 1}};  // y, first x, count
+      for (const auto &r : rows)
+        for (int i = 0; i < (int)r[2]; i++) D(r[1] + 4 * i, r[0], 0.95f, cream);
+      break;
+    }
+    case tc::DayIcon::Pledge: {  // Veterans Day: a veteran in uniform, hand on heart
+      const float coat_edge[][2] = {{10.6f, 18.2f}, {33.4f, 18.2f}, {35, 24}, {32.4f, 44}, {11.6f, 44}, {9, 24}};
+      POLY(coat_edge, 6, cream);
+      const float coat[][2] = {{12, 19.5f}, {32, 19.5f}, {33.5f, 24}, {31, 43}, {13, 43}, {10.5f, 24}};
+      POLY(coat, 6, blue);
+      c.fill_rect(X(20), Y(14), X(24), Y(19.5f), cream);  // the neck
+      D(22, 10.5f, 5.2f, cream);
+      const float cap[][2] = {{16.4f, 9.2f}, {27.6f, 9.2f}, {26.6f, 5}, {17.4f, 5.6f}};
+      POLY(cap, 4, blue);
+      for (int i = 0; i < 3; i++) D(22, 31 + i * 4.5f, 0.85f, gold);  // the buttons
+      L(13, 21, 14.5f, 32, 6.4f, cream);  // the arm, outlined, up to the heart
+      L(14.5f, 32, 26, 25.5f, 6.4f, cream);
+      L(13, 21, 14.5f, 32, 4.4f, blue);
+      L(14.5f, 32, 26, 25.5f, 4.4f, blue);
+      D(26.5f, 25, 2.7f, cream);  // the hand
       break;
     }
     case tc::DayIcon::Fireworks: {
@@ -542,12 +630,30 @@ void day_icon(Canvas &c, tc::DayIcon icon, float x, float y, float size) {
       D(42.5f, 21.5f, 1.4f, green);
       break;
     }
-    case tc::DayIcon::Tools: {
-      L(10, 36, 27, 19, 3.2f, brown);  // the hammer's handle
-      const float head[][2] = {{21, 11}, {27, 6}, {37, 16}, {31, 21}};
+    case tc::DayIcon::Labor: {  // Labor Day, in the 1930s manner: an arm raising a hammer over a gear
+      for (int i = 0; i < 8; i++) {
+        float a = kPi * i / 4, cs = cosf(a), sn = sinf(a);
+        float tooth[4][2];
+        const float corner[4][2] = {{12.5f, -2.4f}, {17.5f, -2.4f}, {17.5f, 2.4f}, {12.5f, 2.4f}};
+        for (int j = 0; j < 4; j++) {
+          tooth[j][0] = 22 + corner[j][0] * cs - corner[j][1] * sn;
+          tooth[j][1] = 25 + corner[j][0] * sn + corner[j][1] * cs;
+        }
+        POLY(tooth, 4, gold);
+      }
+      D(22, 25, 14, gold);
+      D(22, 25, 7.5f, hex(0x9A6A1E));
+      const float arm[][2] = {{15, 44}, {23, 44}, {25.5f, 26}, {18.5f, 25}};
+      POLY(arm, 4, cream);
+      D(22, 22.5f, 4.6f, cream);  // the fist
+      // The hammer: its handle runs up and left from the fist, its head across the top end.
+      const float hx = 12.5f, hy = 6.5f, dx = -0.548f, dy = -0.836f;  // the handle's direction
+      L(22, 21, hx, hy, 2.6f, brown);
+      const float head[4][2] = {{hx - 5.5f * dy + 2.4f * dx, hy + 5.5f * dx + 2.4f * dy},
+                                {hx - 5.5f * dy - 2.4f * dx, hy + 5.5f * dx - 2.4f * dy},
+                                {hx + 5.5f * dy - 2.4f * dx, hy - 5.5f * dx - 2.4f * dy},
+                                {hx + 5.5f * dy + 2.4f * dx, hy - 5.5f * dx + 2.4f * dy}};
       POLY(head, 4, steel);
-      L(34, 36, 17, 19, 3.2f, steel);  // the wrench
-      c.ring(X(14), Y(15.5f), 6.2f * k, 3.4f * k, steel);
       break;
     }
     case tc::DayIcon::Ship: {
@@ -585,11 +691,39 @@ void day_icon(Canvas &c, tc::DayIcon icon, float x, float y, float size) {
       }
       break;
     }
-    case tc::DayIcon::Rings: {
-      c.ring(X(17), Y(27), 9.5f * k, 6.8f * k, gold);
-      c.ring(X(27), Y(27), 9.5f * k, 6.8f * k, hex(0xF2CF6E));
-      const float stone[][2] = {{17, 12}, {20.5f, 15.5f}, {17, 19.5f}, {13.5f, 15.5f}};
-      POLY(stone, 4, hex(0xBFE4F2));
+    case tc::DayIcon::Champagne: {
+      // An anniversary (Mike, 2026-10-31): two flutes clinking, with confetti. Each flute is drawn
+      // upright from its foot at (0, 0), then leaned toward the other.
+      const float bowl[][2] = {{-4.5f, -27}, {4.5f, -27}, {3.5f, -15}, {1.5f, -11}, {-1.5f, -11}, {-3.5f, -15}};
+      const float wine[][2] = {{-3.8f, -23}, {3.8f, -23}, {3, -15.5f}, {1.2f, -12.2f}, {-1.2f, -12.2f}, {-3, -15.5f}};
+      const struct {
+        float fx, fy, lean;
+      } flutes[2] = {{12, 41, 0.28f}, {32, 41, -0.28f}};
+      for (const auto &f : flutes) {
+        const float cs = cosf(f.lean), sn = sinf(f.lean);
+        auto at = [&](float px, float py, float &ux, float &uy) {
+          ux = f.fx + px * cs - py * sn;
+          uy = f.fy + px * sn + py * cs;
+        };
+        float p[6][2], ax, ay, bx, by;
+        for (int i = 0; i < 6; i++) at(bowl[i][0], bowl[i][1], p[i][0], p[i][1]);
+        POLY(p, 6, hex(0xF3EEE2));
+        for (int i = 0; i < 6; i++) at(wine[i][0], wine[i][1], p[i][0], p[i][1]);
+        POLY(p, 6, hex(0xF2CF6E));
+        at(0, -11, ax, ay);
+        at(0, -1, bx, by);
+        L(ax, ay, bx, by, 1.6f, cream);  // the stem
+        at(-5, -0.5f, ax, ay);
+        at(5, -0.5f, bx, by);
+        L(ax, ay, bx, by, 2, cream);  // the foot
+      }
+      const struct {
+        float x, y, dx, dy;
+        Color col;
+      } bits[8] = {{6, 9, 2.2f, 1.2f, red},  {12, 4, 1.4f, -2, gold},  {21, 2.5f, 2.2f, 0.6f, hex(0x7FB7E0)},
+                   {31, 4, 1.6f, 1.8f, pink}, {37, 9, -2, 1.4f, green}, {4, 18, 1.2f, 2, hex(0x7FB7E0)},
+                   {39, 18, 1.8f, -1.4f, gold}, {26, 8, -1.4f, -1.6f, red}};
+      for (const auto &b : bits) L(b.x, b.y, b.x + b.dx * 1.2f, b.y + b.dy * 1.2f, 2.4f, b.col);
       break;
     }
     default: break;

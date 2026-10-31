@@ -123,4 +123,15 @@ void radio_send(uint8_t to, const uint8_t *data, size_t len);
 bool radio_poll(uint8_t *out, size_t *len);  // one received frame from a known peer, if any
 void radio_report();  // for serial "radio": counts, and the last frames in and out
 
+// ---- Wi-Fi updates (board_update.cpp, docs/wifi-updates.md). ----
+// The updater is its own small sketch (updater) in the app slot this firmware isn't
+// running from; only it has a network stack. Whether it's there, and restarting into it.
+bool updater_installed();
+void restart_into_updater();  // returns only if there's no updater to start
+// First thing in setup(): three crash restarts in a row start the updater, if it's installed, so a
+// build that crashes at start-up can still be replaced over Wi-Fi. crash_guard_healthy() after a
+// minute of normal running clears the count.
+void crash_guard_begin();
+void crash_guard_healthy();
+
 }  // namespace board

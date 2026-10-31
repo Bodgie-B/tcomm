@@ -16,16 +16,19 @@ using namespace tc;
 
 namespace {
 
-// Board F11's Wi-Fi and Status presets tiles are gone: the panels never join a network, and Mike
-// doesn't need presets (2026-10-31). Each tile keeps the colour it had beside them (kTileColour).
-enum TileId { kTime, kHoliday, kTemp, kUnit, kRing, kVol, kNight, kScreen, kQuiet, kZambretti, kTest, kTiles };
-const char *const kTileLabel[kTiles] = {"TIME & DATE",  "HOLIDAY WORDS",   "TEMP OFFSET",    "THIS UNIT IS",
-                                        "RINGTONE",     "VOLUME",          "NIGHT LIGHT",    "SCREEN AT NIGHT",
-                                        "QUIET HOURS",  "ZAMBRETTI DEMO",  "TEST PANEL"};
-const char *const kTileSym[kTiles] = {LV_SYMBOL_LOOP,      LV_SYMBOL_EDIT,  LV_SYMBOL_TINT, LV_SYMBOL_HOME,
-                                      LV_SYMBOL_BELL,      LV_SYMBOL_VOLUME_MAX, LV_SYMBOL_EYE_CLOSE, LV_SYMBOL_POWER,
-                                      LV_SYMBOL_MUTE,      LV_SYMBOL_IMAGE, LV_SYMBOL_SETTINGS};
-const int kTileColour[kTiles] = {1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};  // theme::settings_tile
+// Board F11's Wi-Fi, Status presets and Holiday words tiles are gone (Mike, 2026-10-31): the panels
+// never join a network, presets aren't needed, and the date strip already shows each holiday,
+// birthday and anniversary with its icon. Each tile keeps the colour it had beside them
+// (kTileColour).
+enum TileId { kTime, kTemp, kUnit, kRing, kVol, kNight, kScreen, kQuiet, kUpdate, kZambretti, kTest, kTiles };
+const char *const kTileLabel[kTiles] = {"TIME & DATE",  "TEMP OFFSET",     "THIS UNIT IS",   "RINGTONE",
+                                        "VOLUME",       "NIGHT LIGHT",     "SCREEN AT NIGHT", "QUIET HOURS",
+                                        "UPDATE OVER WI-FI", "ZAMBRETTI DEMO", "TEST PANEL"};
+const char *const kTileSym[kTiles] = {LV_SYMBOL_LOOP,       LV_SYMBOL_TINT,      LV_SYMBOL_HOME,  LV_SYMBOL_BELL,
+                                      LV_SYMBOL_VOLUME_MAX, LV_SYMBOL_EYE_CLOSE, LV_SYMBOL_POWER, LV_SYMBOL_MUTE,
+                                      LV_SYMBOL_DOWNLOAD,   LV_SYMBOL_IMAGE,     LV_SYMBOL_SETTINGS};
+const int kTileColour[kTiles] = {1, 4, 5, 6, 7, 8, 9, 10, 0, 11, 12};  // theme::settings_tile
+bool g_updater = false;  // the Wi-Fi updater is installed (checked once, when Settings opens)
 lv_obj_t *g_val[kTiles] = {};
 lv_obj_t *g_confirm = nullptr;
 int64_t g_edit_local = 0;
@@ -55,7 +58,6 @@ void tile_value(int id, char *out, size_t n) {
         snprintf(out, n, "Not set");
       }
       break;
-    case kHoliday: snprintf(out, n, "Not built yet"); break;
     case kTemp: {
       int t = g_set.temp_offset_tenths_f;
       int whole = t >= 0 ? (t + 5) / 10 : -((-t + 5) / 10);
@@ -68,6 +70,7 @@ void tile_value(int id, char *out, size_t n) {
       break;
     case kRing: snprintf(out, n, "%s", ringtone_name(g_set.ringtone)); break;
     case kZambretti: snprintf(out, n, "All the forecasts"); break;
+    case kUpdate: snprintf(out, n, "%s", g_updater ? "Tap to start" : "Updater not installed"); break;
     case kVol: {  // 60, 70, 80, 90, 100 are levels 1 to 5; anything stored below 60 shows as level 1
       int lvl = g_set.volume < 60 ? 1 : (g_set.volume - 50 + 5) / 10;
       snprintf(out, n, "%d of 5", lvl > 5 ? 5 : lvl);
@@ -119,14 +122,34 @@ void step(lv_event_t *e) {
   apply(s);
 }
 
-void confirm_answer(lv_event_t *e) {
-  bool yes = (intptr_t)lv_event_get_user_data(e) == 1;
+// A question with Cancel and a yes button. Modal: a full-screen dim layer under the dialog takes
+// every other touch. answer gets user data 1 for yes, 0 for Cancel, and calls confirm_close.
+void confirm_ask(const char *question, const char *sub, const char *yes, lv_event_cb_t answer) {
+  const theme::Palette &pal = theme::palette(g_mode);
+  g_confirm = box(g_sheet_root, 0, 0, 800, 480, hex(0), 0);
+  lv_obj_set_style_bg_opa(g_confirm, LV_OPA_50, 0);
+  lv_obj_add_flag(g_confirm, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_t *d = box(g_confirm, 100, 120, 600, 260, pal.doorbell, 24);
+  lv_obj_add_flag(d, LV_OBJ_FLAG_CLICKABLE);
+  label(d, J30, pal.cream, 28, 24, question);
+  label(d, B20, pal.cream, 30, 72, sub);
+  button(d, 24, 146, 268, 90, pal.ring, pal.cream, "Cancel", J30, answer, (void *)0);
+  theme::StatusColors open = theme::status_colors(0, g_mode);
+  button(d, 308, 146, 268, 90, open.tile, open.text, yes, J30, answer, (void *)1);
+}
+
+// Takes the question down; true if the answer was yes.
+bool confirm_close(lv_event_t *e) {
   if (g_confirm) {  // the dim overlay holding the dialog
     lv_obj_add_flag(g_confirm, LV_OBJ_FLAG_HIDDEN);
     lv_obj_del_async(g_confirm);
     g_confirm = nullptr;
   }
-  if (!yes) return;
+  return (intptr_t)lv_event_get_user_data(e) == 1;
+}
+
+void swap_answer(lv_event_t *e) {
+  if (!confirm_close(e)) return;
   Settings s = g_set;
   s.floor = other_floor(s.floor);
   apply(s);
@@ -134,24 +157,22 @@ void confirm_answer(lv_event_t *e) {
 
 void ask_swap() {
   // PROPOSED: confirm before swapping, it changes which floor and dog this panel speaks for.
-  // Modal: a full-screen dim layer under the dialog takes every other touch.
   if (g_confirm || (g_act && g_act->floor_locked())) return;
-  const theme::Palette &pal = theme::palette(g_mode);
-  g_confirm = box(g_sheet_root, 0, 0, 800, 480, hex(0), 0);
-  lv_obj_set_style_bg_opa(g_confirm, LV_OPA_50, 0);
-  lv_obj_add_flag(g_confirm, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_t *d = box(g_confirm, 100, 120, 600, 260, pal.doorbell, 24);
-  lv_obj_add_flag(d, LV_OBJ_FLAG_CLICKABLE);
   char q[64];
   Floor to = other_floor(g_set.floor);
   snprintf(q, sizeof(q), "Make this unit %s?", floor_word(to));
-  label(d, J30, pal.cream, 28, 24, q);
   char sub[64];
   snprintf(sub, sizeof(sub), "Its dog becomes %s.", to == Floor::Upstairs ? "Lucy" : "Copper");
-  label(d, B20, pal.cream, 30, 72, sub);
-  button(d, 24, 146, 268, 90, pal.ring, pal.cream, "Cancel", J30, confirm_answer, (void *)0);
-  theme::StatusColors open = theme::status_colors(0, g_mode);
-  button(d, 308, 146, 268, 90, open.tile, open.text, "Swap", J30, confirm_answer, (void *)1);
+  confirm_ask(q, sub, "Swap", swap_answer);
+}
+
+void update_answer(lv_event_t *e) {
+  if (confirm_close(e) && g_act) g_act->start_updater();  // restarts the panel into the updater
+}
+
+void ask_update() {
+  if (g_confirm || !g_updater) return;
+  confirm_ask("Restart into the updater?", "Off the radio for up to 10 minutes.", "Restart", update_answer);
 }
 
 void tile_clicked(lv_event_t *e) {
@@ -164,7 +185,8 @@ void tile_clicked(lv_event_t *e) {
     case kScreen: s.screen_off_overnight = !s.screen_off_overnight; apply(s); return;
     case kRing: open_ringtones(); return;
     case kZambretti: open_zambretti_demo(); return;
-    default: return;  // holiday words and quiet hours aren't editable yet
+    case kUpdate: ask_update(); return;
+    default: return;  // quiet hours aren't editable yet
   }
 }
 
@@ -176,6 +198,7 @@ void build_settings(lv_obj_t *root) {
   lv_obj_set_scrollbar_mode(bg, LV_SCROLLBAR_MODE_OFF);
   bool demo = g_act && g_act->demo_info().available;
   int count = demo ? kTiles : kTiles - 1;
+  g_updater = g_act && g_act->updater_installed();
   const theme::Palette &pal = theme::palette(g_mode);
   for (int id = 0; id < count; id++) {
     int x = 12 + (id % 2) * 394, y = 12 + (id / 2) * 102;
@@ -187,7 +210,8 @@ void build_settings(lv_obj_t *root) {
     // (2026-10-26).
     bool edge_buttons = id == kTemp || id == kVol || id == kNight || (id == kUnit && !(g_act && g_act->floor_locked()));
     if (edge_buttons) lv_obj_set_style_clip_corner(t, true, 0);
-    bool tappable = id == kTime || id == kTest || id == kScreen || id == kRing || id == kZambretti;
+    bool tappable = id == kTime || id == kTest || id == kScreen || id == kRing || id == kZambretti ||
+                    (id == kUpdate && g_updater);
     if (tappable) {
       pressable(t, face, 90);
       lv_obj_add_event_cb(t, tile_clicked, LV_EVENT_CLICKED, (void *)(intptr_t)id);

@@ -29,6 +29,7 @@ static int round_tenths(int v) { return v >= 0 ? (v + 5) / 10 : -((-v + 5) / 10)
 // Disc positions drawn on the boards, used when a phase is forced for review.
 static const float kBoardP[6] = {0.35f, 0.03f, 0.22f, 0.48f, 0.88f, 0.985f};
 static constexpr uint32_t kRingAlertMs = 120000;  // Mike, 2026-10-26: the red bell, 2 min at most
+static constexpr uint32_t kClockFloor = 1767225600u;  // 2026-01-01: an earlier time isn't a real one
 
 // ---------------------------------------------------------------------------------------------
 // Setup and the main tick
@@ -673,6 +674,12 @@ void Controller::handle(const Msg &m) {
       break;
     case MsgType::Outside:
       if (m.sender != kSenderGateway && m.sender != peer) return;
+      // A panel that lost its clock (a power cut: no coin cell) takes the Pi's internet time from
+      // the gateway's weather message (Mike, 2026-10-31), never a time of 0 (HANDOFF 2026-10-30:
+      // the Pi hasn't synced yet). It's when the Pi took the reading, so it can lag a little: ranked
+      // with a copy from the other panel, below a clock set by hand.
+      if (!w.valid && m.sender == kSenderGateway && m.u.outside.time >= kClockFloor)
+        p_.set_wall(m.u.outside.time, kClockFromPeer);
       if (!(m.u.outside.flags & kOutsideValid)) return;
       // HANDOFF (2026-10-30): staleness counts from when this panel received the reading, never from
       // its own time, which is 0 until the Pi's clock has synced and can be wrong before that.
@@ -989,7 +996,7 @@ void Controller::build_view() {
       bool bday = e.kind == EventKind::Birthday;
       if (e.title[0]) snprintf(text, sizeof(text), "%s, %s", bday ? "Happy Birthday" : "Happy Anniversary", e.title);
       else snprintf(text, sizeof(text), "%s", bday ? "Happy Birthday" : "Happy Anniversary");
-      add(text, e.title[0] ? e.title : (bday ? "Birthday" : "Anniversary"), bday ? DayIcon::Cake : DayIcon::Rings);
+      add(text, e.title[0] ? e.title : (bday ? "Birthday" : "Anniversary"), bday ? DayIcon::Cake : DayIcon::Champagne);
     }
   }
 

@@ -84,6 +84,8 @@ class PanelPlatform : public board::DevicePlatform {
     esp_lcd_rgb_panel_set_pclk(g_panel, kDisplayPresets[g_disp].mhz * 1000000u);  // from the next frame
   }
   bool strip_drawing() override { return g_strips; }
+  bool updater_installed() override { return board::updater_installed(); }
+  void start_updater() override { board::restart_into_updater(); }
   void toggle_strip_drawing() override {
     g_strips = !g_strips && g_scratch;
     ui::set_art_scratch(g_strips ? g_scratch : nullptr, g_strips ? kScratch : 0);
@@ -330,6 +332,7 @@ void setup() {
   // taps in the ringtone list, until a serial monitor opened (2026-10-24). 2 ms gives up at once,
   // and only the loop task writes to serial now (board::elog, board::elog_flush).
   Serial.setTxTimeoutMs(2);
+  board::crash_guard_begin();  // before anything that could be what keeps crashing
   board::storage_begin();
   tc::Settings settings;
   tc::OwnState own;
@@ -469,6 +472,7 @@ static void command(char *s) {
     Serial.println("shot (the screen as raw RGB565, about a second; tools/shot2png.py makes a PNG)");
     Serial.println("mail (tap this panel's mail badge) | mail other (the other floor taps theirs, as if by radio)");
     Serial.println("gear (as a tap on the gear: Settings rolls down or up) | knock (the other floor rings, as if by radio)");
+    Serial.println("update (restart into the Wi-Fi updater, as Settings > Update over Wi-Fi does)");
     return;
   }
   if (!strcmp(s, "bench")) {
@@ -538,6 +542,7 @@ static void command(char *s) {
   else if (!strcmp(s, "mail")) Serial.println(g_ctrl.tap_mail() ? "mail: tapped" : "mail: nothing waiting to acknowledge");
   else if (!strcmp(s, "mail other")) mail_from_other_floor();
   else if (!strcmp(s, "gear")) ui::tap_gear();
+  else if (!strcmp(s, "update")) board::restart_into_updater();
   else if (!strcmp(s, "knock")) knock_from_other_floor();
   else if (sscanf(s, "time %d-%d-%d %d:%d:%d", &Y, &M, &D, &h, &m, &sec) >= 5)
     g_app.set_clock_local(tc::seconds_from_civil(Y, M, D, h, m, sec));
@@ -610,6 +615,11 @@ void loop() {
   }
   g_platform.flush_saves();  // NVS writes happen here, not in the LVGL task
   board::elog_flush();       // and so do writes to USB serial
+  static bool healthy = false;
+  if (!healthy && millis() > 60000) {  // a minute up: whatever crashed before is behind us
+    healthy = true;
+    board::crash_guard_healthy();
+  }
 #if TCOMM_SENSOR
   sensor_tick();
 #endif

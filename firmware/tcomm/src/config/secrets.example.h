@@ -21,3 +21,9 @@
 // to a degree is close enough (a few minutes). Leave both out to use settings.h's placeholder.
 #define TCOMM_LATITUDE  38.9f
 #define TCOMM_LONGITUDE -77.0f
+
+// Wi-Fi updates (docs/wifi-updates.md). Only the updater joins Wi-Fi, never the panel firmware:
+// the home network's name and password, and a password of your own for uploads to the updater.
+#define TCOMM_WIFI_SSID ""
+#define TCOMM_WIFI_PASS ""
+#define TCOMM_OTA_PASS  ""

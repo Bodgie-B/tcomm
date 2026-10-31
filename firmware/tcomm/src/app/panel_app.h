@@ -31,6 +31,8 @@ class PanelApp : public ui::Actions {
   // sender byte doesn't match the MAC), so the Settings swap is locked.
   void lock_floor(bool on) { floor_locked_ = on; }
   bool floor_locked() override { return floor_locked_; }
+  bool updater_installed() override { return p_.updater_installed(); }
+  void start_updater() override { p_.start_updater(); }
 
   void apply_settings(const Settings &in) override {
     Settings s = in;

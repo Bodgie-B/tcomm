@@ -10,6 +10,10 @@
 #   bash tools/fw.sh listener [COM5]   the same for the gateway's test listener, onto the panel
 #   bash tools/fw.sh mac COM7          read a board's MAC and write nothing (a new panel's line in
 #                                      secrets.h); close any serial monitor on that port first
+#   bash tools/fw.sh updater [COM5]    the Wi-Fi updater (docs/wifi-updates.md), over USB into the
+#                                      panel's second app slot; the panel firmware stays as it is
+#   bash tools/fw.sh ota HOST          the radio build, over Wi-Fi, to a panel waiting in its
+#                                      updater (HOST: the address on its screen, or tcomm-upstairs.local)
 #
 # Run it from Git Bash. Bitdefender's Advanced Threat Defense stopped the same compile started from
 # PowerShell (2026-10-25: powershell.exe running arduino-cli.exe) and quarantined the gateway's
@@ -41,10 +45,13 @@ if [ "${1:-}" = "mac" ]; then
 fi
 
 WHAT=panel
-if [ "${1:-}" = "gateway" ] || [ "${1:-}" = "listener" ] || [ "${1:-}" = "radio" ]; then
-  WHAT=$1
-  shift
-fi
+case "${1:-}" in
+  gateway | listener | radio | updater | ota)
+    WHAT=$1
+    shift
+    ;;
+esac
+[ "$WHAT" != ota ] || [ $# -ge 1 ] || { echo "usage: bash tools/fw.sh ota HOST"; exit 1; }
 # The gateway and listener use the panels' wire-format code (core/protocol.cpp and the rest) from
 # tcomm/src instead of copies: it goes on the include path, and their src/shared files
 # compile it from there.
@@ -58,14 +65,14 @@ case $WHAT in
     UP="$LOCALAPPDATA/tcomm/b/upload32.log"
     EXTRA=(--libraries libraries)
     ;;
-  radio)
+  radio | ota)
     # The same sketch with the two switches in tcomm_config.h set from here, in its own build
-    # folder so going back and forth doesn't rebuild everything.
+    # folder so going back and forth doesn't rebuild everything. ota sends this same build.
     SKETCH=tcomm
     FQBN=$PANEL_FQBN
     OUT="$LOCALAPPDATA/tcomm/b/t32radio"
     LOG="$LOCALAPPDATA/tcomm/b/compile-radio.log"
-    UP="$LOCALAPPDATA/tcomm/b/upload-radio.log"
+    UP="$LOCALAPPDATA/tcomm/b/upload-$WHAT.log"
     EXTRA=(--libraries libraries --build-property "compiler.cpp.extra_flags=-DTCOMM_RADIO_ESPNOW=1 -DTCOMM_DEMO=0")
     ;;
   gateway)
@@ -88,13 +95,24 @@ case $WHAT in
     UP="$LOCALAPPDATA/tcomm/b/upload-listener.log"
     EXTRA=(--build-property "compiler.cpp.extra_flags=\"-I$SRC\"")
     ;;
+  updater)
+    # Built with the panel's board settings (the same partition table), but written by esptool
+    # into app1 only, below, never with arduino-cli's upload, which would put it over the panel
+    # firmware in app0.
+    SKETCH=updater
+    FQBN=$PANEL_FQBN
+    OUT="$LOCALAPPDATA/tcomm/b/updater"
+    LOG="$LOCALAPPDATA/tcomm/b/compile-updater.log"
+    UP="$LOCALAPPDATA/tcomm/b/upload-updater.log"
+    EXTRA=(--build-property "compiler.cpp.extra_flags=\"-I$SRC\"")
+    ;;
 esac
 mkdir -p "$OUT"
 # The gateway and listener pick secrets.h or, without it, secrets.example.h with __has_include.
 # The build cache only knows about the file it used last, so a secrets.h made after a build would
 # be missed and the old placeholder keys flashed. Their own files always recompile (a few seconds;
 # the Arduino core stays cached).
-if [ "$WHAT" = gateway ] || [ "$WHAT" = listener ]; then rm -rf "$OUT/sketch"; fi
+if [ "$WHAT" = gateway ] || [ "$WHAT" = listener ] || [ "$WHAT" = updater ]; then rm -rf "$OUT/sketch"; fi
 
 if ! grep -q "high_perf" "$ARDUINO_DIRECTORIES_DATA"/packages/esp32/tools/esp32-arduino-libs/*/versions.txt 2>/dev/null; then
   echo "The high_perf libraries aren't installed in $ARDUINO_DIRECTORIES_DATA (see README, Toolchain)."
@@ -116,6 +134,39 @@ if [ $# -ge 1 ]; then
   if [ "$WHAT" != panel ] && grep -q '"0123456789abcdef"' tcomm/src/config/secrets.h; then
     echo "NOT UPLOADED: secrets.h still has secrets.example.h's placeholder key. Put in real keys"
     echo "(../gateway/docs/gateway-c6.md, The secrets file)."
+    exit 1
+  fi
+  # The updater's and ota's settings from secrets.h, checked for being there; never printed.
+  ota_pass=$(sed -n 's/^#define TCOMM_OTA_PASS *"\(.*\)".*/\1/p' tcomm/src/config/secrets.h)
+  wifi_name=$(sed -n 's/^#define TCOMM_WIFI_SSID *"\(.*\)".*/\1/p' tcomm/src/config/secrets.h)
+  if [ "$WHAT" = updater ] || [ "$WHAT" = ota ]; then
+    if [ -z "$ota_pass" ] || { [ "$WHAT" = updater ] && [ -z "$wifi_name" ]; }; then
+      echo "NOT UPLOADED: secrets.h needs TCOMM_WIFI_SSID, TCOMM_WIFI_PASS and TCOMM_OTA_PASS filled in"
+      echo "(docs/wifi-updates.md)."
+      exit 1
+    fi
+  fi
+  if [ "$WHAT" = updater ]; then
+    # app1 starts at 0x310000 in the app3M_fat9M_16MB table; nothing else is written.
+    ESPTOOL=$(ls "$ARDUINO_DIRECTORIES_DATA"/packages/esp32/tools/esptool_py/*/esptool.exe 2>/dev/null | head -1)
+    "$ESPTOOL" --chip esp32s3 --port "$1" --baud 921600 write_flash 0x310000 "$OUT/updater.ino.bin" > "$UP" 2>&1
+    if grep -q "Hash of data verified" "$UP"; then
+      echo "updater written into app1 (0x310000); the panel firmware in app0 is untouched (log: $UP)"
+      exit 0
+    fi
+    echo "UPLOAD FAILED (log: $UP)"
+    grep -iE "error|fail" "$UP" | head
+    exit 1
+  fi
+  if [ "$WHAT" = ota ]; then
+    # An HTTP upload to the updater's /update, sent from here, so nothing has to come in through the
+    # laptop's firewall (espota needs the panel to connect back, and Windows blocked that).
+    if curl -sS --fail --max-time 180 -u "tcomm:$ota_pass" -F "firmware=@$OUT/tcomm.ino.bin"       "http://$1/update" > "$UP" 2>&1 && grep -q "Update Success" "$UP"; then
+      echo "sent to $1; the panel restarts into the new firmware (log: $UP)"
+      exit 0
+    fi
+    echo "UPLOAD FAILED (log: $UP)"
+    head -5 "$UP"
     exit 1
   fi
   "$ACLI" upload --fqbn "$FQBN" --input-dir "$OUT" -p "$1" > "$UP" 2>&1

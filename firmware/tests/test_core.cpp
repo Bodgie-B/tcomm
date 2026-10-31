@@ -1200,7 +1200,7 @@ static void test_holidays() {
   CHECK(H(2026, 11, 11) == "Veterans" && H(2026, 11, 26) == "Thanksgiving" && H(2026, 11, 19) == "");
   CHECK(H(2026, 12, 25) == "Christmas" && H(2027, 5, 31) == "Memorial" && H(2027, 11, 25) == "Thanksgiving");
   const Holiday *x = federal_holiday((int32_t)days_from_civil(2026, 12, 25));
-  CHECK(x && std::string(x->message) == "Merry Christmas" && x->icon == DayIcon::Holly);
+  CHECK(x && std::string(x->message) == "Merry Christmas" && x->icon == DayIcon::Tree);
 }
 
 static void test_calendar_sync() {
@@ -1425,6 +1425,32 @@ static void test_reading_and_outside() {
   CHECK(p.pa.w.valid && p.pa.w.utc > 1792627200u);  // its clock was not set from the 0
   p.run(60 * 1000 + 1000);
   CHECK(!p.a.view().outside.valid);
+  // After a power cut (no coin cell, so both clocks lost), upstairs takes the Pi's time from the
+  // gateway's weather message (Mike, 2026-10-31); never from a time of 0, and a set clock stays.
+  {
+    uint32_t real = p.pa.w.utc;
+    p.pa.w = WallTime();
+    p.pb.w = WallTime();
+    o.seq = 80;
+    o.u.outside.time = 0;
+    n = encode(o, buf, sizeof(buf));
+    p.a.on_radio(buf, n);
+    p.run(200);
+    CHECK(!p.pa.w.valid);
+    o.seq = 81;
+    o.u.outside.time = real + 30;
+    n = encode(o, buf, sizeof(buf));
+    p.a.on_radio(buf, n);
+    p.run(200);
+    CHECK(p.pa.w.valid && p.pa.w.utc >= real + 30 && p.pa.w.utc < real + 35);
+    CHECK(p.pa.w.quality == kClockFromPeer);  // below a clock set by hand
+    o.seq = 82;
+    o.u.outside.time = real + 4000;
+    n = encode(o, buf, sizeof(buf));
+    p.a.on_radio(buf, n);
+    p.run(200);
+    CHECK(p.pa.w.utc < real + 1000);
+  }
 
   // LucyGate: out, then in.
   Msg l;

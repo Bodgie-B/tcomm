@@ -11,6 +11,7 @@ Paths in this folder are relative to `firmware/`. The briefs live in the reposit
 | Path | What it is |
 |---|---|
 | `tcomm/` | The panel firmware (Arduino sketch). Structure in `docs/architecture.md`. |
+| `updater/` | The Wi-Fi updater, a small sketch in each panel's second app slot (`docs/wifi-updates.md`) |
 | `../gateway/` | The ESP32-C6-GEEK gateway between the Pi and the panels, its test listener, tests and docs. See `../gateway/docs/gateway-c6.md`. |
 | `bringup/tcomm_bringup/` | Phase 1 sketch: I2C scan, RTC test, backlight steps, speaker tone and chime tests |
 | `libraries/` | LVGL 8.4.0, cut down to its source (its demos, examples, docs, tests and scripts left out; the full release is github.com/lvgl/lvgl, tag v8.4.0), and `lv_conf.h` (from Waveshare; `LV_MEM_CUSTOM` changed to 1) |
@@ -46,6 +47,8 @@ bash tools/fw.sh          # compile only (the demo build: a simulated other pane
 bash tools/fw.sh COM5     # compile, then upload if the compile succeeded
 bash tools/fw.sh radio COM5       # the real build: ESP-NOW on, demo off (what the panels run)
 bash tools/fw.sh mac COM7         # read a board's MAC, writing nothing
+bash tools/fw.sh updater COM5     # the Wi-Fi updater into the panel's second slot (docs/wifi-updates.md)
+bash tools/fw.sh ota 192.168.1.37 # the radio build over Wi-Fi, to a panel waiting in its updater
 bash tools/fw.sh gateway COM7     # the same for the C6 gateway (../gateway/docs/gateway-c6.md)
 bash tools/fw.sh listener COM5    # the gateway's test listener, onto the panel
 ```
@@ -64,7 +67,7 @@ Runs the host tests, writes the synthesized sounds to `docs/sounds/` (the 17 doo
 
 ## Secrets
 
-ESP-NOW keys, the MAC table and the panels' location go in `tcomm/src/config/secrets.h`, copied from `secrets.example.h`. The C6 gateway and its listener are built from the same file. The repository's `.gitignore` keeps `secrets.*` out, and `firmware/.gitignore` lets the template back in. There are no Wi-Fi passwords: the panels don't join a network. Nothing from Mike's other projects goes in this repository.
+ESP-NOW keys, the MAC table, the panels' location, and the Wi-Fi name and passwords the updater uses go in `tcomm/src/config/secrets.h`, copied from `secrets.example.h`. The C6 gateway and its listener are built from the same file. The repository's `.gitignore` keeps `secrets.*` out, and `firmware/.gitignore` lets the template back in. The panel firmware itself never joins a network; only the updater does. Nothing from Mike's other projects goes in this repository.
 
 ## Licences
 

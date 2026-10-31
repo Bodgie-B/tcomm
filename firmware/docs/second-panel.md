@@ -74,6 +74,11 @@ started from PowerShell). Close any serial monitor on a board's port before flas
 7. Set the new panel's own Settings: ringtone, volume, night light, screen at night and the
    temperature offset for where it hangs. It starts from the defaults.
 
+8. Before either panel goes on the wall, install the Wi-Fi updater on both, so later updates
+   don't need them taken down: `bash tools/fw.sh updater COM7`, then the same on COM5. Fill in the
+   Wi-Fi name and password in `secrets.h` first. The steps and checks are in
+   `docs/wifi-updates.md`.
+
 ## Checks, with both panels powered
 
 - Type `radio` on each panel's serial port. Each should name its own floor and count frames from

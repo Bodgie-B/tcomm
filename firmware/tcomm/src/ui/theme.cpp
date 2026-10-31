@@ -35,14 +35,15 @@ static const StatusColors kStatus[3][6] = {
 };
 
 // outbg is the Outside tile's sky. Lighter by day and evening than the boards' EAD9B8 and D0BF9E,
-// so it looks less hazy through the tile's 90 percent (Mike, 2026-10-31).
+// so it looks less hazy through the tile's 90 percent; lighter again later that day, still short of
+// white (Mike, 2026-10-31).
 static const Palette kPalettes[3] = {
     // paper      gold         outbg        dbg          dring        dogc         gearbd
-    {hex(0xF7EAD2), hex(0xF6C24E), hex(0xF3E7CB), hex(0x3A1F2B), hex(0x6B4655), hex(0x3F7C85), hex(0x1F6B3A),
+    {hex(0xF7EAD2), hex(0xF6C24E), hex(0xF8EFDA), hex(0x3A1F2B), hex(0x6B4655), hex(0x3F7C85), hex(0x1F6B3A),
      // cream     plum         outtx        outside_sub  humidity     dfg          gearink      dog text     heat
      hex(0xFBF1DC), hex(0x3A1F2B), hex(0x3A1F2B), hex(0x6B4655), hex(0x3A1F2B), hex(0xFBF1DC), hex(0x3A1F2B), hex(0xFFFFFF),
      hex(0xC8441C), hex(0xE0483C)},
-    {hex(0xE0D2B6), hex(0xE8B847), hex(0xD9C9A8), hex(0x33202A), hex(0x5E3E4C), hex(0x386E76), hex(0x1B5C33),
+    {hex(0xE0D2B6), hex(0xE8B847), hex(0xE1D3B6), hex(0x33202A), hex(0x5E3E4C), hex(0x386E76), hex(0x1B5C33),
      hex(0xF2E7CE), hex(0x3A1F2B), hex(0x3A1F2B), hex(0x5E3E4C), hex(0x3A1F2B), hex(0xF2E7CE), hex(0x3A1F2B), hex(0xFFFFFF),
      hex(0xC0401A), hex(0xD8443A)},
     {hex(0x1B2620), hex(0xC9A460), hex(0x18262A), hex(0x2A1A22), hex(0x4A3440), hex(0x2D5A62), hex(0x2F5A3A),

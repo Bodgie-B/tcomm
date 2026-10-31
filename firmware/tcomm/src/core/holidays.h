@@ -7,7 +7,10 @@
 namespace tc {
 
 // The date strip's icons for holidays, birthdays and anniversaries.
-enum class DayIcon : uint8_t { None, Holly, Fireworks, Flag, Dove, Tools, Ship, Leaf, Cake, Rings };
+enum class DayIcon : uint8_t {
+  None, Tree, Fireworks, Flag, Dove, Labor, Ship, Leaf, Cake, Champagne, Washington, FoldedFlag, Pledge,
+  JuneteenthFlag
+};
 
 struct Holiday {
   const char *name;     // "Thanksgiving Day": the Day view
