@@ -3,7 +3,7 @@
 ## Critter rigs
 
 Module: `screensaver/core/scene/critters.h` and `critters.cpp`. Test: `screensaver/tests/test_critters.cpp`.
-Placed in the scene since: see "In the scene" at the end. The minors scheduler is next.
+Placed in the scene since: see "In the scene" below; the minor effects are in "Minors" at the end.
 
 Sheets written by `test_critters` into `build/`:
 
@@ -145,7 +145,7 @@ thin tail), squirrel (plume), frog (squat with the leg Z, weakest at 10 px), dee
 
 Written 2026-10-30. Not committed. The critter rigs are now in `World`, the
 bear beat replaces the stage 4 placeholder, and the two spine hooks (dinner
-visitors, the night theft) are filled. The minor-effect scheduler is the next
+visitors, the night theft) are filled. The minor-effect scheduler ("Minors", below) came next
 task; it drives critters through the director below.
 
 ### Files
@@ -296,3 +296,122 @@ cannot land the loop under 650 s. Measured 514..650 s over 20 seeds.
 - The raccoon is never scattered by the hiker in practice (he is in the tent), but if a later beat
   moves him while it works, it would flee with the shoe.
 - Not checked by eye: night palettes, dinner c's fast bites with the deer at full frame rate.
+
+## Minors
+
+Written 2026-10-30. Not committed. The minor-effect layer from brief section 4: every 10 to 30 s
+a small reward for anyone glancing at the screen.
+
+### Files
+
+- New: `core/scene/minors.h/.cpp` (the scheduler and all 11 minors).
+- Changed, small: `world.h` (`Minors minors;` and the include), `world.cpp` (`minorsInit` at loop
+  start, `minorsStep` between `spineCritterScenes` and `directorStep`, and every live `Bit` kind now
+  joins the actor sort, not only dust), `app.cpp` (`minorsSync` before `worldTick`; `appMinorName`,
+  `appMinorCount`, `appMinorCritters`), `ss_app.h` (those three), `sim/preview_common.cpp`
+  (`--log-beats` also prints `tick=T minor=NAME` when one starts), `tests/test_scene.cpp` (`testMinors`).
+- Changed, for the effects: `props.h/.cpp` (`BITS_MAX` 4 to 6; new bit kinds DIRT, DROP, RING, LEAF,
+  MOTH, BEE), `landscape.h/.cpp` (`Cloud::ear`, drawn and bounded), `hiker.h/.cpp`
+  (`hikerHeadPos`, same kinematics as `hikerHandPos`), `director.h/.cpp` (`directorDryY`, below).
+
+### The pool
+
+Each runs under 25 s and holds at most one critter (tag `CT_MINOR`), released at the end. Weights are
+the base weight times 0.6..1.4 drawn per loop.
+
+| Name | What happens | Critters / effects | Length | Gating |
+|---|---|---|---|---|
+| chipmunk_cross | Runs in from the edge away from him along the bank in front of the fire, sits up half way and looks, runs on out the far side (or back the way it came if he is now in the way). Carries a crumb, then a nut, then a granola bar on later picks (`chip_n`). | chipmunk | 9 to 12 s | the run-in and the stop clear of him; base 1.4 |
+| squirrel_nut | Runs in with a nut, digs (head down, paw going, flecks of earth), drops the nut in, two pats, sits up and looks round, then hops to three other spots and digs: nothing, nothing, a nut; runs off with it. | squirrel; DIRT bits | 17 to 20 s | a clearing spot 130 px from him, 50 from the fire, off the tent and the camp pine, with a dry, clear run from an edge; hops never go toward him; base 1.0 |
+| frog_splash | Hops in along the far bank from the right edge to the water's edge, sits, looks, blinks, hops in: a ring on the water and it is gone. | frog; RING | 8 to 10 s | spot 130 px from him; base 1.0 |
+| bird_chip | Swoops in from the side away from him and lands 44 px beside the fire pit, one hop, pecks, picks up a crumb, flies up over the stream and drops it (a DROP that falls and becomes a small ring), flies out. | bird (flight is driven along a curve; the rig flaps in place) | 9 to 11 s | fire stones laid, landing 90 px from him; base 1.0 |
+| deer_edge | Walks out at the right edge of camp, freezes looking at camp, one 14 px step closer, freezes, turns its head, walks off right after about 20 s. Shy: any move of his and it bolts. | deer (`CF_SHY`) | 22 to 24 s | 160 px from him, clear path from the right edge; base 0.8 |
+| owl_watch | Glides onto the camp pine's bag branch, a slow blink, a full head turn, a look, another blink, glides off. | owl | 14 to 16 s | dark only (mood ≥ 4.5, < 0.75, or night mode); not while the hung bag swings; base 1.2 |
+| mouse_tent | Out from behind the pitched tent past its door side, scurries along the front of the base to the back corner, sits up, looks, sniffs, off left past the pack. | mouse | 6 to 7 s | tent up and taut, him 90 px clear of the tent; base 0.9 |
+| leaf_fall | One ACTOR leaf drifts down from the top on a sine (30 px/s, 15 px sway) and lands on the clearing, or on his hat if he is sitting; it rides the hat until he moves (or 22 s), then slides off. It stays on the ground after (a later leaf may take its bit slot). | LEAF bit | 12 to 22 s | none; base 1.2 |
+| moth_lantern | A moth flutters in to the lit tent and circles the upper wall on a wobbling loop for 15 s, then away up into the dark (early if the light goes out). | MOTH bit | 20 s | tent lit and dark mood; its window is the pause after the food bag, so when the gate opens and it has not run this loop it goes first, as soon as 10 s have passed since the last minor started; base 2.0 |
+| bee_visit | Buzzes up from the bottom edge to the mushroom, hovers, lands on the cap; if he sits still in a pause with 6 s left, it goes to his face, buzzes, lands on his nose, he swats (hand to face, flick out) and it shoots off; otherwise it flies off. | BEE bit; his near arm (`fx.arm_*`) | 10 to 14 s | none; base 1.0 |
+| cloud_animal | One of the clouds grows a pointed lobe on its leading puff that reads as an ear, holds 6 s, shrinks. If he is idle in a pause with time left, he looks up at it (`fx.head`, 3.2 s). | `Cloud::ear` | 11 s | a cloud whose centre is in x 200..700, sky built; base 0.8 |
+
+### Firing policy
+
+- A minor starts only when none is running, the tick is past `next_tick` (10 to 30 s after the last
+  one started, drawn per minor) and `hold_tick` (6 s after any beat other than a pause ends: a spine
+  beat, a filler or a major; 5 s after the last minor let go), the beat does not own the critters, no
+  one else's critter is in the scene, the hiker is not walking, and the frame is not fading.
+- "Owns the critters": `World::busy` (set by stage 6 for dinner, bear, close and majors), or the beat
+  name is dinner, bear, close, build, or anything not in the calm list (pause, arrival, setup,
+  firewood, fire, foodbag and the six fillers). Unknown names count as owning, so a major and the
+  stillness beats round it hold the minors off even without `busy`.
+- If such a beat starts while a minor runs, its critters leave at once (fast, by the side clear of
+  him); the bird and owl fly out; a bee near him leaves. The leaf, moth and cloud carry on (no
+  critters).
+- Pick: weights times the scene gates; the last 6 picks (ring buffer) are out; if that leaves none,
+  only the last pick is out. A start that the scene declines (him in the way) retries in 1 s.
+- Every exit is a free walk to just inside the frame edge, then the director's exit for the last
+  half body, so the hiker rule still scatters a leaving critter if he walks its way.
+- Randomness: `Minors` has its own `Rng`, seeded at loop start from a copy of the loop RNG (not
+  advanced), so the spine's picks and the ambient layer replay exactly as before for a seed.
+
+### Numbers
+
+- `sizeof(App)` = 63,344 bytes with `Minors` (was 62,960; measured on the stage 5 tree before the
+  stage 6 changes landed in the shared files).
+- Minors per loop: seed 1 (mood 3) 18 in 562 s, seed 2 (mood 0.3) 22 in 649 s, seed 3 (mood 5) 20 in
+  592 s. Over 12 seeds 20.8 a loop: chipmunk_cross 31, squirrel_nut 12, frog_splash 30, bird_chip 23,
+  deer_edge 24, owl_watch 19, mouse_tent 17, leaf_fall 34, moth_lantern 8 (8 of the 8 dark loops),
+  bee_visit 29, cloud_animal 22.
+- Whole loop, rendering every tick: seed 11 7.60 strips per frame (was 7.37..7.57 without minors),
+  seed 7 7.70, seed 42 7.55, seed 1 7.51; pauses 7.08..7.40; 0.106..0.116 ms/frame. Bear beat
+  unchanged (8.46..9.06).
+- `testMinors`: counts 12..40 for seeds 1..3; no start in a beat outside the calm list; all 11 fire
+  in 12 seeds; no minor ends with a `CT_MINOR` critter in the scene; same-seed frames identical at
+  ticks 2000, 7000, 11900 of a dusk loop (11900 is mid-moth; the incremental render also matches a
+  full one there). The existing critter checks (in frame, out of the corner, never over the walking
+  hiker) now cover the minors' critters too.
+
+### What I changed after viewing
+
+Viewed contact sheets and 2x to 3x crops at mood 4 (seed 4), dusk (seed 3), night (seed 8) and for the
+two hiker reactions (seed 9 bee, seed 4 leaf on the hat).
+
+1. A scattered chipmunk fled straight along its own y and ran across the stream. Fleeing and leaving
+   critters now aim for `directorDryY`: the end y that keeps the straight run 3 px above the water's
+   far edge (the dinner critters' scatter benefits too).
+2. The test caught a squirrel hopping to a dig spot right next to the crouched hiker (then overlapping
+   him when he stood and walked), and chipmunks crossing his feet. Paths, spots and exits now keep
+   clear of his bounds (`clearOfHiker`), the chipmunk comes from the side away from him and turns back
+   if he has moved into its way, and exits walk free to the edge before the director takes them.
+3. The mouse was `CF_SHY` and bolted at his first pose change in the cairn filler before anyone could
+   see it; it now only avoids him walking.
+4. The moth circled across the tent's right edge, where the smoke drifts over it, and vanished behind
+   the puffs; its loop is now over the upper middle of the lit wall.
+5. The leaf on his hat was the same black as the hat and read as a lump; it now sits with the stem on
+   the crown and the blade sticking out past the edge, tip up.
+6. The swat raised his hand over his head (a wave). The arm now goes out level with the forearm back
+   up to his face, then flicks out; the bee sits under the brim, not on it.
+7. Earth from the digs was GROUND_DARK on GROUND and could not be seen; it is ROCK now.
+8. The look-up at the cloud never happened in 12 loops (it needed him idle at one exact moment of a
+   pause); it can now start any time while the ear is up, once, if the pause has 3.7 s left. It fired
+   in 3 of 12 loops.
+
+### Open items
+
+- The bee is 2 px as asked: on the panel it is a speck with two light wing dots. Its trip to his nose
+  needs him sitting in a pause, which happened in 2 of 12 loops; the leaf on his hat in 5 of 12.
+- The squirrel's spot rules (clearing, away from fire, tent, pine and him) decline it often: 12 runs
+  in 12 loops against about 30 for the others.
+- During setup and the fillers he moves a lot, so a fair share of minors end early with the critter
+  scattered. It reads as natural (he walks over, it runs), but some never get to their payoff.
+- The moth's only window is the pause after the food bag (before the bear); a loop whose pause there
+  is short and starts within the 6 s hold misses it.
+- The leaf falls from the top of the frame, not from a tree; a leaf from the camp pine's foliage would
+  be better but the pine is a conifer.
+- `--log-beats` keeps the last minor count in a static in `preview_common.cpp` (one Edit); a second
+  `PreviewState` in the same process would share it. Fine for the CLI; noted.
+- The bird drops the crumb from just above the near bank (46 px over the water's centre line, at the
+  end of a short hop of a flight), so the crumb falls the last stretch onto the water and makes a
+  small ring (viewed, seed 1 tick 4060). Flying further out over the water would read more as "over
+  the stream".
+- Not checked on the panel: any of it. Not viewed: squirrel and frog at night.
+

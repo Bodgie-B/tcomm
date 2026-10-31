@@ -22,85 +22,14 @@
 #include "../anim/ease.h"
 #include "../ss_app.h"
 #include "director.h"
+#include "script.h"
 #include "world.h"
 
 namespace ss {
 
-enum StepOp : uint8_t {
-  OP_PLACE,      // feet at the anchor, facing a (0 left, 1 right), in the scene
-  OP_WALK,       // walk to the anchor at s px/s; waits for arrival
-  OP_VIA,        // walk toward the anchor; done within 4 px, so the next walk keeps the stride
-  OP_POSE,       // ease into pose a over x seconds, then hold until s seconds from the start
-  OP_WAIT,       // s seconds of nothing new
-  OP_WAIT_AWAY,  // the plan's away_s seconds (firewood, out of frame)
-  OP_FACE,       // a: 0 left, 1 right, 2 toward the fire
-  OP_CARRY,      // hikerCarry(a)
-  OP_ACT,        // fn(w, u) every tick for s seconds, u 0..1 (exactly 1 on the last tick)
-  OP_DO,         // fn(w, 1) once
-  OP_GO,         // walk to the anchor at s px/s by a route: around the back of the fire pit,
-                 // and in two legs when the move is steeper than it is wide (walks only move x)
-  OP_REPEAT,     // while pred(w): go back a steps
-  OP_UNTIL,      // wait until pred(w) (a critter arrived, the bear is gone)
-};
-
-enum Anchor : uint8_t {
-  AT_HERE = 0, AT_SPOT, AT_PAST, AT_TENT_WORK, AT_PACK, AT_PEG_ROCK, AT_WOOD_WORK, AT_FIRE,
-  AT_BLOW, AT_SIT, AT_COOL, AT_ROCK_SIT, AT_FORD0, AT_FORD1, AT_EDGE_L, AT_EDGE_R,
-  AT_PACK_WORK, AT_BAG_WORK, AT_DOOR, AT_VIEW, AT_READ, AT_LIE, AT_LISTEN, AT_SKIP,
-  AT_MUG,          // the mug where it lies (its right side), or the pack if it is packed
-  AT_STONE,        // cairn: the next flat stone, alternating sides
-  AT_CAIRN_WORK,   // cairn: beside it, on the side he comes from
-  AT_CAIRN
-};
-
-typedef void (*ActFn)(World& w, float u);
-typedef bool (*PredFn)(const World& w);
-
-struct Step {
-  uint8_t op;
-  uint8_t a;       // pose, carry, facing; OP_REPEAT: steps back
-  uint8_t at;      // anchor
-  float x, y;      // offset from the anchor (OP_POSE: x is the blend seconds)
-  float s;         // seconds, or px/s for walks
-  ActFn fn;
-  PredFn pred;
-};
+using namespace sc;
 
 namespace {
-
-// ---- step constructors (keep the tables readable) ---------------------------
-
-constexpr Step place(uint8_t at, int face) {
-  return Step{OP_PLACE, (uint8_t)face, at, 0.f, 0.f, 0.f, nullptr, nullptr};
-}
-constexpr Step walk(uint8_t at, float v, float x = 0.f, float y = 0.f) {
-  return Step{OP_WALK, 0, at, x, y, v, nullptr, nullptr};
-}
-constexpr Step via(uint8_t at, float v, float x = 0.f, float y = 0.f) {
-  return Step{OP_VIA, 0, at, x, y, v, nullptr, nullptr};
-}
-constexpr Step go(uint8_t at, float v, float x = 0.f, float y = 0.f) {
-  return Step{OP_GO, 0, at, x, y, v, nullptr, nullptr};
-}
-constexpr Step pose(PoseId p, float blend, float hold) {
-  return Step{OP_POSE, (uint8_t)p, 0, blend, 0.f, blend + hold, nullptr, nullptr};
-}
-constexpr Step still(float s) { return Step{OP_WAIT, 0, 0, 0.f, 0.f, s, nullptr, nullptr}; }
-constexpr Step waitAway() { return Step{OP_WAIT_AWAY, 0, 0, 0.f, 0.f, 0.f, nullptr, nullptr}; }
-constexpr Step face(int dir) { return Step{OP_FACE, (uint8_t)dir, 0, 0.f, 0.f, 0.f, nullptr, nullptr}; }
-constexpr Step faceTo(uint8_t at) { return Step{OP_FACE, 3, at, 0.f, 0.f, 0.f, nullptr, nullptr}; }
-constexpr Step carry(CarryId c) { return Step{OP_CARRY, (uint8_t)c, 0, 0.f, 0.f, 0.f, nullptr, nullptr}; }
-constexpr Step act(ActFn fn, float s) { return Step{OP_ACT, 0, 0, 0.f, 0.f, s, fn, nullptr}; }
-constexpr Step doit(ActFn fn) { return Step{OP_DO, 0, 0, 0.f, 0.f, 0.f, fn, nullptr}; }
-constexpr Step repeatWhile(PredFn p, int back) {
-  return Step{OP_REPEAT, (uint8_t)back, 0, 0.f, 0.f, 0.f, nullptr, p};
-}
-constexpr Step until(PredFn p) { return Step{OP_UNTIL, 0, 0, 0.f, 0.f, 0.f, nullptr, p}; }
-
-constexpr int LEFT = 0, RIGHT = 1, TO_FIRE = 2;
-
-// Normal stroll, careful wading, a run.
-constexpr float kStroll = 34.f, kWade = 22.f, kRun = 78.f;
 
 inline float minf(float a, float b) { return a < b ? a : b; }
 inline float maxf(float a, float b) { return a > b ? a : b; }
@@ -260,6 +189,21 @@ void actStumble(World& w, float u) {
     w.fx.lean = 0.f;
     w.tent.wobble = 0.f;
   }
+}
+
+// Setup (memory): patching the mouse hole at the tent's base. The near hand
+// works at the hole; it is gone two thirds of the way through.
+bool tentBitten(const World& w) { return w.tent.bite; }
+void actPatch(World& w, float u) {
+  const float e = easeInOut(window(u, 0.f, 0.15f)) * (1.f - easeInOut(window(u, 0.8f, 1.f)));
+  w.fx.reach_to = 0.55f;
+  w.fx.reach = 0.8f * e;
+  w.fx.lean = 0.12f * e * (1.f + 0.4f * sinT(u * 6.f));
+  if (u >= 0.66f && w.tent.bite) {
+    w.tent.bite = false;
+    w.memory.mouse_hole = false;
+  }
+  if (u >= 1.f) w.fx.reach = w.fx.lean = 0.f;
 }
 
 // Firewood: set the armload down by the pit.
@@ -503,7 +447,9 @@ void deerTick(World& w) {
   if (sp.bites > sp.deer_steps && sp.deer_t > 0.6f) {
     sp.deer_steps = sp.bites;
     const Vec2 near = deerNearest(w);
-    if (taken < kDeerMaxSteps && c.feet.x - kDeerStep > near.x) {
+    // A bold deer (memory: the brave/shy split) comes all the way; a shy one stops at four.
+    const int most = memoryBrave(w.memory, CR_DEER) ? kDeerMaxSteps : 4;
+    if (taken < most && c.feet.x - kDeerStep > near.x) {
       const float x = c.feet.x - kDeerStep;
       const Vec2 from = deerSpot(w);
       const float u = clamp01((from.x - x) / maxf(1.f, from.x - near.x));
@@ -1349,6 +1295,7 @@ void actPlaceStone(World& w, float u) {
     if (c.n < CAIRN_MAX) ++c.n;
   }
   c.pop = u;
+  w.memory.cairn_n = c.n;   // memory: what the next loop finds
   w.fx.reach_to = 0.7f;
   w.fx.reach = 0.6f * envelope(u, 0.2f, 0.4f);
   if (u >= 1.f) {
@@ -1516,6 +1463,12 @@ const Step kArrivalC[] = {
       pose(POSE_STAND, 0.6f, 0.2f), walk(AT_TENT_WORK, 30.f), face(LEFT), \
       pose(POSE_CROUCH, 0.6f, 0.f), act(actSpread, 1.6f), pose(POSE_STAND, 0.5f, 0.f)
 
+// Setup, shared end (memory): the mice got in last loop. One more crouch at the
+// tent, the hole at its base patched. Skipped when there is no hole.
+#define PATCH_HOLE                                                                              \
+  skipUnless(tentBitten, 5), go(AT_TENT_WORK, 30.f, -38.f, 5.f), face(LEFT), pose(POSE_CROUCH, 0.6f, 0.2f), \
+      act(actPatch, 2.6f), pose(POSE_STAND, 0.6f, 0.3f)
+
 // Setup a: bent peg; a rock as a hammer.
 const Step kSetupA[] = {
     SETUP_START,
@@ -1539,6 +1492,7 @@ const Step kSetupA[] = {
     act(actPopUp, 1.4f),
     pose(POSE_HANDS_ON_HIPS, 0.7f, 1.5f),
     pose(POSE_STAND, 0.7f, 0.3f),
+    PATCH_HOLE,
 };
 
 // Setup b: up, collapses, head scratch, second try.
@@ -1559,6 +1513,7 @@ const Step kSetupB[] = {
     act(actReraise, 1.8f),
     pose(POSE_HANDS_ON_HIPS, 0.7f, 1.4f),
     pose(POSE_STAND, 0.7f, 0.2f),
+    PATCH_HOLE,
 };
 
 // Setup c: up first try; steps back to admire it and trips on a guy line.
@@ -1578,6 +1533,7 @@ const Step kSetupC[] = {
     pose(POSE_STAND, 0.6f, 0.3f),
     pose(POSE_HANDS_ON_HIPS, 0.6f, 1.0f),
     pose(POSE_STAND, 0.6f, 0.2f),
+    PATCH_HOLE,
 };
 
 // Firewood, shared: looks to the trees, walks off left behind the pines,
@@ -2020,6 +1976,7 @@ const Step kFillStreamListen[] = {
 #undef BAG_FETCH
 #undef TO_TENT
 #undef SETUP_START
+#undef PATCH_HOLE
 #undef WOOD_TRIP
 #undef WOOD_DOWN
 #undef FIRE_START
@@ -2069,12 +2026,15 @@ const uint8_t kDurations[SB_COUNT][3] = {
 
 // Bear c fetching the firewood stick from beside the fire walks much further.
 constexpr uint8_t kBearStickFarS = 17;
+// Setup with the mouse hole to patch (memory): a walk back and a crouch.
+constexpr uint8_t kPatchS = 7;
 
 // A beat's seconds in this plan.
 int beatSeconds(const LoopPlan& p, int b) {
   const uint8_t v = spineVariant(p, b);
   int s = kDurations[b][v];
   if (b == SB_BEAR && v == 2 && p.firewood == 2) s += kBearStickFarS;
+  if (b == SB_SETUP && p.patch) s += kPatchS;
   return s;
 }
 
@@ -2124,6 +2084,10 @@ Vec2 anchorPos(const World& w, uint8_t at) {
       return m.down ? Vec2{m.pos.x + 13.f, m.pos.y - 2.f} : c.pack_work;
     }
     case AT_STONE: return c.stones[w.cairn.n & 1];
+    case AT_M0:
+    case AT_M1:
+    case AT_M2:
+    case AT_M3: return w.major.p[at - AT_M0];
     case AT_CAIRN_WORK: {
       const float side = w.hiker.feet.x < w.cairn.pos.x ? -1.f : 1.f;
       return Vec2{w.cairn.pos.x + 13.f * side, w.cairn.pos.y - 2.f};
@@ -2248,6 +2212,11 @@ void runScript(World& w) {
       r.entered = false;
       continue;
     }
+    if (s.op == OP_SKIP) {     // steps that apply only sometimes, decided on the spot
+      r.i = (uint8_t)(r.i + 1 + ((s.pred && s.pred(w)) ? 0 : s.a));
+      r.entered = false;
+      continue;
+    }
     if (!r.entered) {
       r.entered = true;
       r.ticks = 0;
@@ -2282,6 +2251,14 @@ void beatBegin(SceneCtx& ctx) {
   // Right after the build-up: a bear that will want a stick and a firewood
   // trip that brings none back get a fallen branch by the bag pine.
   if (B == SB_ARRIVAL && w.plan.bear == 2 && w.plan.firewood != 2) layFallenBranch(w);
+  // Memory: last loop's cairn is still there, one stone shorter.
+  if (B == SB_ARRIVAL && w.cairn.n == 0) {
+    w.cairn.n = w.plan.cairn_start;
+    w.cairn.pop = 1.f;
+    w.memory.cairn_n = w.cairn.n;
+  }
+  // Beats that own critters keep the minors away while they run.
+  if (B == SB_DINNER || B == SB_BEAR || B == SB_CLOSE) w.busy = true;
   startScript(w, kScripts[B][spineVariant(w.plan, B)]);
 }
 
@@ -2345,6 +2322,7 @@ void beatEnd(SceneCtx& ctx) {
 #endif
   if (w.spine.run.steps && w.spine.run.i < w.spine.run.n && w.spine.overruns < 255) ++w.spine.overruns;
   w.spine.run.steps = nullptr;
+  w.busy = false;
 }
 
 typedef void (*BeginFn)(SceneCtx&);
@@ -2389,6 +2367,17 @@ bool pickRock(const World& w, Vec2& sit) {
 
 // ---- public ---------------------------------------------------------------------------
 
+void scriptStart(World& w, const Step* steps, uint8_t n) { startScript(w, Script{steps, n}); }
+void scriptRun(World& w) { runScript(w); }
+bool scriptDone(const World& w) { return !w.spine.run.steps || w.spine.run.i >= w.spine.run.n; }
+Vec2 scriptAnchor(const World& w, uint8_t at) { return anchorPos(w, at); }
+void scriptSetPose(World& w, PoseId p, float seconds) { setPose(w, p, seconds); }
+void scriptFxRest(World& w) { fxRest(w); }
+void scriptSetArm(World& w, int i, float k, float sh, float el) { setArm(w, i, k, sh, el); }
+float scriptEnvelope(float u, float a, float b) { return envelope(u, a, b); }
+float scriptGroundAt(const World& w, float x, float want) { return groundAt(w, x, want); }
+void scriptSetDown(World& w, ItemId id, Vec2 at) { setDown(w, id, at); }
+
 int spineVariantCount(int beat) {
   if (beat < 0 || beat >= SB_COUNT) return 0;
   int n = 0;
@@ -2417,6 +2406,8 @@ int busySeconds(const LoopPlan& p) {
   int s = (int)(SS_BUILD_SECONDS + 0.5f);
   for (int b = 0; b < SB_COUNT; ++b) s += beatSeconds(p, b);
   for (int i = 0; i < p.n_fillers; ++i) s += spineFillerSeconds(p, p.filler[i]);
+  for (int i = 0; i < p.n_majors; ++i)
+    s += majorSeconds(p.major[i], p.major_var[i]) + p.major_pre_s[i] + p.major_post_s[i];
   return s;
 }
 
@@ -2441,7 +2432,7 @@ constexpr uint8_t kPauseMin = 8, kPauseMax = 20;
 
 }  // namespace
 
-void spinePlan(LoopPlan& p, Rng& rng, const Inputs& in) {
+void spinePlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
   // One rng call per statement: argument evaluation order differs between
   // compilers, and the board must replay the PC preview.
   uint8_t v[SB_COUNT];
@@ -2458,8 +2449,8 @@ void spinePlan(LoopPlan& p, Rng& rng, const Inputs& in) {
   p.pause_s[SB_CLOSE] = 0;   // the loop ends with the close
   p.away_s = (uint8_t)rng.rangeInt(6, 10);
 
-  // Fillers: 2 to 4, weighted, no repeats. The sunset mug is likelier from
-  // golden hour on (mood 3.5 and up).
+  // Fillers: 2 to 4 drawn, weighted, no repeats (the length policy below may
+  // drop some). The sunset mug is likelier from golden hour on (mood 3.5 and up).
   float wt[FILL_COUNT] = {1.f, 1.f, 1.2f, 1.f, 1.f, 1.f};
   if (in.mood >= 3.5f) wt[FILL_MUG_SUNSET] = 3.f;
   p.n_fillers = (uint8_t)rng.rangeInt(2, SPINE_FILLER_MAX);
@@ -2473,38 +2464,84 @@ void spinePlan(LoopPlan& p, Rng& rng, const Inputs& in) {
     p.filler[i] = (uint8_t)f;
     wt[f] = 0.f;
   }
-  // Slots in play order: after fire and after dinner; a third goes after
-  // dinner too; with four, the first goes after setup.
-  static const uint8_t kSlots[3][SPINE_FILLER_MAX] = {{SB_FIRE, SB_DINNER, 0, 0},
-                                                      {SB_FIRE, SB_DINNER, SB_DINNER, 0},
-                                                      {SB_SETUP, SB_FIRE, SB_DINNER, SB_DINNER}};
-  for (int i = 0; i < p.n_fillers; ++i) p.filler_after[i] = kSlots[p.n_fillers - 2][i];
   for (int i = 0; i < SPINE_FILLER_MAX; ++i) {
     const uint8_t s = (uint8_t)rng.rangeInt(kPauseMin, kPauseMax);
     if (i < p.n_fillers) p.filler_pause_s[i] = s;
   }
-  p.cairn_add = (uint8_t)rng.rangeInt(4, 6);
+  // Memory: the cairn stands from loop start one stone shorter than it was
+  // left, and the filler adds to it (at least one stone, up to the top).
+  p.cairn_start = mem.cairn_n > 0 ? (uint8_t)(mem.cairn_n - 1) : 0;
+  const int add = rng.rangeInt(4, 6);
+  p.cairn_add = (uint8_t)(add < CAIRN_MAX - p.cairn_start ? add : CAIRN_MAX - p.cairn_start);
+  p.patch = mem.mouse_hole;
   p.skip_n = rng.chance(0.35f) ? 4 : 3;
   p.steam_n = (uint8_t)rng.rangeInt(3, 5);
 
-  // Loop length policy: stretch or squeeze the pauses (round robin, one
-  // second at a time, within 8..20 s) until the loop lands in range.
+  majorsPlan(p, rng, in, mem);
+
+  // Loop length policy. Squeeze the pauses (round robin, a second at a time,
+  // down to 8 s); while still too long, drop fillers down to one, majors down
+  // to two, the last filler, then shorten the still beats round the majors;
+  // then stretch the pauses (up to 20 s) until the loop is long enough.
+  auto setFillerSlots = [&p]() {
+    // Slots in play order: after dinner; then fire and dinner; a third after
+    // dinner too; with four, the first goes after setup.
+    static const uint8_t kSlots[SPINE_FILLER_MAX + 1][SPINE_FILLER_MAX] = {
+        {0, 0, 0, 0}, {SB_DINNER, 0, 0, 0}, {SB_FIRE, SB_DINNER, 0, 0}, {SB_FIRE, SB_DINNER, SB_DINNER, 0},
+        {SB_SETUP, SB_FIRE, SB_DINNER, SB_DINNER}};
+    for (int i = 0; i < SPINE_FILLER_MAX; ++i) p.filler_after[i] = i < p.n_fillers ? kSlots[p.n_fillers][i] : 0;
+  };
+  setFillerSlots();
+  auto total = [&p]() { return busySeconds(p) + pauseSeconds(p); };
   uint8_t* slot[SB_COUNT + SPINE_FILLER_MAX];
-  const int ns = pauseSlots(p, slot);
-  const int busy = busySeconds(p);
-  for (int guard = 0, k = 0; guard < 400 && busy + pauseSeconds(p) < kAimMin; ++guard, k = (k + 1) % ns)
-    if (*slot[k] < kPauseMax) ++*slot[k];
-  for (int guard = 0, k = 0; guard < 400 && busy + pauseSeconds(p) > kAimMax; ++guard, k = (k + 1) % ns)
+  int ns = pauseSlots(p, slot);
+  for (int guard = 0, k = 0; guard < 400 && total() > kAimMax; ++guard, k = (k + 1) % ns)
     if (*slot[k] > kPauseMin) --*slot[k];
-  // Still too long with every pause at its least (long bear and close
-  // variants with four fillers): drop fillers from the end, down to two.
-  while (busySeconds(p) + pauseSeconds(p) > kAimMax && p.n_fillers > 2) {
+  auto dropFiller = [&]() {
     --p.n_fillers;
     p.filler[p.n_fillers] = 0;
     p.filler_after[p.n_fillers] = 0;
     p.filler_pause_s[p.n_fillers] = 0;
-    for (int i = 0; i < p.n_fillers; ++i) p.filler_after[i] = kSlots[p.n_fillers - 2][i];
+    setFillerSlots();
+  };
+  while (total() > kAimMax && p.n_fillers > 1) dropFiller();
+  while (total() > kAimMax && p.n_majors > 2) {
+    // Drop the last major, or an earlier one if that leaves a set of majors
+    // one of the last loops played (memory) and another choice does not.
+    uint16_t all = 0;
+    for (int i = 0; i < p.n_majors; ++i) all = (uint16_t)(all | (1u << p.major[i]));
+    int drop = p.n_majors - 1;
+    for (int i = p.n_majors - 1; i >= 0; --i)
+      if (!memoryRecentSet(mem, (uint16_t)(all & ~(1u << p.major[i])))) {
+        drop = i;
+        break;
+      }
+    for (int i = drop; i + 1 < p.n_majors; ++i) {
+      p.major[i] = p.major[i + 1];
+      p.major_after[i] = p.major_after[i + 1];
+      p.major_var[i] = p.major_var[i + 1];
+      p.major_pre_s[i] = p.major_pre_s[i + 1];
+      p.major_post_s[i] = p.major_post_s[i + 1];
+    }
+    --p.n_majors;
+    p.major[p.n_majors] = p.major_after[p.n_majors] = p.major_var[p.n_majors] = 0;
+    p.major_pre_s[p.n_majors] = p.major_post_s[p.n_majors] = 0;
   }
+  while (total() > kAimMax && p.n_fillers > 0) dropFiller();
+  for (int guard = 0, k = 0; guard < 64 && total() > kAimMax && p.n_majors > 0; ++guard, k = (k + 1) % (2 * p.n_majors)) {
+    uint8_t& st = (k & 1) ? p.major_post_s[k >> 1] : p.major_pre_s[k >> 1];
+    if (st > 4) --st;
+  }
+  ns = pauseSlots(p, slot);
+  for (int guard = 0, k = 0; guard < 400 && total() < kAimMin; ++guard, k = (k + 1) % ns)
+    if (*slot[k] < kPauseMax) ++*slot[k];
+  uint16_t set = 0;
+  for (int i = 0; i < p.n_majors; ++i) {
+    memoryPushMajor(mem, p.major[i]);
+    set = (uint16_t)(set | (1u << p.major[i]));
+  }
+  memoryPushSet(mem, set);
+  mem.last_n = p.n_majors;
 }
 
 void spineLayout(World& w) {
@@ -2619,6 +2656,12 @@ void spineBuildTimeline(Timeline& tl, const LoopPlan& p) {
       tl.add(Beat{kFillerNames[f], (float)spineFillerSeconds(p, f), kFillerBegin[f], beatUpdate, beatEnd});
       tl.add(Beat{"pause", (float)p.filler_pause_s[i], nullptr, nullptr, nullptr});
     }
+    for (int i = 0; i < p.n_majors; ++i) {
+      if (p.major_after[i] != b) continue;
+      tl.add(Beat{"still", (float)p.major_pre_s[i], nullptr, nullptr, nullptr});
+      tl.add(majorBeat(p, i));
+      tl.add(Beat{"still", (float)p.major_post_s[i], nullptr, nullptr, nullptr});
+    }
   }
 }
 
@@ -2634,12 +2677,21 @@ int spineFormatPlan(const LoopPlan& p, char* buf, size_t n) {
   int k = snprintf(buf, n, "arrival=%d setup=%d firewood=%d fire=%d dinner=%d foodbag=%d bear=%d close=%d fillers=",
                    p.arrival, p.setup, p.firewood, p.fire, p.dinner, p.foodbag, p.bear, p.close);
   if (k < 0 || (size_t)k >= n) return k;
-  if (p.n_fillers == 0) return k + snprintf(buf + k, n - (size_t)k, "none");
+  auto put = [&](const char* str) {
+    if (k < 0 || (size_t)k >= n) return;
+    const int m = snprintf(buf + k, n - (size_t)k, "%s", str);
+    if (m > 0) k += m;
+  };
+  if (p.n_fillers == 0) put("none");
   for (int i = 0; i < p.n_fillers && i < SPINE_FILLER_MAX; ++i) {
-    const int m = snprintf(buf + k, n - (size_t)k, "%s%s", i ? "," : "", spineFillerName(p.filler[i]));
-    if (m < 0) return k;
-    k += m;
-    if ((size_t)k >= n) return k;
+    if (i) put(",");
+    put(spineFillerName(p.filler[i]));
+  }
+  put(" majors=");
+  if (p.n_majors == 0) put("none");
+  for (int i = 0; i < p.n_majors && i < SPINE_MAJOR_MAX; ++i) {
+    if (i) put(",");
+    put(majorName(p.major[i]));
   }
   return k;
 }

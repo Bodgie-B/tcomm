@@ -759,6 +759,7 @@ void cloudGenerate(Cloud& c, Rng& rng, float x, float y, float speed_px_per_s) {
   c.x = x;
   c.y = y;
   c.speed = speed_px_per_s * SS_TICK_DT;
+  c.ear = 0.f;
   c.n = rng.rangeInt(4, CLOUD_MAX_LIT);
   const float span = rng.range(90.f, 140.f);
   for (int i = 0; i < c.n; ++i) {
@@ -793,10 +794,43 @@ void cloudStep(Cloud& c) {
   if (c.x < CLOUD_WRAP_LEFT) c.x += CLOUD_WRAP_RIGHT - CLOUD_WRAP_LEFT;
 }
 
+namespace {
+// The ear: a tapered lobe rising from the top of the leading (leftmost) puff,
+// leaning forward. Six points, base inside the puff, tip ear * 15 px above it.
+void cloudEar(const Cloud& c, float xq, Vec2 p[6]) {
+  int k = 0;
+  for (int i = 1; i < c.n; ++i)
+    if (c.dx[i] < c.dx[k]) k = i;
+  // The leading puff is often small: the ear sits on the next one in if that is taller.
+  int j = -1;
+  for (int i = 0; i < c.n; ++i)
+    if (i != k && (j < 0 || c.dx[i] < c.dx[j])) j = i;
+  if (j >= 0 && c.dy[j] - c.ry[j] < c.dy[k] - c.ry[k] - 4.f) k = j;
+  const float bx = xq + c.dx[k] - 0.25f * c.rx[k], by = c.y + c.dy[k] - 0.8f * c.ry[k];
+  const float h = 15.f * c.ear, w = 6.5f;
+  const float lean = -0.45f * h;   // forward is left: clouds drift left
+  p[0] = Vec2{bx - w, by + 3.f};
+  p[1] = Vec2{bx - 0.85f * w + 0.5f * lean, by - 0.55f * h};
+  p[2] = Vec2{bx - 0.2f * w + lean, by - h};
+  p[3] = Vec2{bx + 0.35f * w + 0.9f * lean, by - 0.9f * h};
+  p[4] = Vec2{bx + 0.8f * w + 0.4f * lean, by - 0.4f * h};
+  p[5] = Vec2{bx + w, by + 3.f};
+}
+}  // namespace
+
 Rect cloudBounds(const Cloud& c) {
   const float xq = floorf(c.x);
   Rect r{(int)floorf(xq + c.bx0), (int)floorf(c.y + c.by0), (int)ceilf(xq + c.bx1),
          (int)ceilf(c.y + c.by1)};
+  if (c.ear > 0.f) {
+    Vec2 p[6];
+    cloudEar(c, xq, p);
+    for (const Vec2& q : p) {
+      if ((int)floorf(q.x) - 1 < r.x0) r.x0 = (int)floorf(q.x) - 1;
+      if ((int)floorf(q.y) - 1 < r.y0) r.y0 = (int)floorf(q.y) - 1;
+      if ((int)ceilf(q.x) + 1 > r.x1) r.x1 = (int)ceilf(q.x) + 1;
+    }
+  }
   return r.clipped(Rect{-100000, 0, 100000, LS_HORIZON});
 }
 
@@ -808,6 +842,11 @@ void cloudDraw(const Cloud& c, Surface& s, const Palette& pal, const Rect& clip)
   const float xq = floorf(c.x);
   for (int i = 0; i < c.n; ++i) {
     fillEllipse(s, Vec2{xq + c.dx[i], c.y + c.dy[i]}, c.rx[i], c.ry[i], pal[CLOUD_LIT], lim);
+  }
+  if (c.ear > 0.f) {
+    Vec2 p[6];
+    cloudEar(c, xq, p);
+    fillPolygon(s, p, 6, pal[CLOUD_LIT], lim);
   }
   fillEllipse(s, Vec2{xq + c.sdx, c.y + c.sdy}, c.srx, c.sry, pal[CLOUD_SHADE], lim);
 }

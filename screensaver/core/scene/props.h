@@ -39,6 +39,7 @@ struct Tent {
   // whole px, through shadow_shake, and hunches it down up to 3 px.
   float shadow_jitter;
   float shadow_shake;  // x offset World sets from shadow_jitter (whole px)
+  bool bite;           // a mouse hole bitten out of the base, front right (memory, stage 6)
 };
 
 void tentInit(Tent& t, Vec2 pos);
@@ -177,9 +178,20 @@ bool leafSame(const Leaf& a, const Leaf& b);
 // falls on to land there (a cone off the bear's head), then lies still. A dust
 // puff (SMOKE) swells, drifts up and shrinks away over BIT_DUST_S seconds.
 // bitStep moves them (World calls it every tick); drawn from the fields alone.
-enum BitKind : uint8_t { BIT_NONE = 0, BIT_CONE, BIT_DUST };
-#define BITS_MAX 4
+//
+// The minor effects (minors.h) add: DIRT, a fleck of earth thrown up by a dig
+// (falls to ground_y and is gone); DROP, a crumb falling to the water at
+// ground_y, where it turns into a small RING; RING, a ring spreading on the
+// water and thinning over BIT_RING_S (`spin` is its size, 1 a frog); LEAF, an
+// ACTOR leaf (`spin` its turn, as Leaf::rot); MOTH and BEE, a few px of
+// fluttering ACTOR. LEAF, MOTH and BEE are placed by their owner each tick.
+// `land_y` is the base y every kind sorts by among the ground actors (the
+// cone and dust set it too).
+enum BitKind : uint8_t { BIT_NONE = 0, BIT_CONE, BIT_DUST, BIT_DIRT, BIT_DROP, BIT_RING, BIT_LEAF, BIT_MOTH, BIT_BEE };
+// The bear beat writes slots 0..3 by index; the minors take free slots from the top.
+#define BITS_MAX 6
 #define BIT_DUST_S 0.9f
+#define BIT_RING_S 1.6f
 struct Bit {
   uint8_t kind;
   bool resting;      // cone: on the ground for good

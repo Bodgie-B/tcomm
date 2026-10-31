@@ -62,7 +62,8 @@ int appBuildPhase(const App* app);
 // sizeof(App), for budget logs (must stay <= SS_APP_BYTES).
 uint32_t appAppBytes();
 // This loop's story variant picks, e.g. "arrival=1 setup=0 firewood=2 fire=1
-// dinner=0 foodbag=0 bear=0 close=0 fillers=cairn,read". Returns snprintf's count.
+// dinner=0 foodbag=0 bear=0 close=0 fillers=cairn,read majors=echo,fish_leap".
+// Returns snprintf's count.
 int appLoopPlan(const App* app, char* buf, size_t n);
 // The frame area the hiker covers this tick (empty when out of frame);
 // returns whether he is visible.
@@ -80,6 +81,12 @@ bool appCritterRect(const App* app, int slot, Rect* out, int* kind);
 // Loop memory (stage 6 adds the rest): the raccoon has the shoe; loops started.
 bool appMemoryShoeTaken(const App* app);
 uint32_t appMemoryLoopCount(const App* app);
+// All of the loop memory (scene/memory.h), e.g. "loop=3 cairn=4 shoe=0
+// stolen=mug hole=0 brave=deer,squirrel ring=echo,pinecone". Returns snprintf's count.
+int appMemory(const App* app, char* buf, size_t n);
+// A beat that owns critters is running (dinner, bear, close or a surprise
+// major); the minor effects wait for it.
+bool appBusy(const App* app);
 // Spine beats this loop that ended before their script did (0 when the
 // timing is right).
 int appSpineOverruns(const App* app);
@@ -87,5 +94,10 @@ int appSpineOverruns(const App* app);
 uint32_t appLoopTicks(const App* app);
 // Whole-frame fade to near black, 0 none .. 1 black (the end and start of a loop).
 float appFade(const App* app);
+// The minor effect running now ("chipmunk_cross", ...; "" when none), how
+// many started this loop, and the critters they hold now (CT_MINOR slots).
+const char* appMinorName(const App* app);
+int appMinorCount(const App* app);
+int appMinorCritters(const App* app);
 
 }  // namespace ss

@@ -23,6 +23,7 @@ struct PreviewOptions {
   int fps = 25;                 // render fps; ticks per frame = SS_TICK_HZ / fps
   int every = 0;                // >0: ticks per frame, overrides fps
   bool log_beats = false;       // print beat changes and loop starts to stdout
+  int loops = 0;                // >0: simulate this many loops without rendering, print one line each, exit
   int skip = 0;                 // ticks simulated before the first frame is written
   const char* out_dir = "frames";
   long long doorbell_at = -1;   // tick to post a doorbell at; -1 = never
@@ -64,6 +65,12 @@ int previewStep(PreviewState& st, int n);
 int previewTicksForFrame(int fps, int frame);
 // Same, but honouring o.every (a fixed tick count per frame) when it is set.
 int previewTicksForFrameOpts(const PreviewOptions& o, int frame);
+
+// --loops N: simulate N whole loops with no rendering and print, per loop,
+//   "loop=L seed=S length=Ts plan=P memory=M"
+// (P is appLoopPlan, M is appMemory as the loop leaves it for the next).
+// Returns the number of loops run.
+int previewRunLoops(PreviewState& st, int n, FILE* out);
 
 // Log to stdout from now on, in previewTicks (so --skip ticks are included):
 //   "loop=L seed=S start tick=T plan=P"     a loop started (L from 0); P is appLoopPlan

@@ -155,10 +155,30 @@ on the fire-facing edge), not a glow.
 - Stage 2: built 2026-10-30, awaiting review. Build-up beat (13 s, 6 phases, 6 cache rebuilds per loop) and ambient layer (grass, stream highlights, fire and smoke, bird) in `world.*`, `buildup.*`, `ambient.*`. Ambient average 6.0 to 6.5 strips per frame, 0.135 ms/frame in the preview, `sizeof(App)` 58,600 bytes. Notes: `reviews/stage2/notes.md`.
 - Stage 3: module built, not yet placed in the scene
 - Stage 4: complete (the bear beat landed with stage 5; the `--loops N` preview mode moves to the next task). All 9 spine beats, 3 variants each, 6 calm fillers, loop fade and variable loop length 495..650 s. `sizeof(App)` 60,232 bytes; whole loop about 7.2 to 7.4 strips per frame, about 0.10 ms/frame. Notes: `reviews/stage4/notes.md`.
-- Stage 5: critters in scene, bear beat and hooks done; minors pending. Critter director (`director.*`), 3 bear variants, dinner visitors, the raccoon theft, `Memory` (shoe, loop count). `sizeof(App)` 62,960 bytes; bear beat 8.5 to 9.1 strips per frame. Notes: `reviews/stage5/notes.md`.
-- Stage 6: not started
+- Stage 5: complete. Critter director (`director.*`), 3 bear variants, dinner visitors, the raccoon theft, `Memory` (shoe, loop count), and the minor-effect layer (`minors.*`: 11 minors, 18 to 22 a loop, weighted pool with a ring of the last 6, deferring to dinner, bear, close and majors). `sizeof(App)` 63,344 bytes before stage 6; bear beat 8.5 to 9.1 strips per frame, whole loop with minors 7.5 to 7.7. Notes: `reviews/stage5/notes.md`.
+- Stage 6: complete (2026-10-30, not committed). Surprise majors (`majors.*`: 12 of the 13 planned, `rain_shelter` waits for stage 9 weather), 2 to 4 a loop from a weighted pool with a ring of the last 8 picks (the last loop's own majors excluded), one per slot after setup, fire, dinner and food bag, each between two 4 to 8 s still beats; world memory (`memory.*`: cairn, shoe and last stolen, mouse hole, brave/shy split, majors ring, loop count); the step interpreter shared through `script.h`; `ss_preview --loops N`. `sizeof(App)` 66,024 bytes; majors 7.6 to 8.0 strips per frame, whole loop 7.5 to 7.7. Notes: `reviews/stage6/notes.md`.
 
 ## Deferred review fixes
 
 All seven (from the review of afc5520) were applied with the stage 5 critter
 work; see "In the scene" in `reviews/stage5/notes.md`.
+
+## Deferred review fixes, round 2 (from the review of ff8bcbf; apply after stage 6 lands)
+
+1. `director.cpp` held-item loop: set `it.facing = (int8_t)c.facing` every tick
+   (the bear's stick points forward for the whole walk, then flips 118 px).
+2. `spine.cpp` bear c: lay the fallen branch further from the sniff spot
+   (~trunk+20), step back without turning when the target is behind the bear,
+   ease the stick from the ground to the anchor over a few ticks, hold it at
+   `critterMouth` while on all fours and `critterPaw` only when reared.
+3. `spine.cpp`: `sp.bear` is never cleared after release; `bearArrived`,
+   `bearGone`, `bearWalk`, `doBearLeave`, `doBearRunOff`, `bearUpdate` must
+   check `tag == CT_BEAR` or `sp.bear` must be set to -1 on release.
+4. `spine.cpp` `beatEnd`: `directorExit` every slot whose tag belongs to the
+   ending beat, so an overrun never leaks a critter.
+5. `director.cpp` / test: the 80 px scatter-from-walking-hiker rule has never
+   fired in 300 seeds; add a unit test that walks him at a non-shy critter and
+   asserts it scatters before the bounds overlap.
+6. `spine.cpp` `doShoeOff`: skip laying the shoe when `memory.shoe_taken`
+   (stage 6's raccoon returns it); reword the test message.
+7. `spine.cpp` `doPackSetDown`: tween the 4.5 to 7 px snap like `actPackLift`.

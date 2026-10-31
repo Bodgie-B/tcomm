@@ -39,6 +39,10 @@ void directorAvoidHiker(World& w);
 // the reserved corner's band: a target at or below y 417 stays left of the
 // corner by the critter's half length (an exit there goes left instead).
 Vec2 directorClamp(const World& w, int slot, Vec2 to, bool exiting);
+// The feet y to aim for on a run from `from` to x `to_x` so the straight line
+// stays on dry ground (3 px above the water's far edge all the way, not above
+// y 320); from.y when it already does, or when `from` is in the water.
+float directorDryY(const World& w, Vec2 from, float to_x);
 // Walk (or run, hop, fly: `gait`, falling back to the kind's own) to `to`
 // (clamped), feet.y following the straight line from where it is.
 void directorWalk(World& w, int slot, Vec2 to, float px_per_s, CritterAction gait);

@@ -614,6 +614,37 @@ Vec2 hikerHandPos(const Hiker& h, int which) {
   return Vec2{h.feet.x + sx * hand.x, h.feet.y - low - P.lift * H + hand.y};
 }
 
+// Same kinematics and grounding again, for the head.
+Vec2 hikerHeadPos(const Hiker& h, float* radius) {
+  const float H = h.height;
+  const HikerPose& P = h.pose;
+  const float breath = (1.f - h.walk_w) * kBreathAmp * H * (0.5f + 0.5f * sinT(h.breath_phase));
+  const Vec2 hip{P.dx * H, 0.f};
+  const float lt = P.lean * kInvTwoPi;
+  const Vec2 up{sinT(lt), -cosT(lt)};
+  const Vec2 chest = add(hip, mul(up, kTorsoTop * H + breath));
+  const Vec2 neck = add(hip, mul(up, kNeck * H + breath));
+  const float ht = (P.lean + P.head) * kInvTwoPi;
+  const Vec2 hu{sinT(ht), -cosT(ht)};
+  const Vec2 hf{cosT(ht), sinT(ht)};
+  const Vec2 head = add(neck, add(mul(hu, kHeadUp * H), mul(hf, kHeadFwd * H)));
+  float low = maxf(hip.y, chest.y) + 0.5f * kTorsoW * H;
+  for (int i = 0; i < 2; ++i) {
+    const Vec2 knee = add(hip, mul(dirA(P.thigh[i]), kThigh * H));
+    const float shin = P.thigh[i] - P.knee[i];
+    const Vec2 ankle = add(knee, mul(dirA(shin), kShin * H));
+    const Vec2 fd = dirA(0.5f * kPi + kFootFollow * shin);
+    const Vec2 heel = sub(ankle, mul(fd, kHeel * H));
+    const Vec2 toe = add(ankle, mul(fd, kToe * H));
+    low = maxf(low, knee.y + 0.5f * kShinW * H);
+    low = maxf(low, maxf(heel.y, maxf(toe.y, ankle.y)) + 0.5f * kFootW * H);
+  }
+  low = maxf(low, head.y + kHeadR * H);
+  if (radius) *radius = kHeadR * H;
+  const float sx = h.facing < 0 ? -1.f : 1.f;
+  return Vec2{h.feet.x + sx * head.x, h.feet.y - low - P.lift * H + head.y};
+}
+
 const HikerPose& hikerPoseDef(PoseId p) { return kPoses[p < POSE_COUNT ? p : POSE_STAND]; }
 const char* hikerPoseName(PoseId p) { return p < POSE_COUNT ? kPoseNames[p] : "?"; }
 int hikerLastDrawPrimitives() { return g_last_prims; }

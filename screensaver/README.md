@@ -49,6 +49,7 @@ Options (`./ss_preview --help` lists them all):
 | `--every N` | render one frame every N ticks (N >= 1); wins over `--fps` |
 | `--skip N` | ticks to simulate before the first frame |
 | `--log-beats` | print `loop=L seed=S start tick=T` and `tick=T loop=L seed=S beat=NAME` to stdout, `--skip` ticks included |
+| `--loops N` | simulate N whole loops with no rendering, print `loop=L seed=S length=Ts plan=<appLoopPlan> memory=<appMemory>` per loop (spine variants, fillers, majors; the memory as the loop leaves it) and exit |
 | `--out DIR` | output directory, created if missing |
 | `--doorbell-at TICK` | post a doorbell at that tick (the tick counter includes `--skip`) |
 | `--mood-sweep A B` | mood changes linearly A to B over the frames |
@@ -57,6 +58,8 @@ Cutting a clip: frame `f` (from 0) shows tick `SKIP + (f+1) * N`, N being ticks 
 frame. A loop or beat that `--log-beats` reports at tick `T` therefore starts at frame
 `(T - SKIP) / N - 1`. For `T=15000`, `--skip 0`, `--every 1`, 10 s of clip:
 `ffmpeg -framerate 25 -start_number 14999 -i frame_%05d.ppm -frames:v 250 -pix_fmt yuv420p clip.mp4`
+
+The randomness table (one line per loop, no frames written): `./ss_preview --seed 1 --loops 10`.
 
 Unknown arguments print usage and exit 2. The final line reports wall time and
 average ms per frame (simulation plus render, file writes excluded).

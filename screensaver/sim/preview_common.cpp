@@ -75,6 +75,13 @@ void previewShutdown(PreviewState& st) {
 }
 
 static void logBeatChange(PreviewState& st) {
+  // A minor effect started: its own line (the count goes up, or restarts at 1 on a new loop).
+  static int minors_seen = 0;
+  const int mc = appMinorCount(st.app);
+  if (mc != minors_seen) {
+    if (mc > minors_seen || mc == 1) printf("tick=%u minor=%s\n", (unsigned)st.tick, appMinorName(st.app));
+    minors_seen = mc;
+  }
   const char* name = appBeatName(st.app);
   if (strncmp(name, st.last_beat, sizeof st.last_beat - 1) == 0 &&
       strlen(name) == strlen(st.last_beat))
@@ -86,7 +93,7 @@ static void logBeatChange(PreviewState& st) {
 }
 
 static void logLoopStart(PreviewState& st) {
-  char plan[160];
+  char plan[320];
   appLoopPlan(st.app, plan, sizeof plan);
   printf("loop=%d seed=%llu start tick=%u plan=%s\n", st.loop_index,
          (unsigned long long)appLoopSeed(st.app), (unsigned)st.tick, plan);
@@ -115,6 +122,31 @@ int previewTicks(PreviewState& st, int n) {
     }
   }
   return loops;
+}
+
+int previewRunLoops(PreviewState& st, int n, FILE* out) {
+  int done = 0;
+  while (done < n) {
+    char plan[320], mem[320];
+    appLoopPlan(st.app, plan, sizeof plan);
+    const unsigned long long seed = (unsigned long long)appLoopSeed(st.app);
+    // Up to the loop's last tick: the memory as this loop leaves it (the
+    // rollover tick plans the next loop, which pushes its majors into the ring).
+    const uint32_t len = appLoopTicks(st.app);
+    uint32_t ticks = 0;
+    for (; ticks + 1 < len; ++ticks, ++st.tick) appTick(st.app);
+    appMemory(st.app, mem, sizeof mem);
+    for (int guard = 0; guard < 40 * 60 * SS_TICK_HZ; ++guard) {   // the rollover (guards a broken plan)
+      ++ticks;
+      ++st.tick;
+      if (appTick(st.app)) break;
+    }
+    fprintf(out, "loop=%d seed=%llu length=%.0fs plan=%s memory=%s\n", st.loop_index, seed,
+            (double)ticks / SS_TICK_HZ, plan, mem);
+    ++st.loop_index;
+    ++done;
+  }
+  return done;
 }
 
 int previewStep(PreviewState& st, int n) {
@@ -215,6 +247,8 @@ void previewUsage(const char* prog, FILE* to) {
           "  --every N           render one frame every N ticks (N >= 1; overrides --fps)\n"
           "  --skip N            ticks to simulate before the first frame\n"
           "  --log-beats         print loop starts and beat changes (with tick numbers) to stdout\n"
+          "  --loops N           simulate N whole loops without rendering, print one line per loop\n"
+          "                      (seed, length, plan with spine variants and majors, memory) and exit\n"
           "  --out DIR           output directory for frame_%%05d.ppm (default ./frames)\n"
           "  --doorbell-at TICK  post a doorbell when the tick counter reaches TICK\n"
           "  --mood-sweep A B    change mood linearly from A to B over the frames\n"
@@ -299,6 +333,10 @@ void previewParseArgs(int argc, char** argv, PreviewOptions& o) {
       need(1);
       o.every = (int)parseInt(prog, a, argv[++i]);
       if (o.every < 1) bad(prog, "must be >= 1", a);
+    } else if (!strcmp(a, "--loops")) {
+      need(1);
+      o.loops = (int)parseInt(prog, a, argv[++i]);
+      if (o.loops < 1) bad(prog, "must be >= 1", a);
     } else if (!strcmp(a, "--log-beats")) {
       o.log_beats = true;
     } else if (!strcmp(a, "--skip")) {

@@ -665,6 +665,7 @@ static void testLoopFade() {
 // Strips and time per frame over a whole loop (render every tick, build-up
 // excluded: it rebuilds the cache and has its own numbers), and in the pauses,
 // where only the ambient layer and a breathing hiker move.
+static int majorIndex(const char* name);
 static void testSpineBudget() {
   static const uint64_t kSeeds[4] = {11, 7, 42, 1};   // seed 1: bear b
   for (uint64_t seed : kSeeds) {
@@ -673,8 +674,8 @@ static void testSpineBudget() {
     int pv[8];
     CHECK(parsePlan(a.app, pv), "plan");
     const int bear_v = pv[6];
-    long sum = 0, psum = 0, bsum = 0;
-    int frames = 0, pframes = 0, worst = 0, bframes = 0, bworst = 0;
+    long sum = 0, psum = 0, bsum = 0, msum = 0;
+    int frames = 0, pframes = 0, worst = 0, bframes = 0, bworst = 0, mframes = 0, mworst = 0;
     double us = 0.0;
     for (int t = 0;; ++t) {
       const auto t0 = std::chrono::steady_clock::now();
@@ -691,6 +692,11 @@ static void testSpineBudget() {
         psum += n;
         ++pframes;
       }
+      if (majorIndex(appBeatName(a.app)) >= 0) {   // the surprise majors (stage 6)
+        msum += n;
+        ++mframes;
+        if (n > mworst) mworst = n;
+      }
       if (beatIs(a.app, "bear")) {
         bsum += n;
         ++bframes;
@@ -701,6 +707,11 @@ static void testSpineBudget() {
     printf("seed %d: bear beat (variant %d) %d frames: avg %.2f strips, max %d\n", (int)seed, bear_v, bframes,
            (double)bavg, bworst);
     CHECK(bavg <= 10.f, "seed %d: bear beat averages %.2f strips per frame (budget 10)", (int)seed, (double)bavg);
+    const float mavg = mframes ? (float)msum / (float)mframes : 0.f;
+    char plan[400];
+    appLoopPlan(a.app, plan, sizeof plan);
+    printf("seed %d: majors (%s) %d frames: avg %.2f strips, max %d\n", (int)seed, strstr(plan, "majors=") ? strstr(plan, "majors=") + 7 : "?", mframes, (double)mavg, mworst);
+    CHECK(mavg <= 10.f, "seed %d: the majors average %.2f strips per frame (budget 10)", (int)seed, (double)mavg);
     const float avg = frames ? (float)sum / (float)frames : 0.f;
     const float pavg = pframes ? (float)psum / (float)pframes : 0.f;
     printf("seed %d: whole loop %d frames: avg %.2f strips, max %d, %.3f ms/frame; pauses avg %.2f strips\n",
@@ -868,6 +879,281 @@ static void testProps() {
   free(sheet);
 }
 
+// Minor effects (scene/minors.h), over whole loops: 12 to 40 a loop (seeds
+// 1..3 at mood 3); none starts while dinner, bear or close runs, or any beat
+// that is not a calm one (majors); every minor in the pool fires in 12 seeds
+// (moods day, night, dusk in turn: the owl and moth need the dark); each
+// minor's critters are gone when it ends; same-seed frames identical at 3
+// ticks of a dusk loop full of minors.
+static const char* const kMinors[11] = {"chipmunk_cross", "squirrel_nut", "frog_splash", "bird_chip",
+                                        "deer_edge",      "owl_watch",    "mouse_tent",  "leaf_fall",
+                                        "moth_lantern",   "bee_visit",    "cloud_animal"};
+static const char* const kCalmBeats[12] = {"pause",      "arrival",     "setup", "firewood", "fire",
+                                           "foodbag",    "mug_sunset",  "read",  "cairn",    "skip_stone",
+                                           "cloud_watch", "stream_listen"};
+
+static void testMinors() {
+  int fired_by[11] = {};
+  int bad_beat = 0, held_after = 0, total = 0, unknown = 0;
+  for (uint64_t seed = 1; seed <= 12; ++seed) {
+    const float mood = seed % 3 == 1 ? 3.f : (seed % 3 == 2 ? 0.3f : 5.f);
+    Rig a;
+    CHECK(a.start(seed, makeInputs(mood)), "start");
+    int count = 0, ticks = 0;
+    char prev[32] = "";
+    for (;; ++ticks) {
+      if (appTick(a.app)) break;
+      const int c = appMinorCount(a.app);
+      const char* name = appMinorName(a.app);
+      if (c != count) {   // a minor started this tick
+        count = c;
+        const int k = beatIndex(name, kMinors, 11);
+        if (k >= 0) ++fired_by[k];
+        else ++unknown;
+        if (beatIndex(appBeatName(a.app), kCalmBeats, 12) < 0) {
+          if (bad_beat < 3) printf("seed %d tick %d: minor %s started in beat %s\n", (int)seed, ticks, name, appBeatName(a.app));
+          ++bad_beat;
+        }
+      }
+      if (prev[0] && strcmp(prev, name) != 0) {   // the one running in prev just ended
+        if (appMinorCritters(a.app) != 0) {
+          if (held_after < 3) printf("seed %d tick %d: %s ended with %d critters\n", (int)seed, ticks, prev, appMinorCritters(a.app));
+          ++held_after;
+        }
+      }
+      snprintf(prev, sizeof prev, "%s", name);
+    }
+    total += count;
+    if (seed <= 3) {
+      printf("seed %d (mood %.1f): %d minors in a %d s loop\n", (int)seed, (double)mood, count, ticks / SS_TICK_HZ);
+      CHECK(count >= 12 && count <= 40, "seed %d: %d minors in a loop (want 12..40)", (int)seed, count);
+    }
+    a.stop();
+  }
+  int missing = 0;
+  for (int k = 0; k < 11; ++k) {
+    if (fired_by[k] == 0) {
+      ++missing;
+      printf("minor %s never fired in 12 seeds\n", kMinors[k]);
+    }
+  }
+  printf("minors: %d in 12 loops (%.1f a loop); each fired:", total, (double)total / 12.0);
+  for (int k = 0; k < 11; ++k) printf(" %s %d", kMinors[k], fired_by[k]);
+  printf("\n");
+  CHECK(missing == 0, "%d minors never fired", missing);
+  CHECK(unknown == 0, "%d minors started with an unknown name", unknown);
+  CHECK(bad_beat == 0, "%d minors started in a beat that owns the critters", bad_beat);
+  CHECK(held_after == 0, "%d minors ended holding critters", held_after);
+
+  // Determinism through minors at dusk (owl, moth).
+  Rig x, y;
+  CHECK(x.start(3, makeInputs(5.f)) && y.start(3, makeInputs(5.f)), "start");
+  static const int kAt[3] = {2000, 7000, 11900};
+  int t = 0;
+  for (int k = 0; k < 3; ++k) {
+    for (; t < kAt[k]; ++t) {
+      appTick(x.app);
+      appTick(y.app);
+      appRender(x.app, x.surf);
+    }
+    appInvalidate(y.app);
+    appRender(y.app, y.surf);
+    CHECK(sameFrame(x, y), "minors: same seed differs at tick %d (%s, minor %s), pixel %ld", t, appBeatName(x.app),
+          appMinorName(x.app), firstDiff(x, y));
+  }
+  x.stop();
+  y.stop();
+}
+
+// ---- stage 6: surprise majors, variety, memory ---------------------------------------
+
+static const char* const kMajorNames[12] = {"squirrel_splash", "deer_stick",     "pinecone",     "map_chase",
+                                             "fish_leap",       "raccoon_pack",   "ants_cookie",  "shadow_theater",
+                                             "ranger_ridge",    "echo",           "firefly_jar",  "stargaze"};
+
+// The part of a plan line that the variety rule compares: the spine variants
+// and the majors (the fillers and pauses are left out).
+static void planTuple(const App* a, char* out, size_t n) {
+  char buf[400];
+  appLoopPlan(a, buf, sizeof buf);
+  const char* f = strstr(buf, " fillers=");
+  const char* m = strstr(buf, " majors=");
+  const int head = f ? (int)(f - buf) : (int)strlen(buf);
+  snprintf(out, n, "%.*s%s", head, buf, m ? m : "");
+}
+
+static int majorIndex(const char* name) { return beatIndex(name, kMajorNames, 12); }
+static bool ownsCritters(const char* name) {
+  return majorIndex(name) >= 0 || !strcmp(name, "dinner") || !strcmp(name, "bear") || !strcmp(name, "close");
+}
+
+// 30 loops from one seed at night (every major is eligible): the first 10
+// differ in (spine variants + majors); every major fires at least once; each
+// major sits between two still beats of 4 to 8 s (so majors never touch each
+// other or dinner, bear or close); World::busy is true exactly while dinner,
+// bear, close or a major runs; no beat overruns and no critter is left at a
+// loop's end.
+static void testVariety() {
+  Rig a;
+  CHECK(a.start(1, makeInputs(0.f, true)), "start");
+  char tuples[10][400];
+  int fired[12] = {};
+  int loops = 0, bad_busy = 0, bad_still = 0, bad_end = 0, majors_run = 0;
+  char prev[32] = "build", before[32] = "";
+  int still_ticks = 0;
+  bool after_major = false;
+  planTuple(a.app, tuples[0], sizeof tuples[0]);
+  printf("variety loop 0: %s\n", tuples[0]);
+  uint32_t len = appLoopTicks(a.app), t = 0;
+  while (loops < 30) {
+    if (t + 1 == len) {   // the loop's last tick: every beat but the close has ended
+      if (appSpineOverruns(a.app) != 0 || appCritterCount(a.app) != 0) {
+        ++bad_end;
+        char plan[400];
+        appLoopPlan(a.app, plan, sizeof plan);
+        printf("loop %d: %d overruns, %d critters left (%s)\n", loops, appSpineOverruns(a.app),
+               appCritterCount(a.app), plan);
+      }
+    }
+    const bool rolled = appTick(a.app);
+    ++t;
+    if (rolled) {
+      ++loops;
+      t = 0;
+      len = appLoopTicks(a.app);
+      if (loops < 10) {
+        planTuple(a.app, tuples[loops], sizeof tuples[loops]);
+        printf("variety loop %d: %s\n", loops, tuples[loops]);
+      }
+      snprintf(prev, sizeof prev, "%s", appBeatName(a.app));
+      after_major = false;
+      continue;
+    }
+    const char* beat = appBeatName(a.app);
+    if (appBusy(a.app) != ownsCritters(beat)) {
+      if (bad_busy < 3) printf("loop %d tick %u: busy %d in beat %s\n", loops, (unsigned)t, (int)appBusy(a.app), beat);
+      ++bad_busy;
+    }
+    if (strcmp(beat, prev) != 0) {   // a beat change
+      const int was = majorIndex(prev), now = majorIndex(beat);
+      const int ended = !strcmp(prev, "still") ? still_ticks : 0;   // the still beat that just ended
+      if (now >= 0) {
+        ++fired[now];
+        ++majors_run;
+        if (strcmp(prev, "still") || ended < 4 * SS_TICK_HZ || ended > 8 * SS_TICK_HZ) {
+          if (bad_still < 3) printf("loop %d: %s follows %s (%d ticks)\n", loops, beat, prev, ended);
+          ++bad_still;
+        }
+      }
+      if (was >= 0 && strcmp(beat, "still")) {
+        if (bad_still < 3) printf("loop %d: %s is followed by %s\n", loops, prev, beat);
+        ++bad_still;
+      }
+      if (after_major && strcmp(prev, "still") == 0 && (ended < 4 * SS_TICK_HZ || ended > 8 * SS_TICK_HZ)) {
+        if (bad_still < 3) printf("loop %d: the still after %s is %d ticks\n", loops, before, ended);
+        ++bad_still;
+      }
+      if (strcmp(prev, "still") == 0) after_major = false;
+      if (was >= 0) {
+        after_major = true;
+        snprintf(before, sizeof before, "%s", prev);
+      }
+      still_ticks = 0;
+      snprintf(prev, sizeof prev, "%s", beat);
+    }
+    if (!strcmp(beat, "still")) ++still_ticks;
+  }
+  int same = 0;
+  for (int i = 0; i < 10; ++i)
+    for (int j = i + 1; j < 10; ++j)
+      if (!strcmp(tuples[i], tuples[j])) {
+        ++same;
+        printf("loops %d and %d have the same variants and majors\n", i, j);
+      }
+  // The majors alone, as sets: no set repeats within the ten loops either.
+  int same_set = 0;
+  unsigned sets[10] = {};
+  for (int i = 0; i < 10; ++i) {
+    const char* m = strstr(tuples[i], "majors=");
+    for (int k = 0; m && k < 12; ++k) {
+      const char* q = strstr(m, kMajorNames[k]);
+      if (q && (q[strlen(kMajorNames[k])] == ',' || q[strlen(kMajorNames[k])] == 0)) sets[i] |= 1u << k;
+    }
+    for (int j = 0; j < i; ++j)
+      if (sets[i] == sets[j]) {
+        ++same_set;
+        printf("loops %d and %d play the same majors\n", j, i);
+      }
+  }
+  CHECK(same_set == 0, "%d pairs of the first 10 loops play the same set of majors", same_set);
+  int never = 0;
+  printf("majors over 30 loops (%d run):", majors_run);
+  for (int i = 0; i < 12; ++i) {
+    printf(" %s %d", kMajorNames[i], fired[i]);
+    if (!fired[i]) ++never;
+  }
+  printf("\n");
+  CHECK(same == 0, "%d pairs of the first 10 loops are alike", same);
+  CHECK(never == 0, "%d majors never fired in 30 loops", never);
+  CHECK(bad_still == 0, "%d majors without a 4 to 8 s still beat either side", bad_still);
+  CHECK(bad_busy == 0, "%d ticks where busy disagreed with the beat", bad_busy);
+  CHECK(bad_end == 0, "%d loops ended with an overrun or a critter left", bad_end);
+  a.stop();
+
+  // By day, the night majors stay out (gating), and every loop has 2 to 4 majors.
+  Rig d;
+  CHECK(d.start(5, makeInputs(3.f)), "start");
+  int night = 0, few = 0;
+  for (int l = 0; l < 12; ++l) {
+    char plan[400];
+    appLoopPlan(d.app, plan, sizeof plan);
+    if (strstr(plan, "firefly_jar") || strstr(plan, "stargaze")) ++night;
+    const char* m = strstr(plan, "majors=");
+    int n = m && strncmp(m, "majors=none", 11) ? 1 : 0;
+    for (const char* c = m; c && *c; ++c) n += *c == ',';
+    if (n < 2 || n > 4) ++few;
+    const uint32_t L = appLoopTicks(d.app);
+    for (uint32_t k = 0; k < L; ++k) appTick(d.app);
+  }
+  CHECK(night == 0, "%d day loops planned a night major", night);
+  CHECK(few == 0, "%d loops with fewer than 2 or more than 4 majors", few);
+  d.stop();
+}
+
+// Memory across loops: the cairn left at the end of one loop stands one stone
+// shorter in the next once the build-up is over; the memory line parses.
+static int memField(const App* a, const char* key) {
+  char buf[400];
+  appMemory(a, buf, sizeof buf);
+  const char* p = strstr(buf, key);
+  return p ? atoi(p + strlen(key)) : -1;
+}
+
+static void testMemoryCarry() {
+  Rig a;
+  CHECK(a.start(3, makeInputs(3.f)), "start");
+  int checked = 0;
+  for (int loop = 0; loop < 10 && checked < 2; ++loop) {
+    const uint32_t L = appLoopTicks(a.app);
+    while (appTickCount(a.app) + 1 < L) appTick(a.app);   // the loop's last tick next
+    const int left = memField(a.app, "cairn=");
+    CHECK(appTick(a.app), "no rollover at the plan's length");
+    while (!beatIs(a.app, "arrival")) appTick(a.app);
+    appTick(a.app);
+    const int now = memField(a.app, "cairn=");
+    if (left > 0) ++checked;
+    CHECK(now == (left > 0 ? left - 1 : 0), "loop %d left a cairn of %d; the next starts with %d", loop, left, now);
+    if (loop == 0) {
+      char mem[400];
+      appMemory(a.app, mem, sizeof mem);
+      printf("memory line: %s\n", mem);
+    }
+  }
+  printf("memory: the cairn carried over (one stone shorter) %d times\n", checked);
+  CHECK(checked > 0, "no loop left a cairn in 10 loops");
+  a.stop();
+}
+
 int main() {
   testAppSize();
   testDeterminism();
@@ -883,9 +1169,12 @@ int main() {
   testSpineVariants();
   testSpineOverruns();
   testMemory();
+  testVariety();
+  testMemoryCarry();
   testLoopLength();
   testLoopFade();
   testSpineBudget();
+  testMinors();
   writeImages();
   if (g_fail) {
     printf("%d failure(s)\n", g_fail);

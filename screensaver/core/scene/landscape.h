@@ -134,6 +134,9 @@ struct Cloud {
   float dx[CLOUD_MAX_LIT], dy[CLOUD_MAX_LIT], rx[CLOUD_MAX_LIT], ry[CLOUD_MAX_LIT];
   float sdx, sdy, srx, sry;   // flat shade ellipse along the bottom
   float bx0, by0, bx1, by1;   // bounds relative to (x, y), 1 px margin included
+  // 0..1: an extra lobe on top of the leading puff that reads as an ear (the
+  // cloud_animal minor grows and shrinks it). 0 draws nothing extra.
+  float ear;
 };
 
 void cloudGenerate(Cloud& c, Rng& rng, float x, float y, float speed_px_per_s);

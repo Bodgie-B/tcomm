@@ -16,6 +16,9 @@
 #include "landscape.h"
 #include "props.h"
 #include "spine.h"
+#include "minors.h"
+#include "majors.h"
+#include "memory.h"
 
 namespace ss {
 
@@ -44,7 +47,7 @@ struct FirePit {
 // critter).
 enum ActorKind : uint8_t {
   ACT_FIRE = 0, ACT_TUFT, ACT_HIKER, ACT_TENT, ACT_PACK, ACT_BAG, ACT_CAIRN, ACT_ITEM, ACT_FGPINE, ACT_LEAF,
-  ACT_CRITTER, ACT_BIT
+  ACT_CRITTER, ACT_BIT, ACT_MAJOR
 };
 struct ActorRef {
   uint8_t kind;
@@ -55,13 +58,14 @@ struct ActorRef {
 // critters 8 (+ 2 pine redraws each near the left edge), bits 4. sortActors
 // stops adding at the cap (tufts are added before the critters, so a full
 // list drops critters at the far left first, never the hiker or props).
-#define WORLD_ACTOR_MAX 64
+// A major's glyphs (up to 24, the fireflies) come last; 80 holds them all.
+#define WORLD_ACTOR_MAX 80
 
 // Critters in the scene: slots the director (director.h) hands out.
 #define CRITTER_MAX 8
 
 // Who holds a critter slot, and how the director treats it.
-enum CritterTag : uint8_t { CT_NONE = 0, CT_DINNER, CT_BEAR, CT_THIEF, CT_MINOR };
+enum CritterTag : uint8_t { CT_NONE = 0, CT_DINNER, CT_BEAR, CT_THIEF, CT_MINOR, CT_MAJOR };
 enum CritterMode : uint8_t {
   CM_FREE = 0,     // the owner drives it
   CM_STARTLE,      // scattered: a startle, then CM_FLEE
@@ -84,14 +88,7 @@ struct CritterSlot {
   float path_x0, path_y0, path_x1, path_y1;
 };
 
-// What survives from one loop to the next (stage 6 fills in the rest).
-struct Memory {
-  bool shoe_taken;     // the raccoon has the shoe
-  uint8_t cairn_n;     // stones on the cairn
-  bool mouse_hole;     // the mice found the tent
-  uint32_t loop_count; // loops started, this one included
-  uint8_t last_stolen; // ItemId + 1 of the last thing stolen, 0 none
-};
+// Memory (what survives from one loop to the next) is in memory.h.
 
 // What the spine layers on top of the rig, applied by worldTick after
 // hikerTick. The pose offsets are added to the composed pose each tick (not
@@ -164,6 +161,11 @@ struct World {
   Rect critter_rect[CRITTER_MAX];   // this tick's bounds; empty when hidden or free
   Bit bits[BITS_MAX];               // pine cones and dust (the bear beat)
   Memory memory;     // kept across worldBeginLoop
+  // A beat that owns critters is running (dinner, bear, close, a major): the
+  // minors wait. Set and cleared by those beats' begin and end hooks.
+  bool busy;
+  MajorState major;  // the surprise major running now, and its glyphs (majors.h)
+  Minors minors;     // the minor-effect layer (minors.h)
   // Whole-frame fade to ACTOR (near black): 0 none, 1 black. The close ends
   // on 1; the build beat brings the next loop up from it.
   float fade;

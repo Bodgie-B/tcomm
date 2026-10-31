@@ -95,8 +95,10 @@ void sortActors(World& w) {
   for (int i = 0; i < BITS_MAX; ++i) {
     const Bit& b = w.bits[i];
     if (b.kind == BIT_CONE) L.add(ACT_BIT, (uint8_t)i, baseY(b.land_y + 1.f));
-    else if (b.kind == BIT_DUST) L.add(ACT_BIT, (uint8_t)i, baseY(b.land_y));
+    else if (b.kind != BIT_NONE) L.add(ACT_BIT, (uint8_t)i, baseY(b.land_y));
   }
+  for (int i = 0; i < GLYPH_MAX; ++i)   // a major's glyphs (majors.h)
+    if (w.major.g[i].kind != GL_NONE) L.add(ACT_MAJOR, (uint8_t)i, w.major.g[i].base_y);
   const int n = L.n;
   ActorRef* a = w.actors;
   for (int i = 1; i < n; ++i) {
@@ -274,6 +276,7 @@ void worldBeginLoop(World& w, Rng& rng) {
     w.critter_rect[i] = kEmpty;
   }
   for (Bit& b : w.bits) b = Bit{};
+  minorsInit(w, rng);
 
   sortActors(w);
 
@@ -310,6 +313,7 @@ void worldTick(World& w, Rng& rng, Renderer& r) {
   ambientStep(w, rng);
   stepHiker(w);
   spineCritterScenes(w);
+  minorsStep(w, r);
   directorStep(w);
   for (Bit& b : w.bits) bitStep(b, SS_TICK_DT);
   // The shadow in the lit tent breathes: rises up to 2 px and sinks, every 4.8 s.
@@ -403,6 +407,7 @@ void worldTick(World& w, Rng& rng, Renderer& r) {
   d.steam_s = w.steam;
   d.skip_s = w.skip;
   d.leaf_s = w.leaf;
+  majorsTrack(w.major, r);
 }
 
 void worldDrawStatic(const World& w, Surface& frame, const Palette& pal, float mood) {
@@ -454,6 +459,7 @@ void worldDrawDynamic(const World& w, Surface& strip, const Rect& clip, const Pa
       case ACT_LEAF: leafDraw(w.leaf, strip, clip, pal); break;
       case ACT_CRITTER: critterDraw(w.critters[a.idx], strip, pal, clip); break;
       case ACT_BIT: bitDraw(w.bits[a.idx], strip, clip, pal); break;
+      case ACT_MAJOR: glyphDraw(w.major.g[a.idx], strip, clip, pal); break;
       case ACT_FGPINE: {   // only over its actor: elsewhere the cached pine is already right
         const int owner = a.idx >> 1;
         const Rect& over = owner == 0 ? w.hiker_rect : w.critter_rect[owner - 1];

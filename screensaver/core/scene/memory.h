@@ -1,0 +1,73 @@
+// World memory: what survives from one loop to the next (brief section 13,
+// handoff "variety levers"). Lives in World::memory; worldBeginLoop copies it
+// across the clear, memoryBeginLoop applies it to the new loop, and
+// memoryEndLoop records what this loop leaves behind.
+//
+// | Field          | Effect next loop                                                     |
+// |----------------|----------------------------------------------------------------------|
+// | cairn_n        | the cairn stands from loop start, one stone shorter; the filler adds |
+// | shoe_taken     | the raccoon (raccoon_pack major) brings the shoe back first           |
+// | last_stolen    | what it took instead (mug or book), ItemId + 1                       |
+// | mouse_hole     | the tent has a bite out of its base until he patches it in setup     |
+// | ring, sets     | the last MEMORY_RING majors picked and the last loops' sets: avoided |
+// | brave, persona | which critter kinds are bold this loop; re-rolled every 2 loops      |
+// | loop_count     | loops started, this one included                                    |
+#pragma once
+
+#include <stddef.h>
+
+#include "../anim/rng.h"
+#include "critters.h"
+
+namespace ss {
+
+struct World;
+
+#define MEMORY_RING 8
+#define MEMORY_SETS 9   // so ten loops in a row never play the same set of majors
+
+struct Memory {
+  bool shoe_taken;       // the raccoon has the shoe
+  uint8_t cairn_n;       // stones on the cairn at the end of the last loop
+  bool mouse_hole;       // the mice got into the tent (until he patches it)
+  uint32_t loop_count;   // loops started, this one included
+  uint8_t last_stolen;   // ItemId + 1 of the last thing stolen, 0 none
+  uint8_t ring[MEMORY_RING];   // majors picked, oldest first
+  uint8_t ring_n;
+  uint8_t last_n;              // how many of the newest ring entries the last loop picked
+  uint16_t sets[MEMORY_SETS];  // the last loops' majors as bit sets (bit = MajorId), newest last
+  uint8_t sets_n;
+  uint8_t mouse_tent_runs;     // this loop: times the mouse_tent minor ran (memoryNoteMouseTent)
+  uint16_t brave;        // bit k: critter kind k is bold (else shy) this loop
+  uint8_t persona_age;   // loops the current brave/shy split has lasted
+};
+
+// Loop start, after worldBeginLoop (one rng call, every loop): the cairn from
+// last time one stone shorter, the mouse hole in the tent, the brave/shy split
+// (kept for 2 loops, then drawn again).
+void memoryBeginLoop(World& w, Rng& rng);
+// Loop end, before the next worldBeginLoop: the cairn's height, the mouse hole.
+void memoryEndLoop(World& w);
+
+// The mouse_tent minor calls this each time it runs; twice in one loop and the
+// tent has a hole the next loop.
+void memoryNoteMouseTent(Memory& m);
+
+// The majors' ring buffer: push a pick; how many picks ago `id` was picked
+// (0 the newest), or -1 when it is not in the ring.
+void memoryPushMajor(Memory& m, uint8_t id);
+// A loop's whole set of majors (bit = MajorId), and whether a set was played
+// in the last MEMORY_SETS loops.
+void memoryPushSet(Memory& m, uint16_t set);
+bool memoryRecentSet(const Memory& m, uint16_t set);
+int memoryMajorAge(const Memory& m, uint8_t id);
+
+// This loop's personality for a kind, laid over a critter just spawned: bold
+// ones move quicker and fidget less, shy ones are slow and jumpy.
+bool memoryBrave(const Memory& m, CritterKind k);
+void memoryApplyPersona(const Memory& m, Critter& c);
+
+// "loop=3 cairn=4 shoe=0 stolen=mug hole=0 brave=deer,squirrel ring=echo,pinecone"
+int memoryFormat(const Memory& m, char* buf, size_t n);
+
+}  // namespace ss

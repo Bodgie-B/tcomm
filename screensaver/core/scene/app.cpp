@@ -72,7 +72,8 @@ void computeAppPalette(App* a) {
 void beginLoop(App* a) {
   a->rng.seed(a->loop_seed);
   worldBeginLoop(a->world, a->rng);
-  spinePlan(a->world.plan, a->rng, a->in);
+  spinePlan(a->world.plan, a->rng, a->in, a->world.memory);
+  memoryBeginLoop(a->world, a->rng);
   a->timeline.reset();
   spineBuildTimeline(a->timeline, a->world.plan);
   a->ctx = SceneCtx{a, &a->world, &a->rng, &a->in, &a->renderer, SS_TICK_DT};
@@ -123,12 +124,15 @@ bool appTick(App* a) {
   // Beats drive the world first, then the world steps its ambient layer and
   // marks what changed.
   if (!a->timeline.tick(a->ctx)) {
-    // Loop over: new seed from the running RNG, new place, same inputs.
+    // Loop over: what it leaves for the next (memory), new seed from the
+    // running RNG, new place, same inputs.
+    memoryEndLoop(a->world);
     a->loop_seed = (uint64_t)a->rng.next();
     beginLoop(a);
     computeAppPalette(a);   // rebuilds the cache for the new geometry
     return true;
   }
+  minorsSync(a->world, a->timeline, a->in);
   worldTick(a->world, a->rng, a->renderer);
   return false;
 }
@@ -177,9 +181,15 @@ bool appCritterRect(const App* app, int slot, Rect* out, int* kind) {
 
 bool appMemoryShoeTaken(const App* app) { return app->world.memory.shoe_taken; }
 uint32_t appMemoryLoopCount(const App* app) { return app->world.memory.loop_count; }
+int appMemory(const App* app, char* buf, size_t n) { return memoryFormat(app->world.memory, buf, n); }
+bool appBusy(const App* app) { return app->world.busy; }
 
 int appSpineOverruns(const App* app) { return app->world.spine.overruns; }
 uint32_t appLoopTicks(const App* app) { return spineLoopTicks(app->world.plan); }
 float appFade(const App* app) { return app->world.fade; }
+
+const char* appMinorName(const App* app) { return minorsName(app->world); }
+int appMinorCount(const App* app) { return app->world.minors.fired; }
+int appMinorCritters(const App* app) { return minorsCritters(app->world); }
 
 }  // namespace ss

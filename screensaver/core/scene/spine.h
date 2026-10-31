@@ -11,11 +11,14 @@
 //
 // Loop timeline (spineBuildTimeline): build, arrival, setup, firewood, fire,
 // dinner, foodbag, bear, close, each but the last followed by a pause. Calm
-// fillers (2 to 4, hiker only) sit in the pauses after fire and dinner (and
-// after setup when there are 4), each with a pause of its own after it. The
-// loop ends when the close does (its last 2.5 s fade the frame to black), so
-// a loop's length is the sum of its beats: 480 to 660 s, the pauses stretched
-// or squeezed within 8 to 20 s to land there.
+// fillers (0 to 4, hiker only) sit in the pauses after fire and dinner (and
+// after setup when there are 4), each with a pause of its own after it. Then
+// the surprise majors (2 to 4, majors.h): at most one after each of setup,
+// fire, dinner and foodbag, each as still / major / still. The loop ends when
+// the close does (its last 2.5 s fade the frame to black), so a loop's length
+// is the sum of its beats: 480 to 660 s. To land there the plan squeezes the
+// pauses (8 to 20 s), then drops fillers down to one, majors down to two, the
+// last filler, and shortens the still beats; then stretches the pauses.
 #pragma once
 
 #include "../anim/rng.h"
@@ -26,6 +29,7 @@ namespace ss {
 
 struct Inputs;
 struct World;
+struct Memory;
 
 enum SpineBeatId : uint8_t {
   SB_ARRIVAL = 0, SB_SETUP, SB_FIREWOOD, SB_FIRE, SB_DINNER, SB_FOODBAG, SB_BEAR, SB_CLOSE, SB_COUNT
@@ -38,6 +42,7 @@ enum FillerId : uint8_t {
 };
 
 #define SPINE_FILLER_MAX 4
+#define SPINE_MAJOR_MAX 4
 
 struct LoopPlan {
   uint8_t arrival, setup, firewood, fire, dinner, foodbag, bear, close;   // variant index per beat
@@ -50,6 +55,18 @@ struct LoopPlan {
   uint8_t cairn_add;            // cairn filler: stones he adds (4..6, capped by CAIRN_MAX)
   uint8_t skip_n;               // skip_stone filler: touches on the water (3, sometimes 4)
   uint8_t steam_n;              // dinner b: steam puffs when the pot boils over (3..5)
+  // Surprise majors (majors.h), in play order; each follows its spine beat's
+  // pause and fillers, with a still beat before and after it.
+  uint8_t n_majors;
+  uint8_t major[SPINE_MAJOR_MAX];          // MajorId
+  uint8_t major_after[SPINE_MAJOR_MAX];    // SpineBeatId it follows: setup, fire, dinner or foodbag
+  uint8_t major_var[SPINE_MAJOR_MAX];      // its variant (see majors.cpp)
+  uint8_t major_pre_s[SPINE_MAJOR_MAX];    // seconds of stillness before it (4..8)
+  uint8_t major_post_s[SPINE_MAJOR_MAX];   // and after it (4..8)
+  // From memory (memory.h): the cairn's stones at loop start, and whether
+  // setup ends with him patching the mouse hole in the tent.
+  uint8_t cairn_start;
+  bool patch;
 };
 
 // Variants built for a beat (1 for the placeholders), and a plan's pick.
@@ -125,8 +142,10 @@ struct SpineState {
   bool bag_osc;        // the damped swing is running
 };
 
-// Loop start: pick every variant, pause and filler from the loop RNG.
-void spinePlan(LoopPlan& p, Rng& rng, const Inputs& in);
+// Loop start: pick every variant, pause, filler and major from the loop RNG,
+// with what memory carries over (the cairn, the mouse hole, the majors' ring
+// buffer, which this pushes the loop's majors into).
+void spinePlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem);
 // Loop start, after the fire pit is placed: camp layout and the props' homes.
 void spineLayout(World& w);
 // Add the build beat, then the spine beats, pauses and fillers in order. The
@@ -138,7 +157,7 @@ void spineBuildTimeline(Timeline& tl, const LoopPlan& p);
 void spineCritterScenes(World& w);
 // Ticks the timeline for `p` lasts (the loop's length).
 uint32_t spineLoopTicks(const LoopPlan& p);
-// "arrival=1 setup=0 ... fillers=cairn,read" (fillers=none when empty).
+// "arrival=1 setup=0 ... fillers=cairn,read majors=echo,fish_leap" (none when empty).
 int spineFormatPlan(const LoopPlan& p, char* buf, size_t n);
 
 // Loop length policy: the plan lands every loop in this range (seconds).

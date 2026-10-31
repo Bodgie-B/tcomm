@@ -58,6 +58,20 @@ void startScatter(World& w, int i, float from_x) {
 
 }  // namespace
 
+float directorDryY(const World& w, Vec2 from, float to_x) {
+  float y = from.y;
+  float cy, half;
+  if (landscapeStreamSpan(w.land, from.x, cy, half) && from.y > cy - 1.06f * half - 3.f) return from.y;
+  for (int k = 1; k <= 16; ++k) {
+    const float u = (float)k / 16.f;
+    const float x = lerp(from.x, to_x, u);
+    if (x < 0.f || x > (float)SS_WIDTH || !landscapeStreamSpan(w.land, x, cy, half)) continue;
+    const float top = cy - 1.06f * half - 3.f;
+    y = minf(y, from.y + (top - from.y) / u);
+  }
+  return maxf(minf(320.f, from.y), y);
+}
+
 int directorSpawn(World& w, CritterKind k, Vec2 feet, int facing) {
   for (int i = 0; i < CRITTER_MAX; ++i) {
     CritterSlot& s = w.crit[i];
@@ -204,7 +218,7 @@ void directorStep(World& w) {
       if (k.flee > 0.f) {
         s.mode = CM_FLEE;
         s.t = 0.f;
-        directorWalk(w, i, Vec2{s.flee_x, c.feet.y}, k.flee, k.flee_gait);
+        directorWalk(w, i, Vec2{s.flee_x, directorDryY(w, c.feet, s.flee_x)}, k.flee, k.flee_gait);
       } else {
         s.mode = CM_FREE;   // the owl stays put
       }

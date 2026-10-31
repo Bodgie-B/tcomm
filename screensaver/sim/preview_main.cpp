@@ -63,6 +63,17 @@ int main(int argc, char** argv) {
   previewParseArgs(argc, argv, o);
   if (o.sweep) o.mood = o.sweep_a;
 
+  if (o.loops > 0) {   // the randomness table: no frames, one line per loop
+    PreviewState st;
+    if (!previewInit(st, o.seed, previewInputsFromOptions(o))) {
+      fprintf(stderr, "init failed\n");
+      return 1;
+    }
+    previewRunLoops(st, o.loops, stdout);
+    previewShutdown(st);
+    return 0;
+  }
+
   if (!mkdirP(o.out_dir)) {
     fprintf(stderr, "cannot create output directory %s: %s\n", o.out_dir, strerror(errno));
     return 1;

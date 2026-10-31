@@ -45,7 +45,8 @@ constexpr float kTentBackX = -22.f, kTentFrontX = 14.f, kTentFaceX = -4.f;
 constexpr float kGuyOut = 16.f;   // guy line peg beyond the front corner
 
 struct TentGeom {
-  Vec2 body[5];   // back corner, back apex, ridge middle, front apex, front corner
+  Vec2 body[9];   // back corner, back apex, ridge middle, front apex, front corner (+ a bite)
+  int n_body;     // 5, or 9 with the mouse hole
   Vec2 door[3];
   bool has_door;
   Vec2 guy0, guy1;
@@ -81,6 +82,15 @@ void tentGeom(const Tent& t, TentGeom& g) {
   g.body[2] = mid;
   g.body[3] = fa;
   g.body[4] = fr;
+  g.n_body = 5;
+  if (t.bite && p >= 0.85f) {   // a ragged arch out of the base of the back panel
+    const float bx = x - 0.3f * kTentHalfW * spread;
+    g.body[5] = Vec2{bx + 4.5f, y};
+    g.body[6] = Vec2{bx + 2.5f, y - 5.5f};
+    g.body[7] = Vec2{bx - 2.f, y - 6.f};
+    g.body[8] = Vec2{bx - 4.5f, y};
+    g.n_body = 9;
+  }
 
   const Vec2 fl{x + kTentFaceX * spread, y};
   g.has_door = hf > 16.f;
@@ -207,6 +217,7 @@ void tentInit(Tent& t, Vec2 pos) {
   t.shadow_y = 0.f;
   t.shadow_jitter = 0.f;
   t.shadow_shake = 0.f;
+  t.bite = false;
 }
 
 Rect tentBounds(const Tent& t) {
@@ -214,7 +225,7 @@ Rect tentBounds(const Tent& t) {
   TentGeom g;
   tentGeom(t, g);
   Ext e;
-  for (const Vec2& p : g.body) e.pt(p);
+  for (int i = 0; i < g.n_body; ++i) e.pt(g.body[i]);
   if (g.has_guy) e.pt(g.guy1, 1.f);
   if (g.has_shadow)
     for (const Vec2& p : g.shadow) e.pt(p);
@@ -227,7 +238,7 @@ void tentDraw(const Tent& t, Surface& s, const Rect& clip, const Palette& pal) {
   tentGeom(t, g);
   const Pixel body = t.lit ? pal[TENT_LIT] : pal[TENT];
   if (g.has_guy) strokeCapsule(s, g.guy0, g.guy1, 1.2f, mixRGB(pal[TENT], pal[ACTOR], 0.6f), clip);
-  fillPolygon(s, g.body, 5, body, clip);
+  fillPolygon(s, g.body, g.n_body, body, clip);
   if (g.has_door) fillPolygon(s, g.door, 3, mixRGB(body, pal[ACTOR], 0.45f), clip);
   if (g.has_shadow) fillPolygon(s, g.shadow, 12, pal[ACTOR], clip);
 }
@@ -235,7 +246,7 @@ void tentDraw(const Tent& t, Surface& s, const Rect& clip, const Palette& pal) {
 bool tentSame(const Tent& a, const Tent& b) {
   return sameV(a.pos, b.pos) && a.state == b.state && a.progress == b.progress && a.sag == b.sag &&
          a.bump == b.bump && a.wobble == b.wobble && a.lit == b.lit && a.shadow == b.shadow &&
-         a.shadow_x == b.shadow_x && a.shadow_y == b.shadow_y && a.shadow_shake == b.shadow_shake;
+         a.shadow_x == b.shadow_x && a.shadow_y == b.shadow_y && a.shadow_shake == b.shadow_shake && a.bite == b.bite;
 }
 
 // ---- pack ------------------------------------------------------------------------
@@ -595,11 +606,44 @@ float dustRadius(const Bit& b) {
   const float u = b.t / BIT_DUST_S;
   return u >= 1.f ? 0.f : 7.f * sinT(0.5f * u) * (0.6f + 0.6f * u);
 }
+
+// A ring on the water: 3 px spreading to 14 px (the skipped stone's), times its size.
+float ringRadius(const Bit& b) {
+  const float u = minf(1.f, b.t / BIT_RING_S);
+  return (3.f + 11.f * easeOutCubic(u)) * b.spin;
+}
 }  // namespace
 
 void bitStep(Bit& b, float dt) {
   if (b.kind == BIT_NONE) return;
   b.t += dt;
+  switch (b.kind) {
+    case BIT_LEAF:
+    case BIT_MOTH:
+    case BIT_BEE: return;   // placed by their owner
+    case BIT_RING:
+      if (b.t >= BIT_RING_S) b.kind = BIT_NONE;
+      return;
+    case BIT_DIRT:
+    case BIT_DROP:
+      b.vel.y += (b.kind == BIT_DIRT ? 520.f : 700.f) * dt;
+      b.pos.x += b.vel.x * dt;
+      b.pos.y += b.vel.y * dt;
+      if (b.vel.y > 0.f && b.pos.y >= b.ground_y) {
+        if (b.kind == BIT_DIRT) {
+          b.kind = BIT_NONE;
+        } else {   // into the water: a small ring where it went in
+          b.kind = BIT_RING;
+          b.pos.y = b.ground_y;
+          b.vel = Vec2{0.f, 0.f};
+          b.t = 0.f;
+          b.spin = 0.5f;
+          b.land_y = b.ground_y;
+        }
+      }
+      return;
+    default: break;
+  }
   if (b.kind == BIT_DUST) {
     b.pos.x += b.vel.x * dt;
     b.pos.y += b.vel.y * dt;
@@ -633,11 +677,25 @@ void bitStep(Bit& b, float dt) {
 
 Rect bitBounds(const Bit& b) {
   Ext e;
-  if (b.kind == BIT_CONE) {
-    e.pt(Vec2{b.pos.x, b.pos.y - kConeRy}, kConeRy + 0.5f);
-  } else if (b.kind == BIT_DUST) {
-    const float r = dustRadius(b);
-    if (r > 0.3f) e.pt(b.pos, 1.3f * r + 0.5f);
+  switch (b.kind) {
+    case BIT_CONE: e.pt(Vec2{b.pos.x, b.pos.y - kConeRy}, kConeRy + 0.5f); break;
+    case BIT_DUST: {
+      const float r = dustRadius(b);
+      if (r > 0.3f) e.pt(b.pos, 1.3f * r + 0.5f);
+      break;
+    }
+    case BIT_DIRT:
+    case BIT_DROP: e.pt(b.pos, 1.5f); break;
+    case BIT_RING: {
+      const float r = ringRadius(b);
+      e.pt(Vec2{b.pos.x - r, b.pos.y - 0.32f * r});
+      e.pt(Vec2{b.pos.x + r, b.pos.y + 0.32f * r});
+      break;
+    }
+    case BIT_LEAF: e.pt(b.pos, 7.5f); break;
+    case BIT_MOTH: e.pt(b.pos, 4.f); break;
+    case BIT_BEE: e.pt(b.pos, 3.f); break;
+    default: break;
   }
   return e.rect();
 }
@@ -652,13 +710,38 @@ void bitDraw(const Bit& b, Surface& dst, const Rect& clip, const Palette& pal) {
   } else if (b.kind == BIT_DUST) {
     const float r = dustRadius(b);
     if (r > 0.3f) fillEllipse(dst, b.pos, r * 1.3f, r * 0.8f, pal[SMOKE], clip);
+  } else if (b.kind == BIT_DIRT) {
+    fillCircle(dst, b.pos, 1.2f, pal[ROCK], clip);
+  } else if (b.kind == BIT_DROP) {
+    fillCircle(dst, b.pos, 1.2f, pal[ACTOR], clip);
+  } else if (b.kind == BIT_RING) {   // as the skipped stone's rings, sized by spin
+    const float u = b.t / BIT_RING_S;
+    const float r = ringRadius(b);
+    const float th = (0.6f + 1.6f * (1.f - u)) * (0.5f + 0.5f * b.spin);
+    fillEllipse(dst, b.pos, r, 0.32f * r, pal[WATER_LIGHT], clip);
+    const float ri = r - th, ryi = 0.32f * r - 0.6f * th;
+    if (ri > 0.5f && ryi > 0.4f) fillEllipse(dst, b.pos, ri, ryi, pal[WATER], clip);
+  } else if (b.kind == BIT_LEAF) {
+    leafDraw(Leaf{true, b.pos, b.spin, b.land_y}, dst, clip, pal);
+  } else if (b.kind == BIT_MOTH || b.kind == BIT_BEE) {
+    // A body and two wings beating (moth ~8 Hz, slow enough to read; bee a blur).
+    const bool moth = b.kind == BIT_MOTH;
+    const float f = sinT(b.t * (moth ? 8.f : 21.f));
+    const float span = moth ? 1.6f + 1.2f * f : 1.3f + 0.4f * f;
+    const float up = moth ? 1.0f + 0.8f * f : 1.2f;
+    fillEllipse(dst, Vec2{b.pos.x - span, b.pos.y - up}, moth ? 1.5f : 0.9f, moth ? 1.1f : 0.7f,
+                moth ? pal[ACTOR] : pal[CLOUD_LIT], clip);
+    fillEllipse(dst, Vec2{b.pos.x + span, b.pos.y - up}, moth ? 1.5f : 0.9f, moth ? 1.1f : 0.7f,
+                moth ? pal[ACTOR] : pal[CLOUD_LIT], clip);
+    fillEllipse(dst, b.pos, moth ? 1.0f : 1.3f, moth ? 1.5f : 1.0f, pal[ACTOR], clip);
   }
 }
 
 bool bitSame(const Bit& a, const Bit& b) {
   if (a.kind != b.kind) return false;
   if (a.kind == BIT_NONE) return true;
-  if (a.kind == BIT_DUST) return a.t == b.t && sameV(a.pos, b.pos);
+  if (a.kind == BIT_DUST || a.kind == BIT_RING || a.kind == BIT_MOTH || a.kind == BIT_BEE)
+    return a.t == b.t && sameV(a.pos, b.pos) && a.spin == b.spin;
   return sameV(a.pos, b.pos) && a.spin == b.spin && a.resting == b.resting;
 }
 
