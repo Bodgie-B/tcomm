@@ -67,7 +67,17 @@ Every message starts with a version byte, a type, a sender id and a sequence num
 
 Boot exchange: a rebooted unit sends its STATE, and the other unit answers with its own STATE plus its DOG value and last READING. The units also copy the clock from each other's STATE messages. A panel shows dashes for the Outside tile if no OUTSIDE reading arrives for 15 minutes (starting value).
 
-The LUCY and OUTSIDE messages come from Mike's WeatherGate Raspberry Pi 2 through one spare ESP32 on its USB port. That gateway and the Pi-side scripts are Mike's work, not part of the first panel firmware. Until they exist, test the panel side by sending fake LUCY and OUTSIDE messages from a second ESP32. A Waveshare ESP32-C6-GEEK is the candidate gateway board. Its USB behavior and ESP-NOW interoperability with the S3 are unconfirmed, so test early.
+Time value of 0 (rule added 2026-10-30): the gateway sends a time of 0 until the Pi's clock has synced over NTP, because after a cold boot the Pi restores its last saved clock, which was about 24 minutes behind in testing. In every message type, a panel must treat a time of 0 as "no time": never set its own clock from it and never display it. Measure the 15-minute Outside staleness from when the panel received the reading, not from the reading's own timestamp, so a time-0 reading still counts as fresh.
+
+The LUCY and OUTSIDE messages come from Mike's WeatherGate Raspberry Pi 2 through an ESP32-C6 gateway on its USB port. That gateway and the Pi-side bridge are Mike's work and are not part of the panel firmware. Their code is not in this repo.
+
+Gateway status (Mike's test report, 2026-10-30):
+- The gateway is working. The C6 shows up on the Pi as a USB serial device (`/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_...`, `ttyACM0`) with a udev alias `/dev/tcomm-gateway`. A Pi service, `tcomm-bridge`, talks to it. The serial ID includes the C6's MAC, FC:01:2C:FD:D3:A8. That should be its station MAC for ESP-NOW peering (unverified, confirm in code).
+- Opening the port from the Pi does not reset the C6.
+- Real LUCY and OUTSIDE messages reached Mike's 4.3C panel (the S3 board) and were acked: first contact in 5 ms (LUCY) and 48 ms (OUTSIDE), readings about once a minute acked in 22 to 41 ms, and a LucyGate button double-click OUT then IN acked in 6 and 26 ms. A day-long run started 2026-10-30, with no stuck replies so far.
+- Not yet tested: the gateway's `failed` reply to the Pi when a panel doesn't ack. This is how the Pi learns a message didn't get through. Test it by unplugging the panel's power and pressing the LucyGate button.
+- ESP-NOW between the C6 gateway and the S3 panel is confirmed: the receiver in these tests was the 4.3C panel. Since then the panel has run on wall power, unplugged from the laptop, updating weather and Lucy data from the gateway on its own with no failures (Mike, 2026-10-30). The firmware it runs for this is not in this repo.
+- The C6 is now permanently plugged into the Pi. Test panel firmware against the real gateway rather than fake messages.
 
 ## Hardware facts to design around
 
@@ -116,6 +126,7 @@ These come from Waveshare's docs and my count of its pin tables. Verify against 
 - The Private and Sleeping wake brightness for a doorbell banner.
 - Whether the downstairs panel shows a banner or tone when Lucy goes out (currently none).
 - How the LucyGate in/out button is wired on the Pi. The existing button on that Pi cycles STANDBY, ARMED and ALERT for the carport sensor, so the new one needs its own input. This is Mike's side.
+- The gateway's `failed` reply to the Pi (see Gateway status).
 - Final forecast code list for the Outside icon (placeholders: sun, cloud with sun, rain, snow, moon).
 
 ## GUI design brief (paste below this line)
