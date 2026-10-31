@@ -1,0 +1,1501 @@
+{
+  "clips": [
+    {
+      "name": "build",
+      "beat": "build",
+      "kind": "beat",
+      "variant": null,
+      "seed": 1,
+      "start_tick": 0,
+      "seconds": 12.96,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/build.mp4",
+      "poster": "clips/build.png",
+      "bytes": 44585
+    },
+    {
+      "name": "arrival_c",
+      "beat": "arrival",
+      "kind": "beat",
+      "variant": "c",
+      "seed": 1,
+      "start_tick": 325,
+      "seconds": 32.96,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/arrival_c.mp4",
+      "poster": "clips/arrival_c.png",
+      "bytes": 88375
+    },
+    {
+      "name": "setup_b",
+      "beat": "setup",
+      "kind": "beat",
+      "variant": "b",
+      "seed": 1,
+      "start_tick": 1350,
+      "seconds": 39.04,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/setup_b.mp4",
+      "poster": "clips/setup_b.png",
+      "bytes": 90377
+    },
+    {
+      "name": "still",
+      "beat": "still",
+      "kind": "beat",
+      "variant": null,
+      "seed": 1,
+      "start_tick": 2525,
+      "seconds": 4.0,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/still.mp4",
+      "poster": "clips/still.png",
+      "bytes": 20172
+    },
+    {
+      "name": "deer_stick",
+      "beat": "deer_stick",
+      "kind": "major",
+      "variant": null,
+      "seed": 1,
+      "start_tick": 2625,
+      "seconds": 42.0,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/deer_stick.mp4",
+      "poster": "clips/deer_stick.png",
+      "bytes": 107752
+    },
+    {
+      "name": "firewood_b",
+      "beat": "firewood",
+      "kind": "beat",
+      "variant": "b",
+      "seed": 1,
+      "start_tick": 3875,
+      "seconds": 60.0,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/firewood_b.mp4",
+      "poster": "clips/firewood_b.png",
+      "bytes": 146444
+    },
+    {
+      "name": "fire_a",
+      "beat": "fire",
+      "kind": "beat",
+      "variant": "a",
+      "seed": 1,
+      "start_tick": 5625,
+      "seconds": 30.96,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/fire_a.mp4",
+      "poster": "clips/fire_a.png",
+      "bytes": 87761
+    },
+    {
+      "name": "cloud_watch",
+      "beat": "cloud_watch",
+      "kind": "filler",
+      "variant": null,
+      "seed": 1,
+      "start_tick": 6775,
+      "seconds": 58.0,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/cloud_watch.mp4",
+      "poster": "clips/cloud_watch.png",
+      "bytes": 169688
+    },
+    {
+      "name": "dinner_a",
+      "beat": "dinner",
+      "kind": "beat",
+      "variant": "a",
+      "seed": 1,
+      "start_tick": 8675,
+      "seconds": 38.0,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/dinner_a.mp4",
+      "poster": "clips/dinner_a.png",
+      "bytes": 114212
+    },
+    {
+      "name": "skip_stone",
+      "beat": "skip_stone",
+      "kind": "filler",
+      "variant": null,
+      "seed": 1,
+      "start_tick": 10000,
+      "seconds": 36.0,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/skip_stone.mp4",
+      "poster": "clips/skip_stone.png",
+      "bytes": 104940
+    },
+    {
+      "name": "map_chase",
+      "beat": "map_chase",
+      "kind": "major",
+      "variant": null,
+      "seed": 1,
+      "start_tick": 11450,
+      "seconds": 43.04,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/map_chase.mp4",
+      "poster": "clips/map_chase.png",
+      "bytes": 153924
+    },
+    {
+      "name": "foodbag_a",
+      "beat": "foodbag",
+      "kind": "beat",
+      "variant": "a",
+      "seed": 1,
+      "start_tick": 12625,
+      "seconds": 38.0,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/foodbag_a.mp4",
+      "poster": "clips/foodbag_a.png",
+      "bytes": 130070
+    },
+    {
+      "name": "bear_b",
+      "beat": "bear",
+      "kind": "beat",
+      "variant": "b",
+      "seed": 1,
+      "start_tick": 13925,
+      "seconds": 42.0,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/bear_b.mp4",
+      "poster": "clips/bear_b.png",
+      "bytes": 136719
+    },
+    {
+      "name": "close_a",
+      "beat": "close",
+      "kind": "beat",
+      "variant": "a",
+      "seed": 1,
+      "start_tick": 15400,
+      "seconds": 34.0,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/close_a.mp4",
+      "poster": "clips/close_a.png",
+      "bytes": 98916
+    },
+    {
+      "name": "minor_squirrel_nut",
+      "beat": "squirrel_nut",
+      "kind": "minor",
+      "variant": null,
+      "seed": 1,
+      "start_tick": 509,
+      "seconds": 22.0,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/minor_squirrel_nut.mp4",
+      "poster": "clips/minor_squirrel_nut.png",
+      "bytes": 68841
+    },
+    {
+      "name": "minor_frog_splash",
+      "beat": "frog_splash",
+      "kind": "minor",
+      "variant": null,
+      "seed": 1,
+      "start_tick": 1300,
+      "seconds": 22.0,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/minor_frog_splash.mp4",
+      "poster": "clips/minor_frog_splash.png",
+      "bytes": 63297
+    },
+    {
+      "name": "minor_leaf_fall",
+      "beat": "leaf_fall",
+      "kind": "minor",
+      "variant": null,
+      "seed": 1,
+      "start_tick": 1821,
+      "seconds": 22.0,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/minor_leaf_fall.mp4",
+      "poster": "clips/minor_leaf_fall.png",
+      "bytes": 60043
+    },
+    {
+      "name": "minor_deer_edge",
+      "beat": "deer_edge",
+      "kind": "minor",
+      "variant": null,
+      "seed": 1,
+      "start_tick": 2270,
+      "seconds": 22.0,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/minor_deer_edge.mp4",
+      "poster": "clips/minor_deer_edge.png",
+      "bytes": 62809
+    },
+    {
+      "name": "minor_chipmunk_cross",
+      "beat": "chipmunk_cross",
+      "kind": "minor",
+      "variant": null,
+      "seed": 1,
+      "start_tick": 4153,
+      "seconds": 22.0,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/minor_chipmunk_cross.mp4",
+      "poster": "clips/minor_chipmunk_cross.png",
+      "bytes": 65444
+    },
+    {
+      "name": "minor_cloud_animal",
+      "beat": "cloud_animal",
+      "kind": "minor",
+      "variant": null,
+      "seed": 1,
+      "start_tick": 4840,
+      "seconds": 22.0,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/minor_cloud_animal.mp4",
+      "poster": "clips/minor_cloud_animal.png",
+      "bytes": 62319
+    },
+    {
+      "name": "minor_bee_visit",
+      "beat": "bee_visit",
+      "kind": "minor",
+      "variant": null,
+      "seed": 1,
+      "start_tick": 5321,
+      "seconds": 22.0,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/minor_bee_visit.mp4",
+      "poster": "clips/minor_bee_visit.png",
+      "bytes": 56064
+    },
+    {
+      "name": "minor_bird_chip",
+      "beat": "bird_chip",
+      "kind": "minor",
+      "variant": null,
+      "seed": 1,
+      "start_tick": 6046,
+      "seconds": 22.0,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/minor_bird_chip.mp4",
+      "poster": "clips/minor_bird_chip.png",
+      "bytes": 74056
+    },
+    {
+      "name": "minor_mouse_tent",
+      "beat": "mouse_tent",
+      "kind": "minor",
+      "variant": null,
+      "seed": 1,
+      "start_tick": 7225,
+      "seconds": 22.0,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/minor_mouse_tent.mp4",
+      "poster": "clips/minor_mouse_tent.png",
+      "bytes": 70626
+    },
+    {
+      "name": "loop_overview_seed1",
+      "beat": "loop_overview",
+      "kind": "overview",
+      "variant": null,
+      "seed": 1,
+      "start_tick": 0,
+      "seconds": 81.24,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/loop_overview_seed1.mp4",
+      "poster": "clips/loop_overview_seed1.png",
+      "bytes": 491470
+    },
+    {
+      "name": "arrival_a",
+      "beat": "arrival",
+      "kind": "beat",
+      "variant": "a",
+      "seed": 2,
+      "start_tick": 325,
+      "seconds": 24.96,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/arrival_a.mp4",
+      "poster": "clips/arrival_a.png",
+      "bytes": 68403
+    },
+    {
+      "name": "setup_c",
+      "beat": "setup",
+      "kind": "beat",
+      "variant": "c",
+      "seed": 2,
+      "start_tick": 1150,
+      "seconds": 35.04,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/setup_c.mp4",
+      "poster": "clips/setup_c.png",
+      "bytes": 95544
+    },
+    {
+      "name": "read",
+      "beat": "read",
+      "kind": "filler",
+      "variant": null,
+      "seed": 2,
+      "start_tick": 6425,
+      "seconds": 50.0,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/read.mp4",
+      "poster": "clips/read.png",
+      "bytes": 152255
+    },
+    {
+      "name": "echo",
+      "beat": "echo",
+      "kind": "major",
+      "variant": null,
+      "seed": 2,
+      "start_tick": 8000,
+      "seconds": 34.0,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/echo.mp4",
+      "poster": "clips/echo.png",
+      "bytes": 106683
+    },
+    {
+      "name": "dinner_c",
+      "beat": "dinner",
+      "kind": "beat",
+      "variant": "c",
+      "seed": 2,
+      "start_tick": 9050,
+      "seconds": 33.04,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/dinner_c.mp4",
+      "poster": "clips/dinner_c.png",
+      "bytes": 111626
+    },
+    {
+      "name": "mug_sunset",
+      "beat": "mug_sunset",
+      "kind": "filler",
+      "variant": null,
+      "seed": 2,
+      "start_tick": 10075,
+      "seconds": 46.96,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/mug_sunset.mp4",
+      "poster": "clips/mug_sunset.png",
+      "bytes": 149635
+    },
+    {
+      "name": "foodbag_c",
+      "beat": "foodbag",
+      "kind": "beat",
+      "variant": "c",
+      "seed": 2,
+      "start_tick": 11450,
+      "seconds": 47.04,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/foodbag_c.mp4",
+      "poster": "clips/foodbag_c.png",
+      "bytes": 162041
+    },
+    {
+      "name": "bear_a",
+      "beat": "bear",
+      "kind": "beat",
+      "variant": "a",
+      "seed": 2,
+      "start_tick": 12825,
+      "seconds": 58.0,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/bear_a.mp4",
+      "poster": "clips/bear_a.png",
+      "bytes": 177370
+    },
+    {
+      "name": "close_b",
+      "beat": "close",
+      "kind": "beat",
+      "variant": "b",
+      "seed": 2,
+      "start_tick": 14475,
+      "seconds": 50.0,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/close_b.mp4",
+      "poster": "clips/close_b.png",
+      "bytes": 151820
+    },
+    {
+      "name": "arrival_b",
+      "beat": "arrival",
+      "kind": "beat",
+      "variant": "b",
+      "seed": 3,
+      "start_tick": 325,
+      "seconds": 28.96,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/arrival_b.mp4",
+      "poster": "clips/arrival_b.png",
+      "bytes": 74148
+    },
+    {
+      "name": "squirrel_splash",
+      "beat": "squirrel_splash",
+      "kind": "major",
+      "variant": null,
+      "seed": 3,
+      "start_tick": 2475,
+      "seconds": 30.96,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/squirrel_splash.mp4",
+      "poster": "clips/squirrel_splash.png",
+      "bytes": 85368
+    },
+    {
+      "name": "firewood_a",
+      "beat": "firewood",
+      "kind": "beat",
+      "variant": "a",
+      "seed": 3,
+      "start_tick": 3450,
+      "seconds": 34.0,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/firewood_a.mp4",
+      "poster": "clips/firewood_a.png",
+      "bytes": 82366
+    },
+    {
+      "name": "ants_cookie",
+      "beat": "ants_cookie",
+      "kind": "major",
+      "variant": null,
+      "seed": 3,
+      "start_tick": 5650,
+      "seconds": 46.0,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/ants_cookie.mp4",
+      "poster": "clips/ants_cookie.png",
+      "bytes": 137045
+    },
+    {
+      "name": "cairn",
+      "beat": "cairn",
+      "kind": "filler",
+      "variant": null,
+      "seed": 3,
+      "start_tick": 7975,
+      "seconds": 48.0,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/cairn.mp4",
+      "poster": "clips/cairn.png",
+      "bytes": 157347
+    },
+    {
+      "name": "foodbag_b",
+      "beat": "foodbag",
+      "kind": "beat",
+      "variant": "b",
+      "seed": 3,
+      "start_tick": 10825,
+      "seconds": 48.0,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/foodbag_b.mp4",
+      "poster": "clips/foodbag_b.png",
+      "bytes": 165907
+    },
+    {
+      "name": "shadow_theater",
+      "beat": "shadow_theater",
+      "kind": "major",
+      "variant": null,
+      "seed": 3,
+      "start_tick": 12325,
+      "seconds": 44.0,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/shadow_theater.mp4",
+      "poster": "clips/shadow_theater.png",
+      "bytes": 149198
+    },
+    {
+      "name": "close_c",
+      "beat": "close",
+      "kind": "beat",
+      "variant": "c",
+      "seed": 3,
+      "start_tick": 15250,
+      "seconds": 37.04,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/close_c.mp4",
+      "poster": "clips/close_c.png",
+      "bytes": 109797
+    },
+    {
+      "name": "setup_a",
+      "beat": "setup",
+      "kind": "beat",
+      "variant": "a",
+      "seed": 4,
+      "start_tick": 1150,
+      "seconds": 39.04,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/setup_a.mp4",
+      "poster": "clips/setup_a.png",
+      "bytes": 96187
+    },
+    {
+      "name": "pinecone",
+      "beat": "pinecone",
+      "kind": "major",
+      "variant": null,
+      "seed": 4,
+      "start_tick": 2525,
+      "seconds": 30.0,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/pinecone.mp4",
+      "poster": "clips/pinecone.png",
+      "bytes": 74336
+    },
+    {
+      "name": "bear_c",
+      "beat": "bear",
+      "kind": "beat",
+      "variant": "c",
+      "seed": 4,
+      "start_tick": 13550,
+      "seconds": 59.04,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/bear_c.mp4",
+      "poster": "clips/bear_c.png",
+      "bytes": 184064
+    },
+    {
+      "name": "dinner_b",
+      "beat": "dinner",
+      "kind": "beat",
+      "variant": "b",
+      "seed": 5,
+      "start_tick": 7350,
+      "seconds": 48.0,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/dinner_b.mp4",
+      "poster": "clips/dinner_b.png",
+      "bytes": 153392
+    },
+    {
+      "name": "fire_c",
+      "beat": "fire",
+      "kind": "beat",
+      "variant": "c",
+      "seed": 6,
+      "start_tick": 5225,
+      "seconds": 36.96,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/fire_c.mp4",
+      "poster": "clips/fire_c.png",
+      "bytes": 106242
+    },
+    {
+      "name": "raccoon_pack",
+      "beat": "raccoon_pack",
+      "kind": "major",
+      "variant": null,
+      "seed": 8,
+      "start_tick": 2550,
+      "seconds": 58.0,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/raccoon_pack.mp4",
+      "poster": "clips/raccoon_pack.png",
+      "bytes": 122247
+    },
+    {
+      "name": "stream_listen",
+      "beat": "stream_listen",
+      "kind": "filler",
+      "variant": null,
+      "seed": 8,
+      "start_tick": 6350,
+      "seconds": 46.0,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/stream_listen.mp4",
+      "poster": "clips/stream_listen.png",
+      "bytes": 146384
+    },
+    {
+      "name": "fish_leap",
+      "beat": "fish_leap",
+      "kind": "major",
+      "variant": null,
+      "seed": 8,
+      "start_tick": 10375,
+      "seconds": 22.96,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/fish_leap.mp4",
+      "poster": "clips/fish_leap.png",
+      "bytes": 74344
+    },
+    {
+      "name": "firewood_c",
+      "beat": "firewood",
+      "kind": "beat",
+      "variant": "c",
+      "seed": 9,
+      "start_tick": 3950,
+      "seconds": 35.04,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/firewood_c.mp4",
+      "poster": "clips/firewood_c.png",
+      "bytes": 90634
+    },
+    {
+      "name": "fire_b",
+      "beat": "fire",
+      "kind": "beat",
+      "variant": "b",
+      "seed": 14,
+      "start_tick": 4875,
+      "seconds": 42.96,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/fire_b.mp4",
+      "poster": "clips/fire_b.png",
+      "bytes": 121233
+    },
+    {
+      "name": "minor_owl_watch",
+      "beat": "owl_watch",
+      "kind": "minor",
+      "variant": null,
+      "seed": 1,
+      "start_tick": 1102,
+      "seconds": 22.0,
+      "mood": 0.0,
+      "night": true,
+      "file": "clips/minor_owl_watch.mp4",
+      "poster": "clips/minor_owl_watch.png",
+      "bytes": 37883
+    },
+    {
+      "name": "minor_moth_lantern",
+      "beat": "moth_lantern",
+      "kind": "minor",
+      "variant": null,
+      "seed": 1,
+      "start_tick": 13397,
+      "seconds": 22.0,
+      "mood": 0.0,
+      "night": true,
+      "file": "clips/minor_moth_lantern.mp4",
+      "poster": "clips/minor_moth_lantern.png",
+      "bytes": 58003
+    },
+    {
+      "name": "stargaze",
+      "beat": "stargaze",
+      "kind": "major",
+      "variant": null,
+      "seed": 2,
+      "start_tick": 7450,
+      "seconds": 54.0,
+      "mood": 0.0,
+      "night": true,
+      "file": "clips/stargaze.mp4",
+      "poster": "clips/stargaze.png",
+      "bytes": 114033
+    },
+    {
+      "name": "firefly_jar",
+      "beat": "firefly_jar",
+      "kind": "major",
+      "variant": null,
+      "seed": 3,
+      "start_tick": 5650,
+      "seconds": 42.0,
+      "mood": 0.0,
+      "night": true,
+      "file": "clips/firefly_jar.mp4",
+      "poster": "clips/firefly_jar.png",
+      "bytes": 101393
+    },
+    {
+      "name": "ranger_ridge",
+      "beat": "ranger_ridge",
+      "kind": "major",
+      "variant": null,
+      "seed": 9,
+      "start_tick": 7250,
+      "seconds": 32.0,
+      "mood": 0.0,
+      "night": true,
+      "file": "clips/ranger_ridge.mp4",
+      "poster": "clips/ranger_ridge.png",
+      "bytes": 67258
+    }
+  ],
+  "plans": [
+    {
+      "loop_seed": 1,
+      "start_tick": 0,
+      "plan": {
+        "arrival": 2,
+        "setup": 1,
+        "firewood": 1,
+        "fire": 0,
+        "dinner": 0,
+        "foodbag": 0,
+        "bear": 1,
+        "close": 0
+      },
+      "fillers": [
+        "cloud_watch",
+        "skip_stone"
+      ],
+      "majors": [
+        "deer_stick",
+        "map_chase"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=1 start tick=0 plan=arrival=2 setup=1 firewood=1 fire=0 dinner=0 foodbag=0 bear=1 close=0 fillers=cloud_watch,skip_stone majors=deer_stick,map_chase",
+      "seed": 1,
+      "mood": 4.0,
+      "night": false
+    },
+    {
+      "loop_seed": 2,
+      "start_tick": 0,
+      "plan": {
+        "arrival": 0,
+        "setup": 2,
+        "firewood": 1,
+        "fire": 0,
+        "dinner": 2,
+        "foodbag": 2,
+        "bear": 0,
+        "close": 1
+      },
+      "fillers": [
+        "read",
+        "mug_sunset"
+      ],
+      "majors": [
+        "map_chase",
+        "echo"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=2 start tick=0 plan=arrival=0 setup=2 firewood=1 fire=0 dinner=2 foodbag=2 bear=0 close=1 fillers=read,mug_sunset majors=map_chase,echo",
+      "seed": 2,
+      "mood": 4.0,
+      "night": false
+    },
+    {
+      "loop_seed": 3,
+      "start_tick": 0,
+      "plan": {
+        "arrival": 1,
+        "setup": 2,
+        "firewood": 0,
+        "fire": 0,
+        "dinner": 2,
+        "foodbag": 1,
+        "bear": 0,
+        "close": 2
+      },
+      "fillers": [
+        "cairn"
+      ],
+      "majors": [
+        "squirrel_splash",
+        "ants_cookie",
+        "deer_stick",
+        "shadow_theater"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=3 start tick=0 plan=arrival=1 setup=2 firewood=0 fire=0 dinner=2 foodbag=1 bear=0 close=2 fillers=cairn majors=squirrel_splash,ants_cookie,deer_stick,shadow_theater",
+      "seed": 3,
+      "mood": 4.0,
+      "night": false
+    },
+    {
+      "loop_seed": 4,
+      "start_tick": 0,
+      "plan": {
+        "arrival": 0,
+        "setup": 0,
+        "firewood": 0,
+        "fire": 0,
+        "dinner": 2,
+        "foodbag": 1,
+        "bear": 2,
+        "close": 0
+      },
+      "fillers": [
+        "mug_sunset",
+        "read"
+      ],
+      "majors": [
+        "pinecone",
+        "map_chase",
+        "shadow_theater"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=4 start tick=0 plan=arrival=0 setup=0 firewood=0 fire=0 dinner=2 foodbag=1 bear=2 close=0 fillers=mug_sunset,read majors=pinecone,map_chase,shadow_theater",
+      "seed": 4,
+      "mood": 4.0,
+      "night": false
+    },
+    {
+      "loop_seed": 5,
+      "start_tick": 0,
+      "plan": {
+        "arrival": 0,
+        "setup": 0,
+        "firewood": 0,
+        "fire": 0,
+        "dinner": 1,
+        "foodbag": 0,
+        "bear": 2,
+        "close": 2
+      },
+      "fillers": [
+        "cloud_watch",
+        "mug_sunset"
+      ],
+      "majors": [
+        "map_chase",
+        "echo"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=5 start tick=0 plan=arrival=0 setup=0 firewood=0 fire=0 dinner=1 foodbag=0 bear=2 close=2 fillers=cloud_watch,mug_sunset majors=map_chase,echo",
+      "seed": 5,
+      "mood": 4.0,
+      "night": false
+    },
+    {
+      "loop_seed": 6,
+      "start_tick": 0,
+      "plan": {
+        "arrival": 2,
+        "setup": 2,
+        "firewood": 1,
+        "fire": 2,
+        "dinner": 1,
+        "foodbag": 1,
+        "bear": 2,
+        "close": 1
+      },
+      "fillers": [
+        "read"
+      ],
+      "majors": [
+        "pinecone",
+        "squirrel_splash",
+        "ants_cookie"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=6 start tick=0 plan=arrival=2 setup=2 firewood=1 fire=2 dinner=1 foodbag=1 bear=2 close=1 fillers=read majors=pinecone,squirrel_splash,ants_cookie",
+      "seed": 6,
+      "mood": 4.0,
+      "night": false
+    },
+    {
+      "loop_seed": 7,
+      "start_tick": 0,
+      "plan": {
+        "arrival": 0,
+        "setup": 1,
+        "firewood": 1,
+        "fire": 2,
+        "dinner": 2,
+        "foodbag": 2,
+        "bear": 2,
+        "close": 2
+      },
+      "fillers": [
+        "skip_stone",
+        "cairn"
+      ],
+      "majors": [
+        "squirrel_splash",
+        "shadow_theater"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=7 start tick=0 plan=arrival=0 setup=1 firewood=1 fire=2 dinner=2 foodbag=2 bear=2 close=2 fillers=skip_stone,cairn majors=squirrel_splash,shadow_theater",
+      "seed": 7,
+      "mood": 4.0,
+      "night": false
+    },
+    {
+      "loop_seed": 8,
+      "start_tick": 0,
+      "plan": {
+        "arrival": 1,
+        "setup": 1,
+        "firewood": 0,
+        "fire": 2,
+        "dinner": 1,
+        "foodbag": 2,
+        "bear": 1,
+        "close": 1
+      },
+      "fillers": [
+        "stream_listen",
+        "skip_stone"
+      ],
+      "majors": [
+        "raccoon_pack",
+        "fish_leap",
+        "shadow_theater"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=8 start tick=0 plan=arrival=1 setup=1 firewood=0 fire=2 dinner=1 foodbag=2 bear=1 close=1 fillers=stream_listen,skip_stone majors=raccoon_pack,fish_leap,shadow_theater",
+      "seed": 8,
+      "mood": 4.0,
+      "night": false
+    },
+    {
+      "loop_seed": 9,
+      "start_tick": 0,
+      "plan": {
+        "arrival": 2,
+        "setup": 1,
+        "firewood": 2,
+        "fire": 0,
+        "dinner": 2,
+        "foodbag": 1,
+        "bear": 1,
+        "close": 1
+      },
+      "fillers": [
+        "cairn",
+        "stream_listen"
+      ],
+      "majors": [
+        "deer_stick",
+        "ants_cookie"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=9 start tick=0 plan=arrival=2 setup=1 firewood=2 fire=0 dinner=2 foodbag=1 bear=1 close=1 fillers=cairn,stream_listen majors=deer_stick,ants_cookie",
+      "seed": 9,
+      "mood": 4.0,
+      "night": false
+    },
+    {
+      "loop_seed": 10,
+      "start_tick": 0,
+      "plan": {
+        "arrival": 2,
+        "setup": 2,
+        "firewood": 1,
+        "fire": 0,
+        "dinner": 1,
+        "foodbag": 1,
+        "bear": 1,
+        "close": 2
+      },
+      "fillers": [
+        "cairn"
+      ],
+      "majors": [
+        "ants_cookie",
+        "pinecone",
+        "raccoon_pack"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=10 start tick=0 plan=arrival=2 setup=2 firewood=1 fire=0 dinner=1 foodbag=1 bear=1 close=2 fillers=cairn majors=ants_cookie,pinecone,raccoon_pack",
+      "seed": 10,
+      "mood": 4.0,
+      "night": false
+    },
+    {
+      "loop_seed": 11,
+      "start_tick": 0,
+      "plan": {
+        "arrival": 0,
+        "setup": 2,
+        "firewood": 1,
+        "fire": 0,
+        "dinner": 1,
+        "foodbag": 1,
+        "bear": 0,
+        "close": 1
+      },
+      "fillers": [
+        "read"
+      ],
+      "majors": [
+        "pinecone",
+        "deer_stick",
+        "shadow_theater"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=11 start tick=0 plan=arrival=0 setup=2 firewood=1 fire=0 dinner=1 foodbag=1 bear=0 close=1 fillers=read majors=pinecone,deer_stick,shadow_theater",
+      "seed": 11,
+      "mood": 4.0,
+      "night": false
+    },
+    {
+      "loop_seed": 12,
+      "start_tick": 0,
+      "plan": {
+        "arrival": 2,
+        "setup": 1,
+        "firewood": 0,
+        "fire": 0,
+        "dinner": 2,
+        "foodbag": 0,
+        "bear": 1,
+        "close": 2
+      },
+      "fillers": [
+        "skip_stone",
+        "stream_listen"
+      ],
+      "majors": [
+        "squirrel_splash",
+        "fish_leap",
+        "shadow_theater"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=12 start tick=0 plan=arrival=2 setup=1 firewood=0 fire=0 dinner=2 foodbag=0 bear=1 close=2 fillers=skip_stone,stream_listen majors=squirrel_splash,fish_leap,shadow_theater",
+      "seed": 12,
+      "mood": 4.0,
+      "night": false
+    },
+    {
+      "loop_seed": 13,
+      "start_tick": 0,
+      "plan": {
+        "arrival": 2,
+        "setup": 2,
+        "firewood": 2,
+        "fire": 2,
+        "dinner": 0,
+        "foodbag": 1,
+        "bear": 0,
+        "close": 2
+      },
+      "fillers": [
+        "mug_sunset"
+      ],
+      "majors": [
+        "raccoon_pack",
+        "squirrel_splash",
+        "shadow_theater"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=13 start tick=0 plan=arrival=2 setup=2 firewood=2 fire=2 dinner=0 foodbag=1 bear=0 close=2 fillers=mug_sunset majors=raccoon_pack,squirrel_splash,shadow_theater",
+      "seed": 13,
+      "mood": 4.0,
+      "night": false
+    },
+    {
+      "loop_seed": 14,
+      "start_tick": 0,
+      "plan": {
+        "arrival": 1,
+        "setup": 1,
+        "firewood": 0,
+        "fire": 1,
+        "dinner": 2,
+        "foodbag": 0,
+        "bear": 0,
+        "close": 1
+      },
+      "fillers": [
+        "read",
+        "mug_sunset"
+      ],
+      "majors": [
+        "map_chase",
+        "echo",
+        "squirrel_splash"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=14 start tick=0 plan=arrival=1 setup=1 firewood=0 fire=1 dinner=2 foodbag=0 bear=0 close=1 fillers=read,mug_sunset majors=map_chase,echo,squirrel_splash",
+      "seed": 14,
+      "mood": 4.0,
+      "night": false
+    },
+    {
+      "loop_seed": 15,
+      "start_tick": 0,
+      "plan": {
+        "arrival": 0,
+        "setup": 1,
+        "firewood": 0,
+        "fire": 2,
+        "dinner": 1,
+        "foodbag": 2,
+        "bear": 1,
+        "close": 0
+      },
+      "fillers": [
+        "mug_sunset",
+        "read",
+        "stream_listen"
+      ],
+      "majors": [
+        "echo",
+        "squirrel_splash"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=15 start tick=0 plan=arrival=0 setup=1 firewood=0 fire=2 dinner=1 foodbag=2 bear=1 close=0 fillers=mug_sunset,read,stream_listen majors=echo,squirrel_splash",
+      "seed": 15,
+      "mood": 4.0,
+      "night": false
+    },
+    {
+      "loop_seed": 16,
+      "start_tick": 0,
+      "plan": {
+        "arrival": 2,
+        "setup": 0,
+        "firewood": 0,
+        "fire": 2,
+        "dinner": 0,
+        "foodbag": 1,
+        "bear": 2,
+        "close": 2
+      },
+      "fillers": [
+        "mug_sunset"
+      ],
+      "majors": [
+        "ants_cookie",
+        "echo",
+        "squirrel_splash"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=16 start tick=0 plan=arrival=2 setup=0 firewood=0 fire=2 dinner=0 foodbag=1 bear=2 close=2 fillers=mug_sunset majors=ants_cookie,echo,squirrel_splash",
+      "seed": 16,
+      "mood": 4.0,
+      "night": false
+    },
+    {
+      "loop_seed": 1,
+      "start_tick": 0,
+      "plan": {
+        "arrival": 2,
+        "setup": 1,
+        "firewood": 1,
+        "fire": 0,
+        "dinner": 0,
+        "foodbag": 0,
+        "bear": 1,
+        "close": 0
+      },
+      "fillers": [
+        "cloud_watch",
+        "stream_listen"
+      ],
+      "majors": [
+        "pinecone",
+        "fish_leap"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=1 start tick=0 plan=arrival=2 setup=1 firewood=1 fire=0 dinner=0 foodbag=0 bear=1 close=0 fillers=cloud_watch,stream_listen majors=pinecone,fish_leap",
+      "seed": 1,
+      "mood": 0.0,
+      "night": true
+    },
+    {
+      "loop_seed": 2,
+      "start_tick": 0,
+      "plan": {
+        "arrival": 0,
+        "setup": 2,
+        "firewood": 1,
+        "fire": 0,
+        "dinner": 2,
+        "foodbag": 2,
+        "bear": 0,
+        "close": 1
+      },
+      "fillers": [
+        "cairn",
+        "mug_sunset"
+      ],
+      "majors": [
+        "fish_leap",
+        "stargaze"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=2 start tick=0 plan=arrival=0 setup=2 firewood=1 fire=0 dinner=2 foodbag=2 bear=0 close=1 fillers=cairn,mug_sunset majors=fish_leap,stargaze",
+      "seed": 2,
+      "mood": 0.0,
+      "night": true
+    },
+    {
+      "loop_seed": 3,
+      "start_tick": 0,
+      "plan": {
+        "arrival": 1,
+        "setup": 2,
+        "firewood": 0,
+        "fire": 0,
+        "dinner": 2,
+        "foodbag": 1,
+        "bear": 0,
+        "close": 2
+      },
+      "fillers": [
+        "skip_stone"
+      ],
+      "majors": [
+        "squirrel_splash",
+        "firefly_jar",
+        "deer_stick",
+        "shadow_theater"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=3 start tick=0 plan=arrival=1 setup=2 firewood=0 fire=0 dinner=2 foodbag=1 bear=0 close=2 fillers=skip_stone majors=squirrel_splash,firefly_jar,deer_stick,shadow_theater",
+      "seed": 3,
+      "mood": 0.0,
+      "night": true
+    },
+    {
+      "loop_seed": 4,
+      "start_tick": 0,
+      "plan": {
+        "arrival": 0,
+        "setup": 0,
+        "firewood": 0,
+        "fire": 0,
+        "dinner": 2,
+        "foodbag": 1,
+        "bear": 2,
+        "close": 0
+      },
+      "fillers": [
+        "mug_sunset",
+        "read"
+      ],
+      "majors": [
+        "map_chase",
+        "fish_leap",
+        "echo"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=4 start tick=0 plan=arrival=0 setup=0 firewood=0 fire=0 dinner=2 foodbag=1 bear=2 close=0 fillers=mug_sunset,read majors=map_chase,fish_leap,echo",
+      "seed": 4,
+      "mood": 0.0,
+      "night": true
+    },
+    {
+      "loop_seed": 5,
+      "start_tick": 0,
+      "plan": {
+        "arrival": 0,
+        "setup": 0,
+        "firewood": 0,
+        "fire": 0,
+        "dinner": 1,
+        "foodbag": 0,
+        "bear": 2,
+        "close": 2
+      },
+      "fillers": [
+        "cloud_watch",
+        "read"
+      ],
+      "majors": [
+        "map_chase",
+        "stargaze"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=5 start tick=0 plan=arrival=0 setup=0 firewood=0 fire=0 dinner=1 foodbag=0 bear=2 close=2 fillers=cloud_watch,read majors=map_chase,stargaze",
+      "seed": 5,
+      "mood": 0.0,
+      "night": true
+    },
+    {
+      "loop_seed": 6,
+      "start_tick": 0,
+      "plan": {
+        "arrival": 2,
+        "setup": 2,
+        "firewood": 1,
+        "fire": 2,
+        "dinner": 1,
+        "foodbag": 1,
+        "bear": 2,
+        "close": 1
+      },
+      "fillers": [
+        "cairn"
+      ],
+      "majors": [
+        "map_chase",
+        "deer_stick"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=6 start tick=0 plan=arrival=2 setup=2 firewood=1 fire=2 dinner=1 foodbag=1 bear=2 close=1 fillers=cairn majors=map_chase,deer_stick",
+      "seed": 6,
+      "mood": 0.0,
+      "night": true
+    },
+    {
+      "loop_seed": 7,
+      "start_tick": 0,
+      "plan": {
+        "arrival": 0,
+        "setup": 1,
+        "firewood": 1,
+        "fire": 2,
+        "dinner": 2,
+        "foodbag": 2,
+        "bear": 2,
+        "close": 2
+      },
+      "fillers": [
+        "cloud_watch",
+        "cairn"
+      ],
+      "majors": [
+        "echo",
+        "squirrel_splash"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=7 start tick=0 plan=arrival=0 setup=1 firewood=1 fire=2 dinner=2 foodbag=2 bear=2 close=2 fillers=cloud_watch,cairn majors=echo,squirrel_splash",
+      "seed": 7,
+      "mood": 0.0,
+      "night": true
+    },
+    {
+      "loop_seed": 8,
+      "start_tick": 0,
+      "plan": {
+        "arrival": 1,
+        "setup": 1,
+        "firewood": 0,
+        "fire": 2,
+        "dinner": 1,
+        "foodbag": 2,
+        "bear": 1,
+        "close": 1
+      },
+      "fillers": [
+        "stream_listen"
+      ],
+      "majors": [
+        "firefly_jar",
+        "ants_cookie",
+        "shadow_theater"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=8 start tick=0 plan=arrival=1 setup=1 firewood=0 fire=2 dinner=1 foodbag=2 bear=1 close=1 fillers=stream_listen majors=firefly_jar,ants_cookie,shadow_theater",
+      "seed": 8,
+      "mood": 0.0,
+      "night": true
+    },
+    {
+      "loop_seed": 9,
+      "start_tick": 0,
+      "plan": {
+        "arrival": 2,
+        "setup": 1,
+        "firewood": 2,
+        "fire": 0,
+        "dinner": 2,
+        "foodbag": 1,
+        "bear": 1,
+        "close": 1
+      },
+      "fillers": [
+        "skip_stone",
+        "stream_listen",
+        "mug_sunset"
+      ],
+      "majors": [
+        "deer_stick",
+        "ranger_ridge"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=9 start tick=0 plan=arrival=2 setup=1 firewood=2 fire=0 dinner=2 foodbag=1 bear=1 close=1 fillers=skip_stone,stream_listen,mug_sunset majors=deer_stick,ranger_ridge",
+      "seed": 9,
+      "mood": 0.0,
+      "night": true
+    },
+    {
+      "loop_seed": 10,
+      "start_tick": 0,
+      "plan": {
+        "arrival": 2,
+        "setup": 2,
+        "firewood": 1,
+        "fire": 0,
+        "dinner": 1,
+        "foodbag": 1,
+        "bear": 1,
+        "close": 2
+      },
+      "fillers": [
+        "cairn"
+      ],
+      "majors": [
+        "fish_leap",
+        "ranger_ridge",
+        "shadow_theater"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=10 start tick=0 plan=arrival=2 setup=2 firewood=1 fire=0 dinner=1 foodbag=1 bear=1 close=2 fillers=cairn majors=fish_leap,ranger_ridge,shadow_theater",
+      "seed": 10,
+      "mood": 0.0,
+      "night": true
+    }
+  ],
+  "missing_variants": {}
+}
