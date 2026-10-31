@@ -64,6 +64,7 @@ static Inputs makeInputs(float mood, int force = 0, bool night = false) {
   in.weather.night_dim = night ? 1.0f : 0.0f;
   in.night_mode = night;
   in.spine_force = (uint8_t)force;
+  in.have_outside = true;   // clear weather from "data": the checks here are about the spines
   return in;
 }
 static const int kForceMorning = 1 + SF_MORNING;
@@ -147,8 +148,8 @@ static void testFamilyPick() {
   struct Case { float mood; int force; bool night, lookout; int want; };
   const Case cases[] = {
       {0.2f, 0, false, false, SF_EVENING},  {0.5f, 0, false, false, SF_MORNING}, {1.5f, 0, false, false, SF_MORNING},
-      {2.49f, 0, false, false, SF_MORNING}, {2.5f, 0, false, false, SF_EVENING},   // midday: not built, the evening
-      {3.f, 0, false, false, SF_EVENING},   {4.f, 0, false, false, SF_EVENING},  {5.5f, 0, false, false, SF_EVENING},
+      {2.49f, 0, false, false, SF_MORNING}, {2.5f, 0, false, false, SF_MIDDAY},
+      {3.f, 0, false, false, SF_MIDDAY},    {4.f, 0, false, false, SF_EVENING},  {5.5f, 0, false, false, SF_EVENING},
       {7.5f, 0, false, false, SF_MORNING},  {1.5f, 0, true, false, SF_EVENING},  {1.5f, 0, false, true, SF_EVENING},
       {4.f, kForceMorning, false, false, SF_MORNING}, {1.5f, 1 + SF_EVENING, false, false, SF_EVENING},
   };
@@ -322,7 +323,9 @@ static void testMorningVariants() {
     const int reb = appPaletteRebuilds(a.app);
     reb_lo = reb < reb_lo ? reb : reb_lo;
     reb_hi = reb > reb_hi ? reb : reb_hi;
-    CHECK(reb == 1 + plan.fog_steps, "seed %d: %d palette rebuilds for %d fog steps", (int)seed, reb, plan.fog_steps);
+    // At most one rebuild per fog step: a step that lands on the same RGB565
+    // colours is skipped (computeAppPalette compares the palettes).
+    CHECK(reb <= 1 + plan.fog_steps, "seed %d: %d palette rebuilds for %d fog steps", (int)seed, reb, plan.fog_steps);
     const bool rolled = appTick(a.app);
     CHECK(rolled, "seed %d: no rollover at the plan's length", (int)seed);
     a.stop();
@@ -351,7 +354,7 @@ static void testMorningVariants() {
 // through a whole morning loop: the camp popping in, the door, the ash, the
 // fly, the fog steps. Strips per frame on the way.
 static void testMorningIncremental() {
-  static const uint64_t kSeeds[4] = {1, 2, 3, 6};
+  static const uint64_t kSeeds[4] = {1, 2, 3, 14};   // 14 plays break_camp b (the fly)
   long sum = 0, frames = 0;
   int worst = 0, diffs = 0, checks = 0;
   for (uint64_t seed : kSeeds) {

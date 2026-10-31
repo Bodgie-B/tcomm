@@ -117,6 +117,14 @@ bool landscapeStreamSpan(const Landscape& ls, float x, float& cy, float& half);
 Rect landscapeFgPineBounds(const Landscape& ls, int k);
 void landscapeDrawFgPine(const Landscape& ls, int k, Surface& s, const Rect& clip, const Palette& pal);
 
+// The weather (weather.cpp) draws its fog bands over the cached far layers
+// and then the near pines again over them (they stand in front of the fog),
+// and keeps its heat shimmer off them: the camp pine's bounds (foliage,
+// trunk and bag branch), and the camp pine plus both foreground pines drawn
+// again inside `clip`, as the cache has them.
+Rect landscapeCampPineBounds(const Landscape& ls);
+void landscapeDrawNearPines(const Landscape& ls, Surface& s, const Rect& clip, const Palette& pal);
+
 // Ridge crest y at an arbitrary x, linearly interpolated between the 16 px
 // samples (so it matches the drawn polygon edge exactly).
 float landscapeCrestAt(const Landscape& ls, int layer, float x);

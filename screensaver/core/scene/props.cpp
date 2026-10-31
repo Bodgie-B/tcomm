@@ -72,8 +72,9 @@ void tentGeom(const Tent& t, TentGeom& g) {
   const float x = t.pos.x, y = t.pos.y;
   const float hb = maxf(3.f, kTentBackH * back), hf = maxf(4.f, kTentFrontH * front);
   const Vec2 bl{x - kTentHalfW * spread, y};
-  const Vec2 ba{x + kTentBackX * spread + 0.6f * t.wobble, y - hb};
-  const Vec2 fa{x + kTentFrontX * spread + t.wobble, y - hf};
+  const float lean = t.wobble + t.sway;
+  const Vec2 ba{x + kTentBackX * spread + 0.6f * lean, y - hb};
+  const Vec2 fa{x + kTentFrontX * spread + lean, y - hf};
   const Vec2 fr{x + kTentHalfW * spread, y};
   // The ridge droops between the poles while slack: sagging, or front pole not up yet.
   Vec2 mid = mixV(ba, fa, 0.5f);
@@ -269,7 +270,15 @@ void tentInit(Tent& t, Vec2 pos) {
   t.shadow_shake = 0.f;
   t.bite = false;
   t.door = 0.f;
+  t.sway = 0.f;
+  t.snow = 0.f;
 }
+
+namespace {
+// Snow on the tent: drawn only on a pitched tent, over the ridge and the
+// upper part of the near face (down to snow / 3 of the way to the base).
+bool tentSnowy(const Tent& t) { return t.snow > 0.01f && t.progress >= 0.85f && t.state != TENT_PACKED; }
+}  // namespace
 
 Rect tentBounds(const Tent& t) {
   if (t.state == TENT_PACKED) return kEmpty;
@@ -280,6 +289,8 @@ Rect tentBounds(const Tent& t) {
   if (g.has_guy) e.pt(g.guy1, 1.f);
   if (g.has_shadow)
     for (const Vec2& p : g.shadow) e.pt(p);
+  if (tentSnowy(t))
+    for (int i = 1; i <= 3; ++i) e.pt(g.body[i], 2.f);
   return e.rect();
 }
 
@@ -297,13 +308,30 @@ void tentDraw(const Tent& t, Surface& s, const Rect& clip, const Palette& pal) {
     fillPolygon(s, g.door, 3, mixRGB(body, pal[ACTOR], 0.45f), clip);
   }
   if (g.has_shadow) fillPolygon(s, g.shadow, 12, pal[ACTOR], clip);
+  if (tentSnowy(t)) {
+    const float d = 0.33f * (t.snow > 1.f ? 1.f : t.snow);
+    const Vec2 ba = g.body[1], mid = g.body[2], fa = g.body[3];
+    const Vec2 cap[6] = {ba, mid, fa, mixV(fa, g.body[4], d), Vec2{mid.x, mid.y + d * (g.body[4].y - fa.y)},
+                         mixV(ba, g.body[0], d)};
+    const Pixel snow = pal[WATER_LIGHT];
+    fillPolygon(s, cap, 6, mixRGB(body, snow, 0.55f + 0.3f * d), clip);
+    const float wd = 1.f + 1.6f * d;
+    strokeCapsule(s, ba, mid, wd, snow, clip);
+    strokeCapsule(s, mid, fa, wd, snow, clip);
+  }
+}
+
+Vec2 tentRidgeEnd(const Tent& t, int k) {
+  TentGeom g;
+  tentGeom(t, g);
+  return k == 0 ? g.body[1] : g.body[3];
 }
 
 bool tentSame(const Tent& a, const Tent& b) {
   return sameV(a.pos, b.pos) && a.state == b.state && a.progress == b.progress && a.sag == b.sag &&
          a.bump == b.bump && a.wobble == b.wobble && a.lit == b.lit && a.shadow == b.shadow &&
          a.shadow_x == b.shadow_x && a.shadow_y == b.shadow_y && a.shadow_shake == b.shadow_shake && a.bite == b.bite &&
-         a.door == b.door;
+         a.door == b.door && a.sway == b.sway && a.snow == b.snow;
 }
 
 // ---- pack ------------------------------------------------------------------------

@@ -38,9 +38,15 @@ enum MajorId : uint8_t {
   MJ_ANTS_COOKIE, MJ_SHADOW_THEATER, MJ_RANGER_RIDGE, MJ_ECHO, MJ_FIREFLY_JAR, MJ_STARGAZE,
   // The stream vignettes (Mike's idea): he fishes (three ways) or bathes.
   MJ_FISHING_SMALL, MJ_FISHING_LOG, MJ_FISHING_GOOD, MJ_BATHE,
+  // The storm's (weather.h): only when a storm comes from the OUTSIDE data.
+  MJ_RAIN_SHELTER,
   MJ_COUNT
 };
-static_assert(MJ_COUNT <= 16, "Memory keeps a loop's majors as a 16-bit set");
+// Memory keeps a loop's majors as a 16-bit set (memory.h sets, spine.cpp):
+// ids 0..15 fit. rain_shelter (16) falls outside it, so the recent-set rule
+// does not see it (it is gated by the weather, not by variety); widening the
+// sets to 32 bits is an ask for memory.h's owner.
+static_assert(MJ_COUNT <= 32, "past 32 majors, Memory's sets must widen");
 
 // ---- glyphs -----------------------------------------------------------------------
 

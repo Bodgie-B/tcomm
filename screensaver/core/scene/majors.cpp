@@ -3430,6 +3430,179 @@ void tickBirds(World& w, float dt) {
   }
 }
 
+// ---- 17. rain_shelter -------------------------------------------------------------------------
+// Only in a storm from the OUTSIDE data (weatherPlannedStorm). A strike while
+// he sits outside; he looks up; a second strike and the thunder rolls (sound
+// arcs in the sky); he runs for the tent and dives in (the tent sags and
+// rebounds); his shadow shows on the lit wall if it is dusk or later; the
+// rain eases; the flap opens and he looks out at the sky, crawls out, and
+// goes back to sit by the fire as the other outside majors end.
+// Cues: kGo the first strike, kC1 the second and the thunder, kC2 he is in
+// (rain eased, lantern), kC3 he is out (lantern as it was).
+
+constexpr float kThunderT = 1.6f;
+
+float m_door(const World& w) { return M(w).u0; }
+
+void beginShelter(World& w) {
+  MajorState& m = M(w);
+  m.p[0] = w.spine.camp.door;
+  m.count = (uint8_t)((w.tent.lit ? 1 : 0) | (w.tent.shadow ? 2 : 0));
+  m.u0 = w.tent.door;   // the flap as it was (open in the morning, shut at night)
+}
+
+void tickShelter(World& w, float dt) {
+  MajorState& m = M(w);
+  if (has(m, kGo) && !has(m, kE1)) {
+    fire(m, kE1);
+    weatherStrike(w);
+  }
+  if (has(m, kC1) && !has(m, kE2)) {
+    fire(m, kE2);
+    weatherStrike(w);
+    const float hx = w.hiker.feet.x;
+    for (int i = 0; i < 3; ++i) {
+      const float x = minf(600.f, maxf(140.f, hx + 60.f + 110.f * (float)i - 40.f * (float)(i == 2)));
+      if (Glyph* g = glyphNew(w, GL_ARCS, Vec2{x, 120.f + 26.f * (float)i}, 0)) {
+        g->rot = 0.25f;   // bulging down at the camp
+        g->scale = 0.f;
+        g->t = -0.22f * (float)i;
+      }
+    }
+  }
+  for (Glyph& g : m.g) {
+    if (g.kind != GL_ARCS) continue;
+    g.t += dt;
+    const float u = g.t / kThunderT;
+    if (u >= 1.f) {
+      g.kind = GL_NONE;
+      continue;
+    }
+    g.scale = u <= 0.f ? 0.f : 9.f + 16.f * u;
+    g.k = u <= 0.f ? 0.f : 2.4f * (1.f - u);
+  }
+  if (has(m, kC2) && !has(m, kE3)) {
+    fire(m, kE3);
+    weatherEaseRain(w, 0.4f, 40.f);
+    const float mood = w.minors.mood - 6.f * floorf(w.minors.mood / 6.f);
+    if (w.minors.night || mood >= 4.5f || mood < 0.5f) {   // dusk or later: the lantern, and him on the wall
+      w.tent.lit = true;
+      w.tent.shadow = true;
+      w.tent.shadow_x = 4.f;
+    }
+  }
+  if (has(m, kC3) && !has(m, kFired)) {
+    fire(m, kFired);
+    w.tent.lit = (m.count & 1) != 0;
+    w.tent.shadow = (m.count & 2) != 0;
+  }
+}
+
+void actSkyLook(World& w, float u) {
+  const float e = env(u, 0.18f, 0.25f);
+  w.fx.head = -0.5f * e + 0.12f * e * sinT(window(u, 0.35f, 0.8f));
+  w.fx.lean = -0.07f * e;
+  if (u >= 1.f) scriptFxRest(w);
+}
+
+// Into the door: pitched forward, a lunge, gone; the tent takes him.
+void actDive(World& w, float u) {
+  Hiker& h = w.hiker;
+  Tent& t = w.tent;
+  if (u <= 0.f) w.spine.u0 = h.feet.x;
+  const float k = easeInOut(window(u, 0.f, 0.3f));
+  t.door = maxf(t.door, easeOutCubic(window(u, 0.f, 0.25f)));
+  if (w.fx.on) {
+    w.fx.lean = 0.65f * k;
+    w.fx.head = -0.25f * k;
+    h.feet.x = w.spine.u0 - 18.f * easeInCubic(window(u, 0.12f, 0.42f));
+    if (u >= 0.42f) {
+      scriptFxRest(w);
+      w.fx.on = false;
+    }
+  }
+  const float s1 = window(u, 0.42f, 0.66f), s2 = window(u, 0.62f, 1.f);
+  t.sag = 0.32f * sinT(0.5f * s1);
+  t.bump = 0.08f * sinT(0.5f * s2) * (1.f - 0.4f * s2);
+  t.wobble = floorf(0.5f + 2.5f * sinT(1.5f * s2) * (1.f - s2));
+  if (u >= 0.75f) t.door = lerp(1.f, m_door(w), window(u, 0.75f, 1.f));
+  if (u >= 1.f) {
+    t.sag = t.bump = t.wobble = 0.f;
+    t.door = m_door(w);
+  }
+}
+
+void actFlapOpen(World& w, float u) {
+  w.tent.door = maxf(w.tent.door, easeInOut(u));
+  w.tent.wobble = u >= 1.f ? 0.f : floorf(0.5f + 1.2f * sinT(2.f * u) * (1.f - u));
+}
+
+// At the door, crouched and pitched forward, head out.
+void doPeekOut(World& w, float) {
+  Hiker& h = w.hiker;
+  const bool pack = h.pack_on;
+  const CarryId c = h.carry;
+  hikerInit(h, Vec2{w.spine.camp.door.x - 6.f, w.spine.camp.door.y}, 1);
+  hikerSetPose(h, POSE_CROUCH, 0.f);
+  h.pack_on = pack;
+  hikerCarry(h, c);
+  w.fx.on = true;
+  w.fx.path_on = false;
+  w.fx.lean = 0.5f;
+  w.fx.head = -0.35f;
+  scriptSetArm(w, 0, 1.f, 0.55f, 0.1f);
+  scriptSetArm(w, 1, 1.f, 0.35f, 0.1f);
+}
+
+// Looks up at the sky (it has eased), left, right.
+void actPeek(World& w, float u) {
+  const float up = env(u, 0.2f, 0.25f);
+  w.fx.head = -0.35f - 0.35f * up + 0.15f * sinT(window(u, 0.45f, 0.9f));
+  w.fx.lean = 0.5f;
+}
+
+void actCrawlOutS(World& w, float u) {
+  Hiker& h = w.hiker;
+  if (u <= 0.f) w.spine.u0 = h.feet.x;
+  const float k = 1.f - easeInOut(window(u, 0.75f, 1.f));
+  const float ph = window(u, 0.f, 0.75f) * 2.f;
+  h.feet.x = w.spine.u0 + 14.f * easeInOut(window(u, 0.f, 0.75f));
+  w.fx.lean = 0.5f * k;
+  w.fx.head = -0.35f * k;
+  w.fx.lift = 0.012f * k * sinT(ph) * sinT(ph);
+  scriptSetArm(w, 0, k, 0.55f + 0.18f * sinT(ph), 0.1f);
+  scriptSetArm(w, 1, k, 0.35f - 0.18f * sinT(ph), 0.1f);
+  if (u >= 1.f) scriptFxRest(w);
+}
+
+void actFlapBack(World& w, float u) {
+  const float d = m_door(w);
+  w.tent.door = lerp(maxf(d, 1.f), d, easeInOut(u));
+}
+
+const Step kShelter[] = {
+    still(0.8f),
+    doit(cueGo),
+    still(0.3f),
+    act(actSkyLook, 2.4f),
+    doit(cue1),
+    still(0.35f),
+    pose(POSE_STAND, 0.35f, 0.05f),
+    go(AT_DOOR, kRun, 12.f, 0.f),
+    face(LEFT),
+    act(actDive, 1.3f),
+    doit(cue2),
+    still(7.f),
+    act(actFlapOpen, 1.0f),
+    doit(doPeekOut),
+    act(actPeek, 3.2f),
+    act(actCrawlOutS, 2.2f),
+    pose(POSE_STAND, 0.8f, 0.3f),
+    doit(cue3),
+    act(actFlapBack, 0.8f),
+    TO_SIT,
+};
+
 #undef SIT_HERE
 #undef TO_SIT
 #undef FROM_REST
@@ -3449,8 +3622,8 @@ constexpr uint8_t kOut = 1 | 2 | 4, kTent = 8;
 // daylight majors and the stream vignettes; stargaze, firefly_jar,
 // shadow_theater and raccoon_pack stay the evening's. fishing_good is left out
 // of the morning (judgment call): it leaves a fish roasting over the fire for
-// the evening's dinner, and the morning has no dinner to eat it in. Midday has
-// it as the spec lists it (its implementer decides what lunch does with the fish).
+// the evening's dinner, and neither the morning nor midday has that dinner to
+// eat it in, so it is the evening's alone. Midday weights bathe up (majorsPlan).
 constexpr uint8_t kEve = 1u << SF_EVENING, kMorn = 1u << SF_MORNING, kMid = 1u << SF_MIDDAY;
 constexpr uint8_t kDay = kEve | kMorn | kMid;
 
@@ -3486,11 +3659,16 @@ const MajorDef kMajors[MJ_COUNT] = {
      {N(kFishSmall), N(kFishSmall)}},
     // fishing_log: plus its variant's seconds of empty scene (8..12).
     {"fishing_log", {56, 56}, 0.6f, kOut, kDay, beginFishLog, tickFishLog, {kFishLog, kFishLog}, {N(kFishLog), N(kFishLog)}},
-    {"fishing_good", {50, 50}, 0.6f, 2, (uint8_t)(kEve | kMid), beginFishGood, tickFishGood, {kFishGood, kFishGood},
+    {"fishing_good", {50, 50}, 0.6f, 2, kEve, beginFishGood, tickFishGood, {kFishGood, kFishGood},
      {N(kFishGood), N(kFishGood)}},
     {"bathe", {54, 54}, 0.6f, 2 | 4, kDay, beginBathe, tickBathe, {kBathe, kBathe}, {N(kBathe), N(kBathe)}},
+    // A storm from the data only (majorsPlan gates it); after fire or dinner,
+    // the morning's coffee (slot 1 only there, see majorsPlan). Heavy: a storm
+    // nearly always brings it.
+    {"rain_shelter", {44, 44}, 6.f, 2 | 4, kDay, beginShelter, tickShelter, {kShelter, kShelter},
+     {N(kShelter), N(kShelter)}},
 };
-static_assert(MJ_COUNT == 16, "a row per major");
+static_assert(MJ_COUNT == 17, "a row per major");
 
 // The script for a major and variant (stargaze: one table per star count).
 void scriptOf(int id, int var, const Step*& s, uint8_t& n) {
@@ -3629,6 +3807,11 @@ void majorsPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem, const Majo
   for (int i = 0; i < MJ_COUNT; ++i) base[i] = (kMajors[i].families >> slots.family) & 1u ? kMajors[i].weight : 0.f;
   if (!dusk) base[MJ_FIREFLY_JAR] = 0.f;
   if (!(in.night_mode || dn <= 0.3f)) base[MJ_STARGAZE] = 0.f;
+  // The storm's set piece: only for a storm the OUTSIDE data says is there
+  // (weather.h; a random storm leaves the plan as it would have been).
+  if (!weatherPlannedStorm(in)) base[MJ_RAIN_SHELTER] = 0.f;
+  // Midday (the heat of the day, a stream to hand): bathing comes up more often.
+  if (slots.family == SF_MIDDAY) base[MJ_BATHE] *= 2.5f;
   // The ring buffer: anything picked in the last MEMORY_RING picks is much
   // less likely, the more recent the pick the less likely (the square of its
   // age, at most half the weight of a fresh one).
@@ -3650,7 +3833,7 @@ void majorsPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem, const Majo
   const int want = 2 + rng.weighted(kHowMany, 3);
   uint8_t free_slots = slots.open;
   int n = 0;
-  uint16_t have = 0;
+  uint32_t have = 0;
   uint8_t pick[SPINE_MAJOR_MAX] = {}, slot[SPINE_MAJOR_MAX] = {}, var[SPINE_MAJOR_MAX] = {};
   for (int k = 0; k < SPINE_MAJOR_MAX; ++k) {
     float wt[MJ_COUNT];
@@ -3663,13 +3846,14 @@ void majorsPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem, const Majo
       // Fishing with a stick needs the wood pile, which only exists after the
       // firewood beat, so a rod-less fishing major cannot go in slot 1.
       if (mem.rod_lost && isFishing(i)) allowed &= (uint8_t)~1u;
+      if (i == MJ_RAIN_SHELTER && slots.family == SF_MORNING) allowed &= 2u;   // the morning: after coffee
       wt[i] = allowed ? base[i] : 0.f;
       for (int j = 0; j < n; ++j) {
         if (pick[j] == i) wt[i] = 0.f;
         if (isFishing(pick[j]) && isFishing(i)) wt[i] = 0.f;   // one rod: at most one fishing major a loop
       }
       // A set of majors one of the last loops played (so far, as a prefix) only if nothing else fits.
-      if (n > 0 && memoryRecentSet(mem, (uint16_t)(have | (1u << i)))) wt[i] *= 1e-4f;
+      if (n > 0 && i != MJ_RAIN_SHELTER && memoryRecentSet(mem, (uint32_t)(have | (1u << i)))) wt[i] *= 1e-4f;
     }
     float sum = 0.f;
     for (float x : wt) sum += x;
@@ -3683,6 +3867,7 @@ void majorsPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem, const Majo
     uint8_t allowed = kMajors[id].slots & free_slots;
     if (id == MJ_RACCOON_PACK && mem.shoe_taken) allowed &= kOut;
     if (id == MJ_RACCOON_PACK && sequel) allowed &= kTent;
+    if (id == MJ_RAIN_SHELTER && slots.family == SF_MORNING) allowed &= 2u;
     int cnt = 0;
     for (int b = 0; b < 4; ++b) cnt += (allowed >> b) & 1;
     if (cnt == 0) continue;
@@ -3703,7 +3888,7 @@ void majorsPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem, const Majo
     if (id == MJ_FISHING_LOG) v = (uint8_t)(8u + r_var % 5u);   // seconds the scene sits empty
     if (id == MJ_BATHE) v = (uint8_t)(2u + r_var % 2u);         // dead fish that float past
     pick[n] = (uint8_t)id;
-    have = (uint16_t)(have | (1u << id));
+    have = (uint32_t)(have | (1u << id));
     slot[n] = (uint8_t)s;
     var[n] = v;
     ++n;

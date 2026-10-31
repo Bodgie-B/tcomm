@@ -84,11 +84,12 @@ const HikerPose kPoses[POSE_COUNT] = {
     /* FISH_ST */{ 0.04f,  0.12f, 0.f,   0.f,   { 0.10f,-0.10f},{0.06f,0.06f}, { 0.75f, 0.35f},{0.90f,0.90f}},
     /* FISH_SIT*/{-0.05f,  0.15f, 0.f,   0.f,   { 2.25f, 2.10f},{2.87f,2.90f}, { 0.90f, 0.55f},{0.75f,1.00f}},
     /* CAST */   {-0.14f, -0.12f, 0.f,   0.f,   { 0.16f,-0.14f},{0.06f,0.08f}, { 2.70f, 2.40f},{0.35f,0.50f}},
+    /* HUG */    { 0.12f,  0.22f, 0.f,   0.f,   { 0.08f,-0.04f},{0.05f,0.05f}, { 0.22f, 0.14f},{2.45f,2.55f}},
 };
 
 const char* const kPoseNames[POSE_COUNT] = {
     "stand", "look_around", "crouch", "sit", "reach_up", "carry", "blow",
-    "yelp", "lie", "wave", "hands_on_hips", "scratch_head", "hold_mug", "read", "fish_stand", "fish_sit", "cast"};
+    "yelp", "lie", "wave", "hands_on_hips", "scratch_head", "hold_mug", "read", "fish_stand", "fish_sit", "cast", "hug"};
 
 BlendKind blendKindFor(PoseId p) {
   switch (p) {

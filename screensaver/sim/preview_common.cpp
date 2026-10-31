@@ -6,10 +6,16 @@
 #include <errno.h>
 #include <new>
 
+#include "scene/world.h"   // the loop's weather kind, for the logs (appWorld)
+
 using namespace ss;
 
-static const char* const kWeatherNames[] = {"clear", "rain", "snow", "wind", "heat", "fog", "chill"};
-static const int kWeatherCount = 7;
+// Inputs::weather_code by name (ss_app.h's codes; scene/weather.cpp maps them to kinds).
+static const char* const kWeatherNames[] = {"clear", "rain", "snow", "wind", "heat", "fog", "chill", "storm"};
+static const int kWeatherCount = 8;
+
+// The weather this loop plays (the data's, or the core's random pick).
+static const char* loopWeather(const App* app) { return weatherKindName(appWorld(app)->weather.kind); }
 
 static void* hostAlloc(size_t n) { return malloc(n); }
 static void hostFree(void* p) { free(p); }
@@ -98,6 +104,7 @@ static void logLoopStart(PreviewState& st) {
   appLoopPlan(st.app, plan, sizeof plan);
   printf("loop=%d seed=%llu start tick=%u plan=%s\n", st.loop_index,
          (unsigned long long)appLoopSeed(st.app), (unsigned)st.tick, plan);
+  printf("loop=%d weather=%s\n", st.loop_index, loopWeather(st.app));
   st.last_beat[0] = 0;   // the new loop's first beat is logged even if the name repeats
   st.minors_seen = 0;    // so is its first minor
 }
@@ -132,6 +139,7 @@ int previewRunLoops(PreviewState& st, int n, FILE* out) {
     char plan[320], mem[320];
     appLoopPlan(st.app, plan, sizeof plan);
     const unsigned long long seed = (unsigned long long)appLoopSeed(st.app);
+    const char* wx = loopWeather(st.app);
     // Up to the loop's last tick: the memory as this loop leaves it (the
     // rollover tick plans the next loop, which pushes its majors into the ring).
     const uint32_t len = appLoopTicks(st.app);
@@ -143,8 +151,8 @@ int previewRunLoops(PreviewState& st, int n, FILE* out) {
       ++st.tick;
       if (appTick(st.app)) break;
     }
-    fprintf(out, "loop=%d seed=%llu length=%.0fs plan=%s memory=%s\n", st.loop_index, seed,
-            (double)ticks / SS_TICK_HZ, plan, mem);
+    fprintf(out, "loop=%d seed=%llu length=%.0fs plan=%s memory=%s weather=%s\n", st.loop_index, seed,
+            (double)ticks / SS_TICK_HZ, plan, mem, wx);
     ++st.loop_index;
     ++done;
   }
@@ -237,13 +245,14 @@ void previewUsage(const char* prog, FILE* to) {
           "usage: %s [options]\n"
           "  --seed N            first loop seed (default 1)\n"
           "  --mood F            mood 0..6 (0 night, 1 dawn, 2 morning, 3 day, 4 golden, 5 dusk; default 3)\n"
-          "  --weather NAME      clear rain snow wind heat fog chill (default: not given, core picks)\n"
+          "  --weather NAME      clear rain snow wind heat fog chill storm: sets weather_code and\n"
+          "                      have_outside (default: not given, the core picks at random per loop)\n"
           "  --overcast F        0..1\n"
           "  --fog F             0..1\n"
           "  --night             night mode on, night_dim = 1\n"
           "  --lookout           inside the sunset window (Lookout spine)\n"
           "  --spine NAME        evening morning midday lookout: play that spine family whatever the\n"
-          "                      inputs say (midday and lookout are not built yet: they play the evening)\n"
+          "                      inputs say (the lookout is not built yet: it plays the evening)\n"
           "  --status N          other floor status 0..5\n"
           "  --dog N             0 none, 1 Lucy, 2 Copper\n"
           "  --frames N          frames to write (default 100)\n"
@@ -327,7 +336,7 @@ void previewParseArgs(int argc, char** argv, PreviewOptions& o) {
       for (int k = 0; k < 4; k++)
         if (!strcmp(name, kFam[k])) f = k;
       if (f < 0) bad(prog, "unknown spine family", name);
-      if (f >= 2) fprintf(stderr, "%s: --spine %s is not built yet: the loop plays the evening\n", prog, name);
+      if (f >= 3) fprintf(stderr, "%s: --spine %s is not built yet: the loop plays the evening\n", prog, name);
       o.spine = 1 + f;
     } else if (!strcmp(a, "--status")) {
       need(1);

@@ -44,12 +44,20 @@ struct Tent {
   // from inside). The opening behind it is drawn dark; the flap folds back
   // toward the front corner, inside the tent's own outline.
   float door;
+  // Weather (weather.cpp): `sway` px of apex lean the wind adds to `wobble`
+  // (whole px); `snow` 0..1 snow lying on the ridge and the upper third of
+  // the near face (a pale slot, never white). Both 0 in clear weather.
+  float sway;
+  float snow;
 };
 
 void tentInit(Tent& t, Vec2 pos);
 Rect tentBounds(const Tent& t);
 void tentDraw(const Tent& t, Surface& s, const Rect& clip, const Palette& pal);
 bool tentSame(const Tent& a, const Tent& b);
+// The tops of the tent's poles in frame space (k 0 the back apex, 1 the
+// front), where the rain drips off the ridge.
+Vec2 tentRidgeEnd(const Tent& t, int k);
 
 // ---- pack on the ground ------------------------------------------------------
 

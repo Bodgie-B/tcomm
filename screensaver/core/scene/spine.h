@@ -22,7 +22,8 @@
 //
 // That is the evening family. A loop plays one family (SpineFamily below),
 // picked from the inputs at loop start; the functions here dispatch on
-// LoopPlan::family (spine_family.h; the morning is spine_morning.cpp).
+// LoopPlan::family (spine_family.h; the morning is spine_morning.cpp, the
+// midday spine_midday.cpp).
 #pragma once
 
 #include "../anim/rng.h"
@@ -38,14 +39,16 @@ struct Memory;
 // Which spine a loop plays (SPINES_WEATHER_LOOKOUT_SPEC.md section 1), picked
 // at loop start from the inputs alone (spineFamilyFor: no rng). Evening is
 // the stage 4 to 6 spine (arrival .. close); morning wakes in fog and breaks
-// camp (spine_morning.cpp). Midday and the Lookout are not built yet: they
-// play the evening until they are.
+// camp (spine_morning.cpp); midday comes back from a day hike, lunches,
+// wades, naps (spine_midday.cpp: plays when forced; the mood does not pick it
+// yet). The Lookout is not built yet: it plays the evening until it is.
 enum SpineFamily : uint8_t { SF_EVENING = 0, SF_MORNING, SF_MIDDAY, SF_LOOKOUT, SF_COUNT };
 const char* spineFamilyName(int family);
 // The family this loop plays: in.spine_force when set, else the Lookout in
 // its window, the evening at night, the morning at mood [0.5, 2.5), midday at
-// [2.5, 3.5), the evening otherwise; then a family not built yet falls back
-// to the evening.
+// [2.5, 3.5), the evening otherwise; then the Lookout (not built yet) falls
+// back to the evening, and so, for now, does midday picked by the mood (not
+// when forced: spine.cpp says why).
 uint8_t spineFamilyFor(const Inputs& in);
 
 enum SpineBeatId : uint8_t {
@@ -90,8 +93,8 @@ struct LoopPlan {
   uint8_t cairn_start;
   bool patch;
   // The family (SpineFamily). The fields above are the evening's (the morning
-  // reuses the pause, filler, major and cairn fields, with its own beat ids in
-  // filler_after, major_after and pause_s). The new families' variant per
+  // and the midday reuse the pause, filler, major, cairn and skip fields, with
+  // their own beat ids in filler_after, major_after and pause_s). The new families' variant per
   // beat, in the family's beat order, and how many beats it has.
   uint8_t family;
   uint8_t fvar[8];
@@ -186,6 +189,12 @@ struct SpineState {
   int8_t fcrit;
   uint8_t fstage;
   float ft;
+  // The midday's (spine_midday.cpp): a bit it flies (the bee, the fly, the
+  // leaf; -1 none), what his hand holds that World does not place (the hat,
+  // the boot, the map), and a 0..1 its tick reads (the map in one hand).
+  int8_t fbit;
+  uint8_t fhold;
+  float fk;
 };
 
 // Loop start: pick every variant, pause, filler and major from the loop RNG,
@@ -208,7 +217,8 @@ void spineCritterScenes(World& w);
 // Ticks the timeline for `p` lasts (the loop's length).
 uint32_t spineLoopTicks(const LoopPlan& p);
 // "family=evening arrival=1 setup=0 ... fillers=cairn,read majors=echo,fish_leap"
-// (none when empty); the morning lists its own beats after family=morning.
+// (none when empty); the morning and the midday list their own beats after
+// family=morning / family=midday.
 int spineFormatPlan(const LoopPlan& p, char* buf, size_t n);
 
 // Loop length policy: the plan lands every loop in this range (seconds).

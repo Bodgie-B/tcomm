@@ -53,4 +53,24 @@ int morningVariantCount(int beat);
 // Every tick (from spineCritterScenes): the fog lift and the morning's critters.
 void morningTick(World& w);
 
+// ---- midday (spine_midday.cpp) --------------------------------------------------------
+
+enum MiddayBeatId : uint8_t {
+  MD_RETURN = 0, MD_LUNCH, MD_WADE, MD_NAP, MD_MAP, MD_AFTERNOON, MD_COUNT
+};
+
+void middayPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem);
+// After the plan and memoryBeginLoop: the camp as the morning left it
+// (pitched, fire out, bag hung, pack by the tent, the wood pile, the cairn),
+// popped in by the build; him away on a day hike.
+void middayLayout(World& w);
+void middayBuildTimeline(Timeline& tl, const LoopPlan& p);
+uint32_t middayLoopTicks(const LoopPlan& p);
+int middayFormatPlan(const LoopPlan& p, char* buf, size_t n);
+const char* middayBeatName(int beat);
+int middayVariantCount(int beat);
+// Every tick (from spineCritterScenes): the midday's critter, bit and glyph,
+// and what his hand holds that World does not place.
+void middayTick(World& w);
+
 }  // namespace ss

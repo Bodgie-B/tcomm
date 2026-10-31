@@ -43,7 +43,7 @@ struct Memory {
   uint8_t ring[MEMORY_RING];   // majors picked, oldest first
   uint8_t ring_n;
   uint8_t last_n;              // how many of the newest ring entries the last loop picked
-  uint16_t sets[MEMORY_SETS];  // the last loops' majors as bit sets (bit = MajorId), newest last
+  uint32_t sets[MEMORY_SETS];  // the last loops' majors as bit sets (bit = MajorId), newest last
   uint8_t sets_n;
   uint8_t mouse_tent_runs;     // this loop: times the mouse_tent minor ran (memoryNoteMouseTent)
   uint16_t brave;        // bit k: critter kind k is bold (else shy) this loop
@@ -71,8 +71,8 @@ void memoryNoteMouseTent(Memory& m);
 void memoryPushMajor(Memory& m, uint8_t id);
 // A loop's whole set of majors (bit = MajorId), and whether a set was played
 // in the last MEMORY_SETS loops.
-void memoryPushSet(Memory& m, uint16_t set);
-bool memoryRecentSet(const Memory& m, uint16_t set);
+void memoryPushSet(Memory& m, uint32_t set);
+bool memoryRecentSet(const Memory& m, uint32_t set);
 int memoryMajorAge(const Memory& m, uint8_t id);
 
 // This loop's personality for a kind, laid over a critter just spawned: bold

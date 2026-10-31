@@ -39,7 +39,8 @@ constexpr float kBirdHalfSpan = 5.5f;       // V is ~11 px wide
 
 void updateSway(World& w) {
   Ambient& a = w.amb;
-  const float gust = 0.75f + 0.25f * sinT(a.wind_t * 0.05f);   // slow swell, 20 s
+  // Slow swell, 20 s; the weather's wind scales it (exactly 1 when calm).
+  const float gust = (0.75f + 0.25f * sinT(a.wind_t * 0.05f)) * weatherSwayMul(w);
   for (int i = 0; i < a.n_tufts; ++i) {
     const float x = fl(w.land.tufts[a.tuft[i]].x);
     a.sway[i] = gust * (-0.8f + 2.6f * sumSines(a.wind_t * kGustTurnsPerSec + x * kGustPerPx, 3));
@@ -109,7 +110,7 @@ bool smokeGeom(const World& w, int i, Vec2& c, float& r) {
   float age = w.amb.wind_t / kSmokeLife + fl(i) / fl(AMB_SMOKE_MAX);
   age -= floorf(age);
   // Grows fast, then shrinks away as it rises: fading without alpha.
-  r = 13.f * minf(1.f, age * 3.f) * (1.f - age) * f.intensity * w.amb.smoke_k;
+  r = 13.f * minf(1.f, age * 3.f) * (1.f - age) * f.intensity * w.amb.smoke_k * weatherSmokeMul(w);   // more in the rain
   if (r < 0.6f) return false;
   const float drift = -40.f * age * sqrtf(age);
   const float pulled = (w.amb.smoke_to_x - f.pos.x) * minf(1.f, age * 1.8f);
@@ -238,7 +239,9 @@ void ambientStep(World& w, Rng& rng) {
   // Kindling answers each blow within a third of a second and fades in one.
   FirePit& f = w.fire;
   const bool kindling = f.state == FIRE_KINDLING;
-  const float target = f.state == FIRE_LIT ? f.fuel : (f.state == FIRE_EMBERS ? 0.25f : (kindling ? f.kindle : 0.f));
+  float target = f.state == FIRE_LIT ? f.fuel : (f.state == FIRE_EMBERS ? 0.25f : (kindling ? f.kindle : 0.f));
+  const float cap = weatherFireCap(w);   // the rain keeps a lit fire low (1: no cap)
+  if (f.state == FIRE_LIT && cap < 1.f && target > cap) target = cap;
   const float rise = kindling ? 0.35f : 1.8f, fall = kindling ? 1.0f : 4.f;
   if (f.intensity < target) f.intensity = minf(target, f.intensity + dt / rise);
   else if (f.intensity > target) f.intensity = maxf(target, f.intensity - dt / fall);

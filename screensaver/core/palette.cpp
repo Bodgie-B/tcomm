@@ -237,7 +237,9 @@ Pixel depthRamp(Pixel base, Pixel horizon, float depth) {
   return mixRGB(base, horizon, clamp01(depth));
 }
 
-void computePalette(float mood, const WeatherTint& w, Palette& out) {
+void computePalette(float mood, const WeatherTint& w, Palette& out) { computePalette(mood, w, 0.f, out); }
+
+void computePalette(float mood, const WeatherTint& w, float flash, Palette& out) {
   // Wrap mood into [0, SS_MOOD_COUNT).
   const float n = (float)SS_MOOD_COUNT;
   float m = fmodf(mood, n);
@@ -265,6 +267,7 @@ void computePalette(float mood, const WeatherTint& w, Palette& out) {
                                    RIDGE_FAR, RIDGE_MID, RIDGE_NEAR, TREES_FAR};
     for (Slot s : kPulled) out.c[s] = mixRGB(out.c[s], gray, k);
     out.c[SUN] = mixRGB(out.c[SUN], out.c[SKY2], oc);
+    out.c[STAR] = mixRGB(out.c[STAR], out.c[SKY1], 0.85f * oc);   // the cloud deck hides the stars too
   }
 
   // Fog: far layers lift toward the (post-overcast) horizon band.
@@ -275,6 +278,20 @@ void computePalette(float mood, const WeatherTint& w, Palette& out) {
     out.c[RIDGE_MID]  = mixRGB(out.c[RIDGE_MID],  h, fg * 0.5f);
     out.c[TREES_FAR]  = mixRGB(out.c[TREES_FAR],  h, fg * 0.4f);
     out.c[RIDGE_NEAR] = mixRGB(out.c[RIDGE_NEAR], h, fg * 0.25f);
+  }
+
+  // Lightning: the sky, the clouds, the ridges and the far trees toward a
+  // light blue-grey (the water and the ground a little), never white; weaker
+  // under the night dim, which then still scales and caps everything below.
+  const float fl = clamp01(flash);
+  if (fl > 0.f) {
+    const Pixel bg = rgb565_hex(0xD6DEEA);   // a light blue-grey, never white
+    const float k = fl * lerp(0.72f, 0.5f, clamp01(w.night_dim));
+    static const Slot kLit[] = {SKY0, SKY1, SKY2, SKY3, SKY4, SUN, STAR, CLOUD_LIT, CLOUD_SHADE, RIDGE_FAR, RIDGE_MID, TREES_FAR};
+    for (Slot s : kLit) out.c[s] = mixRGB(out.c[s], bg, k);
+    out.c[RIDGE_NEAR] = mixRGB(out.c[RIDGE_NEAR], bg, 0.6f * k);
+    out.c[WATER] = mixRGB(out.c[WATER], bg, 0.5f * k);
+    out.c[GROUND] = mixRGB(out.c[GROUND], bg, 0.15f * k);
   }
 
   // Night dim: scale everything, but keep small light sources nearly intact,

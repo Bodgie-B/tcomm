@@ -6,6 +6,7 @@
 // everything dynamic; App owns it by value with the timeline, palette and
 // renderer, and delegates drawing to it.
 #include <math.h>
+#include <string.h>
 #include <new>
 
 #include "../render/renderer.h"
@@ -28,6 +29,7 @@ struct App {
   Palette pal;
   float pal_mood;
   WeatherTint pal_weather;
+  float pal_flash;        // the lightning's flash step it was computed with (weather.h)
   bool pal_night;
 
   uint32_t events_seen;   // drained events; ignored until later stages
@@ -60,24 +62,35 @@ float moodDistance(float a, float b) {
 }
 
 // The weather the palette is computed from: the inputs', plus the fog the
-// scene adds (the morning opens in fog, World::fog_extra). Untouched when it
-// adds none, so a loop without it is bit for bit what it was.
-WeatherTint sceneWeather(const App* a) {
+// scene adds (the morning opens in fog, World::fog_extra), plus the loop's
+// weather (weather.h: overcast, fog, the lightning's flash, in steps).
+// Untouched when they add none, so a clear loop is bit for bit what it was.
+WeatherTint sceneWeather(const App* a, float* flash) {
   WeatherTint w = a->in.weather;
   if (a->world.fog_extra > 0.f) {
     const float f = w.fog + a->world.fog_extra;
     w.fog = f > 1.f ? 1.f : f;
   }
+  *flash = weatherTint(a->world, w);
   return w;
 }
 
-void computeAppPalette(App* a) {
-  WeatherTint w = sceneWeather(a);
+// `force`: the loop's geometry changed (loop start), so the cache is rebuilt
+// even when the palette came out the same; otherwise a palette byte for byte
+// the one in use costs nothing (an input step that lands on the same 565
+// colours).
+void computeAppPalette(App* a, bool force) {
+  float flash = 0.f;
+  WeatherTint w = sceneWeather(a, &flash);
   a->pal_weather = w;
+  a->pal_flash = flash;
   if (a->in.night_mode && w.night_dim < 1.f) w.night_dim = 1.f;   // night mode alone must dim
-  computePalette(a->in.mood, w, a->pal);
+  Palette p;
+  computePalette(a->in.mood, w, flash, p);
   a->pal_mood = a->in.mood;
   a->pal_night = a->in.night_mode;
+  if (!force && memcmp(&p, &a->pal, sizeof p) == 0) return;
+  a->pal = p;
   a->renderer.setPalette(a->pal);   // forces a cache rebuild and marks every strip
   if (a->pal_rebuilds < 0xFFFF) ++a->pal_rebuilds;
 }
@@ -91,6 +104,8 @@ void beginLoop(App* a) {
   spinePlan(a->world.plan, a->rng, a->in, a->world.memory);
   memoryBeginLoop(a->world, a->rng);
   spineBeginLoop(a->world);
+  // The weather: its own rng stream from the loop seed (the loop rng never sees it).
+  weatherPlan(a->world, a->loop_seed, a->in, spineLoopTicks(a->world.plan));
   a->pal_rebuilds = 0;
   a->timeline.reset();
   spineBuildTimeline(a->timeline, a->world.plan);
@@ -112,7 +127,7 @@ App* appStart(void* storage, const HostAlloc& alloc, uint64_t seed, const Inputs
   a->draw.draw_static = drawStatic;
   a->draw.draw_dynamic = drawDynamic;
   beginLoop(a);
-  computeAppPalette(a);
+  computeAppPalette(a, true);
   return a;
 }
 
@@ -130,13 +145,15 @@ bool appTick(App* a) {
   a->events_seen += (uint32_t)a->timeline.takeEvents(ev, SS_MAX_PENDING_EVENTS);
 
   // Palette follows the inputs only when they moved enough to matter.
-  const WeatherTint w = sceneWeather(a);
+  float flash = 0.f;
+  const WeatherTint w = sceneWeather(a, &flash);
   if (moodDistance(a->in.mood, a->pal_mood) > kMoodEps ||
       fabsf(w.overcast - a->pal_weather.overcast) > kWeatherEps ||
       fabsf(w.fog - a->pal_weather.fog) > kWeatherEps ||
       fabsf(w.night_dim - a->pal_weather.night_dim) > kWeatherEps ||
+      flash != a->pal_flash ||   // the flash moves in a few fixed steps: every step counts
       a->in.night_mode != a->pal_night) {
-    computeAppPalette(a);
+    computeAppPalette(a, false);
   }
 
   // Beats drive the world first, then the world steps its ambient layer and
@@ -147,7 +164,7 @@ bool appTick(App* a) {
     memoryEndLoop(a->world);
     a->loop_seed = (uint64_t)a->rng.next();
     beginLoop(a);
-    computeAppPalette(a);   // rebuilds the cache for the new geometry
+    computeAppPalette(a, true);   // rebuilds the cache for the new geometry
     return true;
   }
   minorsSync(a->world, a->timeline, a->in);

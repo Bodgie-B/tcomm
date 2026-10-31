@@ -257,6 +257,16 @@ link). Push after each chunk.
   `family=evening` prefix); midday and the Lookout fall back to the evening
   until built. Notes, numbers and judgment calls:
   `reviews/spines/notes.md`. Awaiting the Opus review (section 7).
-- Midday spine: not started.
-- Weather: not started.
+- Midday spine: built in the preview, not committed (2026-10-31).
+  `spine_midday.cpp`, `tests/test_midday.cpp`; plays when forced (`--spine
+  midday`); the mood's pick still falls back to the evening until
+  `test_scene` / `test_spines` move off mood 3 (one line in `spineFamilyFor`).
+  The evening's and the morning's `--loops` lines and frames unchanged. Notes,
+  numbers, judgment calls and asks: `reviews/spines/notes.md` (Midday spine).
+  Awaiting the Opus review.
+- Weather: built in the preview, not committed (2026-10-31). `weather.h/.cpp`,
+  `World::weather`, the `flash` palette argument, `POSE_HUG`, `MJ_RAIN_SHELTER`,
+  `tests/test_weather.cpp`; the evening's `--loops` lines unchanged (a
+  `weather=` column appended by the preview). Notes, numbers, judgment calls
+  and asks: `reviews/spines/weather_notes.md`. Awaiting the Opus review.
 - Lookout: not started.

@@ -66,6 +66,12 @@ const Palette& moodKey(Mood m);
 // Compute the palette for a fractional mood position and weather.
 // `mood` in [0, SS_MOOD_COUNT); values wrap. Deterministic and allocation-free.
 void computePalette(float mood, const WeatherTint& w, Palette& out);
+// The same with lightning, `flash` 0..1 (scene/weather.h, a storm): the sky,
+// the clouds, the ridges and the far trees pulled toward a light blue-grey,
+// before the night dim, so the night caps still hold at flash 1. The scene
+// sets it (app.cpp computeAppPalette, a few steps per strike); flash 0 is
+// exactly the 3-argument form.
+void computePalette(float mood, const WeatherTint& w, float flash, Palette& out);
 
 // Atmospheric perspective helper: move `base` toward `horizon` by `depth` 0..1.
 // Far layers use a higher depth. Used for extra ridge layers and fog.

@@ -44,7 +44,7 @@ void memoryPushMajor(Memory& m, uint8_t id) {
   m.ring[MEMORY_RING - 1] = id;
 }
 
-void memoryPushSet(Memory& m, uint16_t set) {
+void memoryPushSet(Memory& m, uint32_t set) {
   if (m.sets_n < MEMORY_SETS) {
     m.sets[m.sets_n++] = set;
     return;
@@ -53,7 +53,7 @@ void memoryPushSet(Memory& m, uint16_t set) {
   m.sets[MEMORY_SETS - 1] = set;
 }
 
-bool memoryRecentSet(const Memory& m, uint16_t set) {
+bool memoryRecentSet(const Memory& m, uint32_t set) {
   for (int i = 0; i < m.sets_n; ++i)
     if (m.sets[i] == set) return true;
   return false;

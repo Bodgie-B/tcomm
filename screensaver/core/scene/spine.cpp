@@ -2621,8 +2621,8 @@ uint8_t spineFamilyFor(const Inputs& in) {
     if (m >= 0.5f && m < 2.5f) f = SF_MORNING;
     else if (m >= 2.5f && m < 3.5f) f = SF_MIDDAY;
   }
-  // Not built yet: they play the evening until they are.
-  if (f == SF_MIDDAY || f == SF_LOOKOUT) f = SF_EVENING;
+  // Not built yet: it plays the evening until it is.
+  if (f == SF_LOOKOUT) f = SF_EVENING;
   return f;
 }
 
@@ -2753,12 +2753,12 @@ void spineFitLength(LoopPlan& p, Memory& mem, const FitSpec& f) {
   while (total() > kAimMax && p.n_majors > 2) {
     // Drop the last major, or an earlier one if that leaves a set of majors
     // one of the last loops played (memory) and another choice does not.
-    uint16_t all = 0;
-    for (int i = 0; i < p.n_majors; ++i) all = (uint16_t)(all | (1u << p.major[i]));
+    uint32_t all = 0;
+    for (int i = 0; i < p.n_majors; ++i) all = (uint32_t)(all | (1u << p.major[i]));
     // fishing_good stays (dinner is planned round it).
     int drop = p.major[p.n_majors - 1] == MJ_FISHING_GOOD ? p.n_majors - 2 : p.n_majors - 1;
     for (int i = p.n_majors - 1; i >= 0; --i)
-      if (p.major[i] != MJ_FISHING_GOOD && !memoryRecentSet(mem, (uint16_t)(all & ~(1u << p.major[i])))) {
+      if (p.major[i] != MJ_FISHING_GOOD && !memoryRecentSet(mem, (uint32_t)(all & ~(1u << p.major[i])))) {
         drop = i;
         break;
       }
@@ -2781,10 +2781,10 @@ void spineFitLength(LoopPlan& p, Memory& mem, const FitSpec& f) {
   ns = pauseSlots(p, f.beat_pauses, slot);
   for (int guard = 0, k = 0; guard < 400 && total() < kAimMin; ++guard, k = (k + 1) % ns)
     if (*slot[k] < kPauseMax) ++*slot[k];
-  uint16_t set = 0;
+  uint32_t set = 0;
   for (int i = 0; i < p.n_majors; ++i) {
     memoryPushMajor(mem, p.major[i]);
-    set = (uint16_t)(set | (1u << p.major[i]));
+    set = (uint32_t)(set | (1u << p.major[i]));
   }
   memoryPushSet(mem, set);
   mem.last_n = p.n_majors;
@@ -2793,6 +2793,8 @@ void spineFitLength(LoopPlan& p, Memory& mem, const FitSpec& f) {
 void spinePlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
   if (p.family == SF_MORNING) {
     morningPlan(p, rng, in, mem);
+  } else if (p.family == SF_MIDDAY) {
+    middayPlan(p, rng, in, mem);
   } else {
     p.family = SF_EVENING;
     eveningPlan(p, rng, in, mem);
@@ -2803,6 +2805,7 @@ void spinePlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
 
 void spineBeginLoop(World& w) {
   if (w.plan.family == SF_MORNING) morningLayout(w);
+  if (w.plan.family == SF_MIDDAY) middayLayout(w);
 }
 
 void spineLayout(World& w) {
@@ -2892,6 +2895,7 @@ void spineCritterScenes(World& w) {
   chipTick(w);
   thiefTick(w);
   if (w.plan.family == SF_MORNING) morningTick(w);
+  if (w.plan.family == SF_MIDDAY) middayTick(w);
   // The bag's damped swing once something hit it (about 1 swing a second,
   // settling over a few seconds, like the foodbag beat's settle).
   SpineState& sp = w.spine;
@@ -2912,6 +2916,7 @@ void spineCritterScenes(World& w) {
 
 void spineBuildTimeline(Timeline& tl, const LoopPlan& p) {
   if (p.family == SF_MORNING) return morningBuildTimeline(tl, p);
+  if (p.family == SF_MIDDAY) return middayBuildTimeline(tl, p);
   tl.add(kBuildBeat);
   for (int b = 0; b < SB_COUNT; ++b) {
     tl.add(Beat{kBeatNames[b], (float)beatSeconds(p, b), kBegin[b], kUpdate[b], kEnd[b]});
@@ -2933,6 +2938,7 @@ void spineBuildTimeline(Timeline& tl, const LoopPlan& p) {
 
 uint32_t spineLoopTicks(const LoopPlan& p) {
   if (p.family == SF_MORNING) return morningLoopTicks(p);
+  if (p.family == SF_MIDDAY) return middayLoopTicks(p);
   // Every beat is whole seconds except the build, which is whole ticks.
   const uint32_t build = (uint32_t)ceilf(SS_BUILD_SECONDS * (float)SS_TICK_HZ - 1e-3f);
   const int rest = busySeconds(p) - (int)(SS_BUILD_SECONDS + 0.5f) + pauseSeconds(p);
@@ -2942,6 +2948,7 @@ uint32_t spineLoopTicks(const LoopPlan& p) {
 int spineFormatPlan(const LoopPlan& p, char* buf, size_t n) {
   if (!buf || n == 0) return 0;
   if (p.family == SF_MORNING) return morningFormatPlan(p, buf, n);
+  if (p.family == SF_MIDDAY) return middayFormatPlan(p, buf, n);
   int k = snprintf(buf, n, "family=evening arrival=%d setup=%d firewood=%d fire=%d dinner=%d foodbag=%d bear=%d close=%d fillers=",
                    p.arrival, p.setup, p.firewood, p.fire, p.dinner, p.foodbag, p.bear, p.close);
   if (k < 0 || (size_t)k >= n) return k;

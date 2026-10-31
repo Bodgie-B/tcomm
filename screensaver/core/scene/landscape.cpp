@@ -496,6 +496,19 @@ void landscapeDrawFgPine(const Landscape& ls, int k, Surface& s, const Rect& cli
   else drawPine(s, ls.fg[0], pal[FOLIAGE_DARK], pal[TRUNK], 7.f, 0.28f, clip);
 }
 
+Rect landscapeCampPineBounds(const Landscape& ls) {
+  const LsPine& p = ls.camp;
+  const int hw = (int)ceilf(0.5f * fl(p.width_pct) * 0.01f * fl(p.h)) + 4;
+  const int left = hw > LS_BRANCH_LEN + 4 ? hw : LS_BRANCH_LEN + 4;
+  return Rect{p.x - left, p.base_y - p.h - 2, p.x + hw, p.base_y + 6};
+}
+
+void landscapeDrawNearPines(const Landscape& ls, Surface& s, const Rect& clip, const Palette& pal) {
+  if (!landscapeCampPineBounds(ls).clipped(clip).empty()) drawCampPine(s, ls, pal, clip, 1.f);
+  for (int k = 1; k >= 0; --k)   // the taller one first, as the cache has them
+    if (!landscapeFgPineBounds(ls, k).clipped(clip).empty()) landscapeDrawFgPine(ls, k, s, clip, pal);
+}
+
 LsStreamPt landscapeStreamAt(const Landscape& ls, float s) {
   const float last = fl(LS_STREAM_PTS - 1);
   s = s < 0.f ? 0.f : (s > last ? last : s);

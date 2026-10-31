@@ -33,6 +33,8 @@ enum PoseId : uint8_t {
   POSE_FISH_SIT,     // sitting on the bank, rod out
   POSE_CAST,         // the rod back over the shoulder (an action pose: it dips first); blend back
                      // to POSE_FISH_STAND quickly to whip it forward
+  POSE_HUG,          // cold: arms crossed tight over the chest, hunched, chin tucked (the chill
+                     // weather lays its upper body over a sit or a stand: weather.cpp)
   POSE_COUNT
 };
 

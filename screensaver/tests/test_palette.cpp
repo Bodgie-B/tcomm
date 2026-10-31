@@ -5,6 +5,7 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
 #include <stdlib.h>
 
 using namespace ss;
@@ -298,6 +299,54 @@ static void writeSwatches(const char* path) {
   printf("wrote %s (%dx%d)\n", path, W, H);
 }
 
+
+// Lightning (scene/weather.h): at flash 1 under night_dim 1 (and night mode's
+// full dim) every slot still holds the night caps, at every mood and at the
+// overcast a storm brings; the flash lifts the sky (it shows) but never to
+// white; flash 0 is exactly the plain palette.
+static void testFlash() {
+  int bad = 0;
+  float lift_min = 1.f;
+  for (int i = 0; i <= 24; ++i) {
+    const float m = (float)i * 0.25f;
+    for (int oc = 0; oc < 2; ++oc) {
+      const WeatherTint w{oc ? 0.8f : 0.f, 0.f, 1.f};
+      Palette p, q, z;
+      computePalette(m, w, 1.f, p);
+      computePalette(m, w, 0.f, q);
+      computePalette(m, w, z);
+      CHECK(memcmp(&q, &z, sizeof q) == 0, "mood %.2f: flash 0 differs from the plain palette", (double)m);
+      for (int s = 0; s < SLOT_COUNT; ++s) {
+        const float cap = isNightHighlight(s) ? NIGHT_HIGHLIGHT_MAX : NIGHT_LUM_MAX;
+        if (lum(p.c[s]) > cap + 1e-4f) {
+          if (bad < 4) printf("flash 1, night: mood %.2f slot %d lum %.3f > %.2f\n", (double)m, s, (double)lum(p.c[s]), (double)cap);
+          ++bad;
+        }
+        CHECK(p.c[s] != 0xFFFF, "mood %.2f slot %d pure white at flash 1", (double)m, s);
+      }
+      const float lift = lum(p[SKY2]) - lum(q[SKY2]);
+      if ((m <= 1.f || m >= 5.f) && lift < lift_min) lift_min = lift;   // the night's own moods (a bright sky sits at the cap)
+    }
+  }
+  CHECK(bad == 0, "%d slots over the night caps at flash 1", bad);
+  // A palette shift, not a flash (brief section 11): small, but it must be there.
+  CHECK(lift_min > 0.03f, "the night flash barely shows (SKY2 +%.3f)", (double)lift_min);
+  {
+    Palette n0, n1;
+    computePalette(0.f, WeatherTint{0.8f, 0.f, 1.f}, 0.f, n0);
+    computePalette(0.f, WeatherTint{0.8f, 0.f, 1.f}, 1.f, n1);
+    printf("night storm (mood 0, overcast 0.8): SKY2 lum %.3f -> %.3f at flash 1, RIDGE_FAR %.3f -> %.3f\n",
+           (double)lum(n0[SKY2]), (double)lum(n1[SKY2]), (double)lum(n0[RIDGE_FAR]), (double)lum(n1[RIDGE_FAR]));
+  }
+  // By day the flash lifts the sky further, and the near silhouettes stay put.
+  Palette d, f;
+  computePalette(3.f, WeatherTint{0.8f, 0.f, 0.f}, 0.f, d);
+  computePalette(3.f, WeatherTint{0.8f, 0.f, 0.f}, 1.f, f);
+  CHECK(lum(f[SKY2]) > lum(d[SKY2]) + 0.05f && f[ACTOR] == d[ACTOR] && f[FOLIAGE_DARK] == d[FOLIAGE_DARK],
+        "day flash: sky %.3f -> %.3f", (double)lum(d[SKY2]), (double)lum(f[SKY2]));
+  printf("flash 1 under the night dim: caps hold at 25 moods x 2 overcasts; night SKY2 lifts at least %.3f\n", (double)lift_min);
+}
+
 int main() {
   testAtmosphericRule();
   testNightRule();
@@ -305,6 +354,7 @@ int main() {
   testIntegerMoodsEqualKeys();
   testInterpolation();
   testWeather();
+  testFlash();
   testHelpers();
   writeSwatches("palette_swatches.ppm");
   if (g_fail) {

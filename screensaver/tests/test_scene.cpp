@@ -69,6 +69,9 @@ static Inputs makeInputs(float mood, bool night = false) {
   in.weather.night_dim = night ? 1.0f : 0.0f;
   in.night_mode = night;
   in.have_outside = true;
+  // This suite checks the evening spine at mood 3, which the mood would now
+  // hand to the midday (spine_midday.cpp): force the evening.
+  in.spine_force = (uint8_t)(1 + SF_EVENING);
   return in;
 }
 

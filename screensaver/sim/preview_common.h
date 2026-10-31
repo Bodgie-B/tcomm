@@ -69,13 +69,14 @@ int previewTicksForFrame(int fps, int frame);
 int previewTicksForFrameOpts(const PreviewOptions& o, int frame);
 
 // --loops N: simulate N whole loops with no rendering and print, per loop,
-//   "loop=L seed=S length=Ts plan=P memory=M"
+//   "loop=L seed=S length=Ts plan=P memory=M weather=W"
 // (P is appLoopPlan, M is appMemory as the loop leaves it for the next).
 // Returns the number of loops run.
 int previewRunLoops(PreviewState& st, int n, FILE* out);
 
 // Log to stdout from now on, in previewTicks (so --skip ticks are included):
 //   "loop=L seed=S start tick=T plan=P"     a loop started (L from 0); P is appLoopPlan
+//   "loop=L weather=W"                      the weather kind it plays (weather.h)
 //   "tick=T loop=L seed=S beat=NAME"        the beat name changed (content compare)
 // T is the ticks simulated since the last (re)start, counted after the tick that
 // caused the event. The current loop and beat are logged immediately.
@@ -94,7 +95,7 @@ bool previewWritePPM(const PreviewState& st, const char* path);
 // "seed=7 tick=120 beat=stub t=0.42 mood=3.50 weather=clear"
 void previewHudLine(const PreviewState& st, char* buf, size_t n);
 
-const char* previewWeatherName(int code);   // "clear".."chill", or "?"
+const char* previewWeatherName(int code);   // "clear".."storm", or "?"
 
 // Parse command line into `o`. Prints usage and exits 2 on an unknown or malformed
 // argument; --help prints usage and exits 0.

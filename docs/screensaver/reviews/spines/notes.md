@@ -170,3 +170,178 @@ break_camp a/b/c, douse a/b, leave a/b/c, and wake b with the mug.
   `tools/lookout_stills.cpp` while this work was going on; they are compiled
   into `ss_core` by the glob and were in the final test runs, but this session
   did not review them.
+
+## Midday spine (section 3)
+
+Written 2026-10-31 by the session that built `SPINES_WEATHER_LOOKOUT_SPEC.md`
+section 3, alongside a parallel session building the weather (and review
+fixes to the morning landing in the same tree). Not committed.
+
+Files: `core/scene/spine_midday.cpp` (new), `tests/test_midday.cpp` (new);
+`spine_family.h` (the midday's entry points, `MiddayBeatId`), `spine.h`
+(`SpineState::fbit, fhold, fk`; comments), `spine.cpp` (dispatch only: plan,
+`spineBeginLoop`, critter scenes, timeline, ticks, format; `spineFamilyFor`:
+a forced midday now plays the midday, the mood's pick still falls back, see
+below). `script.h`, `kFillerFamilies`, CampLayout
+and LoopPlan untouched: no new anchors were needed (each beat sets
+`AT_FAM0/AT_FAM1`).
+
+Loop start (`middayLayout`): the camp as the morning's layout has it, popped in
+by the build the same way (tent, pack, bag on its line, cairn one stone short),
+the pit cold under its ash, the wood pile (0.45 of a load when the afternoon
+will fetch wood, else a full one), him away: no pack on him, out of the scene
+until the return. No fog, no palette steps of its own.
+
+Timeline: build, return, lunch, wade, nap, map, afternoon, a pause (8 to 20 s)
+after each but the afternoon; fillers (all but mug_sunset) after lunch (1st,
+2nd/3rd) and nap; majors after return, lunch and wade (`MajorSlots {return,
+lunch, wade}`, open 1|2|4); the afternoon's last 2.5 s fade to black. Length:
+the shared `spineFitLength` plus the morning's "add a filler back" step.
+
+| # | Beat | Variants | Script (s, 60 seeds) | Beat (s) |
+|---|---|---|---|---|
+| 1 | return | shared: in from the right over the ford, the walking stick in his hand (`CARRY_STICK`, no pack), the stick laid down behind his seat by the pit (`ITEM_STICK` lying, 0.75 size). a: drops onto his seat, hat off into his hand, six seconds of fanning his face chin up, hat back on. b: limps from the ford (a dip and a head drop on one step in two, a slower walk), sits, boot off (two tugs, the boot in his hand: `ITEM_SHOE`), held out and shaken, a stone falls out (`BIT_DIRT`), he peers into it, boot on. c: stands picking burrs: off his sleeve (twice), his trousers (bent over, twice), one off his hat brim, each flicked away (a fleck); then sits. | 31-32 / 36-37 / 32 | 35 / 40 / 36 |
+| 2 | lunch | shared: rummages the pack, out come the pot (cold) and the fork, carried to his seat; sitting, the pot is held out over his knees in the far hand (`HOLD_POT`), the fork in the near hand; bites from pot to mouth; shared end: fork in the pot, back in the pack, back to his seat. a: a bee (`BIT_BEE`, its own flight) comes in from the right and hovers over the pot; a swat (the fork hand); it darts off, waits, comes back; a glare; he eats fast, hunched, six quick bites; it gives up. b: a chipmunk runs in from the left in front of the pit, sits, edges a hop nearer each bite (or every 2.6 s), dashes for the crumbs beyond his feet, takes one (`CC_CRUMB`) and runs; he watches it go, shrugs one-handed (the pot stays out), a last bite. | 45 / 44-46 | 49 / 52 |
+| 3 | wade | shared: to the bank below the camp (`F.x + 102`), sits, both boots off (two tugs each, the boots go down beside him), wades in (`fx.wade`) to midstream; shared end: back to the bank, out, sits, boots on, back to the fire. a: a fish (the major's `SH_FISH` glyph, small and dark, just under the surface) circles his shins; head down, he turns round with it as it passes behind him, bends slowly, grabs: splash rings and drops, it darts off and is gone under; he shakes his hands, hands on hips. b: half way in he slips: arms up flailing, down he sits in the water (belly deep), a splash (rings, drops), sits there, a shrug, gets up. c: a stone off the bed, a throw: plop (one touch, `Skip` n 1); a sigh; another: it skips (`skip_n`, 3 or 4); hands on hips. | 37 / 28 / 39 | 41 / 32 / 43 |
+| 4 | nap | shared: to the foot of the camp pine (`camp_x - 50`), sits, lies back (`POSE_LIE`, head toward the trunk, hands behind his head), the hat down over his face (`ITEM_HAT` placed on his face: `HOLD_HAT_FACE`); shared end: a stretch, the hat off his face and on, sits up, up, back to the fire. a: a chipmunk runs in to the pack by the tent, noses in, the pack shakes, out it comes with a bar (`CC_BAR`), a nibble, a look round, away; he sleeps through it. b: a leaf comes down off the pine onto his middle (tip up, above his outline) and stays; later his hand comes up over his chest and sweeps it off: it flicks up and flutters down to the grass in front of him, and stays there; he sleeps on. c: a fly (`BIT_MOTH`) comes and circles his head; a lazy swat in his sleep, it hops away and comes back; a bigger swat knocks the hat off his face onto the grass; he sits up with a start and looks round; the fly goes; he turns, picks the hat up and puts it on. | 45-49 / 44-45 / 41-43 | 52 / 49 / 47 |
+| 5 | map | shared: sits against the reading rock looking out, the map (`SH_MAP` glyph, `CLOUD_LIT`: pale, so it reads in front of his silhouette) out of his pocket and opened, held up in both hands. a: studies it, turns it round (half a turn), again, scratches his head with one hand (the map in the other), a long look at the ridge with the map lowered, turns it again, a nod, folds it in quarters, pockets it. b: studies, turns it, a gust takes it up out of his hands, he lunges and has it back, folds it fast, lifts himself and sits on it (a sliver of it shows under his thighs), a sigh, up, crouches, pockets it. | 30 / 26-27 | 34 / 30 |
+| 6 | afternoon | a (the pile is small): to the foot of the camp pine, gathers deadfall (`CARRY_WOOD`), carries it to the pile, the pile up to a full load. b (the pile will do): picks up the walking stick from where it lies, lays it on the pile (size +0.12), squares the pile with two pats. shared: the book back in the pack if the read filler left it out (+9 s when read is planned); the mug from the pack; sits by the pit facing out over the valley, two slow sips, the mug down beside him, still; the last 2.5 s fade. | 45-47 / 35 (+ the book) | 51 / 40 (+9) |
+
+Numbers (from `tests/test_midday.cpp`; clang and GCC 16 give the same plans,
+the pinned midday and morning lines pass under both):
+
+- Loop length over 40 seeds: 552 to 650 s.
+- Overruns: 0 over 40 midday loops (every variant of every beat seen) and over
+  36 mixed loops (seeds 31 to 33, 12 loops each: midday, midday, evening,
+  midday, morning, midday in turn).
+- Strips per frame over 4 whole midday loops, rendered every tick, build
+  excluded: avg 7.65 (7.66 GCC), max 15 (a full repaint: the fade, a palette
+  change). Incremental equals a full render at 162 checkpoints.
+- Palette rebuilds: the midday adds none of its own (no fog lift). The loops
+  measured show up to 97 to 113 a loop, all from the weather layer the other
+  session is building (flashes, showers); not the midday's.
+- `sizeof(App)`: 68,072 to 68,080 bytes of 98,304 as the weather session's
+  `World` moved under the runs; the midday's own share is 8 bytes
+  (`SpineState::fbit, fhold, fk`).
+- Every beat ends (checked on its last tick) with him visible, not walking,
+  the hat on, nothing carried or held, the boots on, out of the water, no bit
+  of the beat's still flying; the loop ends black with no critter, him sitting,
+  the book not left out.
+
+### Regression
+
+`ss_preview --loops 10` for seed 1 and seed 7 at mood 4 and for seed 1 at mood
+1.5 `--spine morning`, plus frame hashes (220 frames, `--every 97`, those three
+and seed 5 at mood 0 `--night`, with their `--log-beats` logs): byte-identical
+between the working tree and the same tree with the midday's changes taken out
+(`spine.cpp/.h`, `spine_family.h` from HEAD, `spine_midday.cpp` removed). Against
+the files saved before this work started they differ only by the weather
+session's `weather=` column and (the morning) by its review fixes to
+`spine_morning.cpp` (the leave's book pickup lengthens some loops). The evening
+lines also match the strings `test_spines` holds. `test_midday` pins the
+evening's 20 lines, the morning's 10 (captured from the tree with the review
+fixes: re-capture if the morning changes again) and the midday's own 10.
+
+### Judgment calls where the spec was silent
+
+- fishing_good is dropped from the midday's plan after `majorsPlan` (it props
+  a fish over the fire for the evening's dinner; at midday the pit is cold and
+  lunch is over). The pool's midday mask still has it; removing `kMid` there
+  would make the drop a no-op (see the asks).
+- The return's walking stick stays at camp: laid behind his seat, put on the
+  wood pile in afternoon b, left lying (camp gear by the fire) after afternoon a.
+- The afternoon has two variants (the spec gives it one shape): "if the pile is
+  small" is the variant, a fetches wood, b adds the stick and squares the pile.
+  He sits facing out over the valley for the end, not the fire.
+- The afternoon is 51 s (a), not ~25: the walk to the pine and back. Lunch,
+  wade, nap run longer than the spec's seconds for the walks to the pack, the
+  bank and the pine; the loop still lands in 480 to 660 s.
+- Lunch: the pot is held out over his knees in his far hand. Set on the ground
+  in front of him (as the evening's dinner does) his knees hide it.
+- Nap a: the chipmunk takes a bar out of the pack (`CC_BAR`, as raccoon_pack
+  does). `Memory::last_stolen` is not written: it holds an `ItemId` (shoe,
+  mug, book) and `memoryFormat` prints its name; a bar is not an item (see
+  the asks).
+- Nap: he lies at the foot of the camp pine ("the shade"), not at `camp.lie`.
+- The hat is never `held` through World: World puts a held item at the
+  midpoint of his hands, which is wrong for a one-hand fan, a boot, a hat over
+  his face. `SpineState::fhold` says what his near hand has and `middayTick`
+  places it after the hiker's step (the item `down`, drawn where it is put).
+- "Two shoes down" in the wade is one `ITEM_SHOE` (the props draw one boot;
+  two tugs per boot are played). See the asks.
+- The nap's leaf is marked `resting` while the midday drives it: the minors'
+  `gustStep` takes every non-resting leaf that is not leaf_fall's own and
+  would carry it off. See the asks.
+- The return walks in from the right over the ford in every variant (the
+  spec says "from the right"); the hiker is in the scene from the return's
+  first tick, off the frame's right edge.
+- Majors can follow return, lunch and wade; the variant memory is the
+  morning's (a variant the last midday played is a quarter as likely).
+- The fish in wade a is drawn over the water on both sides of him (sorted in
+  front): behind him it would sit under his legs' water redraw and vanish.
+- Minors run in the midday's pauses and fillers only (its beat names are not
+  in the minors' calm list), as for the morning.
+
+### The mood does not pick the midday yet (open)
+
+The brief asked for the fallback line in `spineFamilyFor` to go. Taken out
+whole, two of `test_spines`' family-pick cases fail (they assert mood 2.5 and
+3 play the evening, "midday: not built") and `test_scene` fails broadly: it
+runs its evening checks (dinner visitors, the raccoon in the close, plan
+parsing) at `makeInputs(3.f)`, which then plays the midday. Neither file is
+this session's to edit, so the fallback now applies to the mood's pick only:
+`spine_force` (`--spine midday`) plays the midday, mood [2.5, 3.5) still plays
+the evening. The switch is one line in `spineFamilyFor` (`if (f ==
+SF_MIDDAY) f = SF_EVENING;`, commented there), to be made with:
+`test_spines.cpp testFamilyPick` cases `{2.5f, ...}` and `{3.f, ...}` wanting
+`SF_MIDDAY`; `test_scene.cpp`'s evening checks moved off mood 3 (mood 4, or
+`spine_force = 1 + SF_EVENING`); `test_midday.cpp testFamilyPick`'s mood cases
+flipped to `SF_MIDDAY` (its comment says so). Checked: with the line removed,
+everything else in `test_spines` passes; `test_scene` was not run to the end
+that way.
+
+### Asks for the chief
+
+- The switch above (one line plus the three tests).
+- `sim/preview_common.cpp`: `--spine midday` still prints "not built yet: the
+  loop plays the evening" (`if (f >= 2)` should be `f >= 3`), and the help text
+  says the same.
+- `majors.cpp kMajors`: bathe "weighted up" for the midday (the spec) needs a
+  per-family weight (a `midday_weight` or a family multiplier in `majorsPlan`);
+  not done. `fishing_good`'s families: drop `kMid` (the midday drops it anyway).
+- `minors.cpp gustStep`: skip a leaf the spine owns (a flag on `Bit`, or the
+  spine's bit index), so the nap's leaf need not be marked `resting`.
+- `props`: a pair of boots (`ITEM_SHOE` with `alt` drawing two side by side)
+  for the wade's "two shoes down".
+- `memory`: a way to remember a stolen bar (an `ItemId` for food, or a
+  `last_stolen` that is not an item) if nap a should carry over.
+- `minors.cpp kCalm`: whether lunch / map / afternoon should be calm beats for
+  the minors (one line each); left as the morning's are.
+
+### Not verified
+
+- Anything on the board. Unverified.
+- The weather layer was being built in the same tree while these runs were
+  made; the palette mirror in `test_midday`'s corner check (`scenePalette`)
+  copies `app.cpp sceneWeather` as it was at the time and will need to follow
+  it if that changes.
+- The limp in return b (a lean and head dip on one step in two; the rig has no
+  leg offsets) was seen only in sampled frames at 2.5 fps; it reads as a heavy
+  walk more than a limp at that rate.
+- The sat-on map in map b shows as a few pale pixels under his thighs; it
+  reads mostly as the map vanishing as he hops.
+- Return c's pick off the hat and the head scratch in map a are small arm
+  moves near the head; seen in the frames but faint at 1x.
+- A dark speck sitting on the stream's near bank through seed 1's wade is not
+  the midday's (no bit, critter or glyph of its own there); not traced.
+
+Looked at in the frames (`ss_preview --spine midday --mood 3 --every 10`,
+seeds 1, 2, 3, 7, 9, 14, sheets and 2x to 4x crops): the build, return a/b/c,
+lunch a/b, wade a/b/c, nap a/b/c, map a/b, afternoon a/b (b with the book
+pickup, seed 3), the fade into the next loop. Fixed on the way: the pot hidden
+by his knees (now held out), the fish hidden under the water redraw (now just
+under the surface, in front), the nap leaf hidden inside his outline and taken
+by the minors' gust (now on top, marked resting), the brush arm buried in his
+outline, the chipmunk's crumbs on the pit's stones (moved in front), the boot
+held against his face (now held out), the read filler's book left out to the
+fade (the afternoon picks it up).

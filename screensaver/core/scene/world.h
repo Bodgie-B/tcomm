@@ -19,6 +19,7 @@
 #include "minors.h"
 #include "majors.h"
 #include "memory.h"
+#include "weather.h"
 
 namespace ss {
 
@@ -48,7 +49,7 @@ struct FirePit {
 // critter).
 enum ActorKind : uint8_t {
   ACT_FIRE = 0, ACT_TUFT, ACT_HIKER, ACT_TENT, ACT_PACK, ACT_BAG, ACT_CAIRN, ACT_ITEM, ACT_FGPINE, ACT_LEAF,
-  ACT_CRITTER, ACT_BIT, ACT_MAJOR
+  ACT_CRITTER, ACT_BIT, ACT_MAJOR, ACT_WXBIT
 };
 struct ActorRef {
   uint8_t kind;
@@ -60,8 +61,8 @@ struct ActorRef {
 // stops adding at the cap (tufts are added before the critters, so a full
 // list drops critters at the far left first, never the hiker or props).
 // A major's glyphs (up to GLYPH_MAX 28: kept stars and fireflies) come last;
-// 88 holds them all.
-#define WORLD_ACTOR_MAX 91
+// 88 holds them all; the weather's bits (WX_BITS 4) on top.
+#define WORLD_ACTOR_MAX 95
 
 // Critters in the scene: slots the director (director.h) hands out.
 #define CRITTER_MAX 8
@@ -184,6 +185,8 @@ struct World {
   // computeAppPalette, clamped). The morning opens in it and lifts it in 0.05
   // steps, each a palette change and a cache rebuild.
   float fog_extra;
+  // This loop's weather (weather.h): weatherPlan at loop start (app.cpp).
+  Weather weather;
   LoopPlan plan;
   SpineState spine;
   int n_actors;

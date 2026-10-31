@@ -1406,6 +1406,9 @@ void minorsStep(World& w, Renderer& r) {
 
   // Nothing running: may one start now?
   if (owned || w.fade > 0.f || hikerWalking(w) || othersCritters(w)) return;
+  // The weather has him (weather.h: the wind took his hat, or he is fanning
+  // himself with it): wait until he has it back on.
+  if (w.weather.gag == WG_HAT || w.weather.gag == WG_FAN) return;
   if (w.tick < m.hold_tick) return;
   const bool moth_early = gate(w, MN_MOTH_LANTERN) && m.fired_by[MN_MOTH_LANTERN] == 0 &&
                           (m.fired == 0 || w.tick >= m.last_start + ticksOf(kGapMin));

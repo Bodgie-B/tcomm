@@ -17,7 +17,7 @@ namespace ss {
 struct Inputs {
   float mood;             // solar-day position, see palette.h (0 night .. 5 dusk)
   WeatherTint weather;    // overcast, fog, night_dim in 0..1
-  int weather_code;       // scene weather: 0 clear, 1 rain, 2 snow, 3 wind, 4 heat, 5 fog, 6 chill (expandable)
+  int weather_code;       // scene weather: 0 clear, 1 rain, 2 snow, 3 wind, 4 heat, 5 fog, 6 chill, 7 storm (scene/weather.cpp kCodeKinds)
   bool have_outside;      // false: no OUTSIDE reading for 15 min, pick random weather
   int other_status;       // 0 Open, 1 Busy, 2 Private, 3 Sleeping, 4 Away, 5 No signal
   int dog_out;            // 0 none, 1 Lucy, 2 Copper
@@ -25,6 +25,8 @@ struct Inputs {
   bool lookout_window;    // true inside the sunset window: play the Lookout spine
   // 0: the loop's spine family follows the inputs (scene/spine.h
   // spineFamilyFor); 1 + SpineFamily forces one (preview --spine). Read at loop start.
+  // A host must zero the whole struct before filling it (both hosts memset
+  // it): a stray value here forces a family.
   uint8_t spine_force;
 };
 

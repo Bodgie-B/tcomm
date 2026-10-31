@@ -291,7 +291,10 @@ void actTread(World& w, float u) {
 }
 // Picked up: the shoe goes on (gone); the mug he keeps in his hand for the
 // pack. SpineState::target says which it was for the steps that follow.
-constexpr uint8_t kGotShoe = 2, kGotMug = 3;
+// SpineState::target is scratch per beat (beatPoints clears it): wake b's
+// what-he-trod-on, break_camp b's fly-in-hands (a value no counter reaches),
+// douse a's kick count.
+constexpr uint8_t kGotShoe = 2, kGotMug = 3, kFlyHeld = 0xF1;
 void doDoorItemUp(World& w, float) {
   if (w.items[ITEM_SHOE].down) {
     w.items[ITEM_SHOE].down = false;
@@ -713,7 +716,7 @@ void doFlyUp(World& w, float) {
     g->k = 0.6f;
     g->scale = 1.2f;
   }
-  w.spine.target = 1;   // the fly rides in his hands
+  w.spine.target = kFlyHeld;   // the fly rides in his hands
   hikerCarry(w.hiker, CARRY_BOOK);   // (keeps his arms still as he walks; the fly covers it)
 }
 void doFlyDown(World& w, float) {
@@ -722,7 +725,7 @@ void doFlyDown(World& w, float) {
   hikerCarry(w.hiker, CARRY_NONE);
 }
 void flyTick(World& w) {
-  if (w.spine.target != 1) return;
+  if (w.spine.target != kFlyHeld) return;
   Glyph* g = flyGlyph(w);
   if (!g) return;
   g->pos = hikerHandsMid(w.hiker);
@@ -923,6 +926,10 @@ void doMugPocket(World& w, float) {   // the mug off the ground, into a pocket o
   w.items[ITEM_MUG].down = false;
 }
 bool mugDown(const World& w) { return w.items[ITEM_MUG].down; }
+// The book the read filler left by the reading rock goes in the pack too
+// (review finding: it stayed on the ground through the fade).
+void doBookPocket(World& w, float) { w.items[ITEM_BOOK].down = false; }
+bool bookDown(const World& w) { return w.items[ITEM_BOOK].down; }
 // Leave c: one more stone on the cairn (the cairn filler's stones), a pat.
 bool cairnRoom(const World& w) { return w.cairn.n < CAIRN_MAX; }
 void actAddStone(World& w, float u) {
@@ -1185,10 +1192,12 @@ const Step kDouseB[] = {
   FROM_REST, PACK_CROUCH, act(actPackLift, 0.6f), pose(POSE_STAND, 0.6f, 0.1f), act(actPackOn, 1.2f), \
       pose(POSE_STAND, 0.5f, 0.1f), face(RIGHT), act(actLookBack, 2.6f)
 #define MUG_UP skipUnless(mugDown, 4), go(AT_MUG, kStroll), face(LEFT), pose(POSE_CROUCH, 0.6f, 0.3f), doit(doMugPocket)
+// The book, if the read filler left it out (AT_FAM0: its right side, beatPoints).
+#define BOOK_UP skipUnless(bookDown, 4), go(AT_FAM0, kStroll), face(LEFT), pose(POSE_CROUCH, 0.6f, 0.3f), doit(doBookPocket)
 #define OFF_RIGHT pose(POSE_STAND, 0.6f, 0.1f), go(AT_FORD1, kStroll), walk(AT_FORD0, kWade), walk(AT_EDGE_R, kStroll)
 
 // Leave a: off right over the ford.
-const Step kLeaveA[] = {LEAVE_PACK, MUG_UP, OFF_RIGHT};
+const Step kLeaveA[] = {LEAVE_PACK, MUG_UP, BOOK_UP, OFF_RIGHT};
 // Leave b: off left; at the edge of the clearing (just short of the
 // foreground pines, which would hide him) he stops, comes back for the mug, goes.
 const Step kLeaveB[] = {
@@ -1200,17 +1209,21 @@ const Step kLeaveB[] = {
     pose(POSE_STAND, 0.5f, 0.1f),
     face(RIGHT),
     MUG_UP,
+    BOOK_UP,
     pose(POSE_STAND, 0.6f, 0.1f),
     face(LEFT),
     act(actNod, 1.2f),
     go(AT_EDGE_L, 40.f),
 };
-// Leave c: a stone on the cairn, a pat, and off right over the ford.
+// Leave c: a stone on the cairn, a pat, and off right over the ford. With the
+// cairn already full (memory fills it over a few loops) the whole detour,
+// pat included, is skipped.
 const Step kLeaveC[] = {
     LEAVE_PACK,
     MUG_UP,
+    BOOK_UP,
     pose(POSE_STAND, 0.6f, 0.1f),
-    skipUnless(cairnRoom, 8),
+    skipUnless(cairnRoom, 9),
     go(AT_STONE, 30.f),
     pose(POSE_CROUCH, 0.6f, 0.5f),
     carry(CARRY_ROCK),
@@ -1238,6 +1251,7 @@ const Step kLeaveC[] = {
 #undef DOUSE_END
 #undef LEAVE_PACK
 #undef MUG_UP
+#undef BOOK_UP
 #undef OFF_RIGHT
 
 struct Script {
@@ -1267,7 +1281,7 @@ const uint8_t kDurations[MB_COUNT][3] = {
     {33, 41, 0},    // bag_down (the walks: bag pine, pack)
     {46, 43, 41},   // break_camp
     {26, 23, 0},    // douse
-    {39, 39, 48},   // leave (the walk out, then the last 2.5 s fade to black)
+    {46, 46, 55},   // leave (the walk out, then the last 2.5 s fade to black; +7 for the book pickup)
 };
 
 const char* const kBeatNames[MB_COUNT] = {"wake", "coffee", "bag_down", "break_camp", "douse", "leave"};
@@ -1298,6 +1312,9 @@ void beatPoints(World& w, int b) {
     sp.fp[0] = Vec2{x - 13.f, sp.fp[1].y};
   } else if (b == MB_BREAK_CAMP && v == 2) {   // on the heap
     sp.fp[0] = Vec2{c.tent.x + 4.f, c.tent.y + 2.f};
+  } else if (b == MB_LEAVE) {   // the book's right side, if it lies out
+    const Item& bk = w.items[ITEM_BOOK];
+    sp.fp[0] = Vec2{bk.pos.x + 9.f, bk.pos.y};
   }
 }
 
@@ -1331,6 +1348,11 @@ void beatEnd(SceneCtx& ctx) {
   sp.run.steps = nullptr;
   w.busy = false;
   w.tent.wobble = 0.f;
+  // An overrun must not leave the fly in the air or a critter stage driving
+  // the tent after the beat.
+  if (Glyph* g = flyGlyph(w)) g->kind = GL_NONE;
+  sp.fstage = FC_NONE;
+  sp.target = 0;
 }
 // Leave: the script, and the frame fading to black over the last kFadeS
 // seconds (1 on the beat's last tick); the script must be done (him out of

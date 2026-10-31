@@ -97,6 +97,8 @@ void sortActors(World& w) {
     if (b.kind == BIT_CONE) L.add(ACT_BIT, (uint8_t)i, baseY(b.land_y + 1.f));
     else if (b.kind != BIT_NONE) L.add(ACT_BIT, (uint8_t)i, baseY(b.land_y));
   }
+  for (int i = 0; i < WX_BITS; ++i)   // the weather's leaves, drips, rings (weather.h)
+    if (w.weather.bit[i].kind != BIT_NONE) L.add(ACT_WXBIT, (uint8_t)i, baseY(w.weather.bit[i].land_y));
   for (int i = 0; i < GLYPH_MAX; ++i)   // a major's glyphs (majors.h)
     if (w.major.g[i].kind != GL_NONE) L.add(ACT_MAJOR, (uint8_t)i, w.major.g[i].base_y);
   const int n = L.n;
@@ -165,6 +167,8 @@ void stepHiker(World& w) {
       P.head += 0.16f * fx.stomp;
     }
   }
+  // The weather's overlay (a hug, the hat fanned, a shiver), over all of it.
+  weatherApplyPose(w, P, h.height);
   // The waterline on him: none on the bank; deeper the further in he is.
   fx.wet_y = 0.f;
   if (fx.wade) {
@@ -372,6 +376,8 @@ void worldTick(World& w, Rng& rng, Renderer& r) {
   tent.shadow_shake = shown && tent.shadow_jitter > 0.f
                           ? floorf(0.5f + 2.f * tent.shadow_jitter * sumSines(tk * 0.11f, 2))
                           : 0.f;
+  weatherStep(w);
+  weatherPlaceHeld(w);
   sortActors(w);
 
   WorldDirty& d = w.dirty;
@@ -453,6 +459,7 @@ void worldTick(World& w, Rng& rng, Renderer& r) {
   d.skip_s = w.skip;
   d.leaf_s = w.leaf;
   majorsTrack(w.major, r);
+  weatherTrack(w, r);
 }
 
 void worldDrawWater(const World& w, Surface& s, const Rect& clip, const Palette& pal) {
@@ -482,6 +489,10 @@ void worldDrawStatic(const World& w, Surface& frame, const Palette& pal, float m
 void worldDrawDynamic(const World& w, Surface& strip, const Rect& clip, const Palette& pal, float mood) {
   const BuildState& b = w.build;
 
+  // 0. Heat shimmer: the cached rows of the far-ridge band shifted in place
+  // (only once the build is done, so the cache holds every layer).
+  weatherDrawShimmer(w, strip, clip);
+
   // 1. The sky, while it fades in (otherwise it is in the cache).
   landscapeDrawLayers(w.land, strip, clip, pal, mood, b, BL_SKY, BL_SKY);
 
@@ -503,6 +514,9 @@ void worldDrawDynamic(const World& w, Surface& strip, const Rect& clip, const Pa
   // 4. Stream highlights, and a skipped stone's rings on the water.
   ambientDrawGlints(w, strip, clip, pal);
   skipDraw(w.skip, strip, clip, pal);
+
+  // 4b. Fog bands over the mid pines, behind everything on the ground.
+  weatherDrawFog(w, strip, clip, pal);
 
   // 5. Ground actors far to near.
   for (int i = 0; i < w.n_actors; ++i) {
@@ -526,6 +540,7 @@ void worldDrawDynamic(const World& w, Surface& strip, const Rect& clip, const Pa
       case ACT_LEAF: leafDraw(w.leaf, strip, clip, pal); break;
       case ACT_CRITTER: critterDraw(w.critters[a.idx], strip, pal, clip); break;
       case ACT_BIT: bitDraw(w.bits[a.idx], strip, clip, pal); break;
+      case ACT_WXBIT: bitDraw(w.weather.bit[a.idx], strip, clip, pal); break;
       case ACT_MAJOR:
         if (w.major.g[a.idx].kind == GL_WATER) worldDrawWater(w, strip, clip.clipped(glyphBounds(w.major.g[a.idx])), pal);
         else glyphDraw(w.major.g[a.idx], strip, clip, pal);
@@ -544,6 +559,9 @@ void worldDrawDynamic(const World& w, Surface& strip, const Rect& clip, const Pa
   // 6. Smoke above the fire, and steam off a pot boiling over.
   ambientDrawSmoke(w, strip, clip, pal);
   steamDraw(w.steam, strip, clip, pal);
+
+  // 6b. Weather in front of everything: a breath puff, the fire's hiss, rain, snow.
+  weatherDrawNear(w, strip, clip, pal);
 
   // 7. The loop's fade, over everything.
   if (w.fade > 0.f) {
