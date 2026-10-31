@@ -20,12 +20,12 @@ after the foundation. Mike and Mark changed that on 2026-10-30. The new order:
 | Stage | What | Where it runs |
 |---|---|---|
 | 1 | Foundation: rasterizer, palettes, scheduler, landscape, preview | PC. **Done.** |
-| 2 | Scene build-up and the ambient layer | PC preview |
-| 3 | Hiker rig | PC preview |
-| 4 | Story spine, with variants | PC preview |
-| 5 | Critters and the minor-effect scheduler | PC preview |
-| 6 | Surprise pool, variety system, per-loop seed | PC preview |
-| **Review gate** | Mike and Mark watch whole loops and decide whether the look and the story land. Only if they like it does the work move to hardware. | |
+| 2 | Scene build-up and the ambient layer | PC preview. **Done.** |
+| 3 | Hiker rig | PC preview. **Done.** |
+| 4 | Story spine, with variants | PC preview. **Done.** |
+| 5 | Critters and the minor-effect scheduler | PC preview. **Done.** |
+| 6 | Surprise pool, variety system, per-loop seed | PC preview. **Done.** |
+| **Review gate** | **Now.** Mike and Mark watch `docs/screensaver/reviews/stages2-6/index.html` (every beat, variant, filler, minor and major as clips, plus the ten-loop table) and decide whether the look and the story land. Fixes from the review are preview work. Only after that does the work move to hardware. | |
 | 7 | On the board (the brief's old stage 2) | ESP32-S3 panel |
 | 8 | Integration hooks: status chip, doorbell, touch reveal, real inputs | Panel |
 | 9 | Night mode and weather systems | Panel, reviewed in a dark room |
