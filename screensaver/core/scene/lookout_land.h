@@ -85,12 +85,56 @@ void lookoutLandGenerate(LookoutLand& lk, Rng& rng);
 void lookoutLandDrawStatic(const LookoutLand& lk, Surface& frame, const Palette& pal, float mood,
                            float tower_reveal);
 
+// Layers of the Lookout's scene in draw order, far to near (a bit mask picks
+// which ones a call draws). The static cache holds a prefix of them; the
+// build beat animates SKY .. PLANTS (lookout.cpp), the reveal the tower, and
+// once he is on the tower the cab's front and the rails are drawn after him
+// (or the cab before him while he is outside it): LKL_TOWER is everything of
+// the tower but those, including what is seen through the cab's windows.
+enum LkLayer : uint8_t {
+  LKL_SKY = 0, LKL_VALLEY, LKL_HILL, LKL_TRAIL, LKL_PLANTS,
+  LKL_TOWER,   // legs, bracing, deck, stair treads and landings, the rails behind the cab, the west
+               // wall, the sky and the fire-finder seen through the front panes
+  LKL_CAB,     // the cab's front wall and glass (holes where the through-view is), the west pane, the
+               // glints, the roof and flagpole
+  LKL_RAILS,   // the stair handrails and posts, the landing rails, the deck's front and west rails
+  LKL_COUNT
+};
+#define LKL_BIT(l) ((uint16_t)(1u << (l)))
+#define LKL_LAND ((uint16_t)(LKL_BIT(LKL_SKY) | LKL_BIT(LKL_VALLEY) | LKL_BIT(LKL_HILL) | LKL_BIT(LKL_TRAIL) | LKL_BIT(LKL_PLANTS)))
+#define LKL_ALL ((uint16_t)((1u << LKL_COUNT) - 1u))
+
+// What a draw call shows: the layers, and the build's and reveal's state.
+// The defaults (lookoutDrawDone) are the finished scene.
+struct LkDraw {
+  uint16_t layers;        // LKL_BIT mask
+  float sky;              // 0 a flat horizon colour (SKY4) .. 1 the sky bands
+  float valley_drop[3];   // px each valley layer sits below its place (rising in the build)
+  float trail;            // 0..1 of the trail's length drawn (it draws itself up the hill)
+  float plants_u;         // the plants phase: < 0 none yet, 0..1 popping (staggered, overshoot), >= 1 all
+  float reveal;           // the tower, as lookoutLandDrawStatic's tower_reveal
+  float mood;             // window glint and timber silhouette (see lookoutLandDrawStatic)
+};
+LkDraw lookoutDrawDone(float mood, float reveal, uint16_t layers);
+
+// Draw `d.layers` into `s` (a full frame or a strip), clipped to `clip`.
+void lookoutLandDraw(const LookoutLand& lk, Surface& s, const Rect& clip, const Palette& pal, const LkDraw& d);
+
 // Hillside skyline y at frame x, linear between the samples (matches the drawn edge).
 float lookoutHillAt(const LookoutLand& lk, float x);
 
 // Feet position along the trail, s 0..1 by arc length: 0 off the left edge at
 // the foot, 1 the tower's stair foot (= lookoutStairAt(lk, 0)).
 Vec2 lookoutTrailAt(const LookoutLand& lk, float s);
+
+// Hiker height (px) for feet at frame y on the hillside: 90 at the trail's
+// foot, 44 at the stair foot on the ridge, linear in y between them (clamped),
+// so it follows how far up the slope he is on screen. Monotone in y.
+float lookoutHeightAt(const LookoutLand& lk, float y);
+
+// Bounds of the cab's front (LKL_CAB) and of the rails (LKL_RAILS) at full
+// reveal, for dirty marks when their draw order changes.
+Rect lookoutCabBounds(const LookoutLand& lk);
 
 // Hiker height factor along the trail: 1.0 at the foot, 0.49 at the ridge
 // (90 px to 44 px). Linear in s, so monotone.

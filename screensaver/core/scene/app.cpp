@@ -75,6 +75,10 @@ WeatherTint sceneWeather(const App* a, float* flash) {
   return w;
 }
 
+// The palette's mood: the scene's own when it sets one (the Lookout's sunset
+// steps World::mood_override), else the host's.
+float sceneMood(const App* a) { return a->world.mood_override >= 0.f ? a->world.mood_override : a->in.mood; }
+
 // `force`: the loop's geometry changed (loop start), so the cache is rebuilt
 // even when the palette came out the same; otherwise a palette byte for byte
 // the one in use costs nothing (an input step that lands on the same 565
@@ -86,8 +90,10 @@ void computeAppPalette(App* a, bool force) {
   a->pal_flash = flash;
   if (a->in.night_mode && w.night_dim < 1.f) w.night_dim = 1.f;   // night mode alone must dim
   Palette p;
-  computePalette(a->in.mood, w, flash, p);
-  a->pal_mood = a->in.mood;
+  const float mood = sceneMood(a);
+  computePalette(mood, w, flash, p);
+  if (a->world.plan.family == SF_LOOKOUT) lookoutPaletteTweak(a->world, mood, w, flash, p);
+  a->pal_mood = mood;
   a->pal_night = a->in.night_mode;
   if (!force && memcmp(&p, &a->pal, sizeof p) == 0) return;
   a->pal = p;
@@ -103,7 +109,7 @@ void beginLoop(App* a) {
   a->world.plan.family = spineFamilyFor(a->in);
   spinePlan(a->world.plan, a->rng, a->in, a->world.memory);
   memoryBeginLoop(a->world, a->rng);
-  spineBeginLoop(a->world);
+  spineBeginLoop(a->world, a->rng);
   // The weather: its own rng stream from the loop seed (the loop rng never sees it).
   weatherPlan(a->world, a->loop_seed, a->in, spineLoopTicks(a->world.plan));
   a->pal_rebuilds = 0;
@@ -147,7 +153,7 @@ bool appTick(App* a) {
   // Palette follows the inputs only when they moved enough to matter.
   float flash = 0.f;
   const WeatherTint w = sceneWeather(a, &flash);
-  if (moodDistance(a->in.mood, a->pal_mood) > kMoodEps ||
+  if (moodDistance(sceneMood(a), a->pal_mood) > kMoodEps ||
       fabsf(w.overcast - a->pal_weather.overcast) > kWeatherEps ||
       fabsf(w.fog - a->pal_weather.fog) > kWeatherEps ||
       fabsf(w.night_dim - a->pal_weather.night_dim) > kWeatherEps ||
@@ -235,5 +241,6 @@ int appLeaves(const App* app) {
   return n;
 }
 const World* appWorld(const App* app) { return &app->world; }
+const Palette* appPalette(const App* app) { return &app->pal; }
 
 }  // namespace ss

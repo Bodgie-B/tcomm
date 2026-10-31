@@ -252,7 +252,7 @@ void previewUsage(const char* prog, FILE* to) {
           "  --night             night mode on, night_dim = 1\n"
           "  --lookout           inside the sunset window (Lookout spine)\n"
           "  --spine NAME        evening morning midday lookout: play that spine family whatever the\n"
-          "                      inputs say (the lookout is not built yet: it plays the evening)\n"
+          "                      inputs say (--spine lookout --mood 4 is the Lookout's reference run)\n"
           "  --status N          other floor status 0..5\n"
           "  --dog N             0 none, 1 Lucy, 2 Copper\n"
           "  --frames N          frames to write (default 100)\n"
@@ -336,7 +336,6 @@ void previewParseArgs(int argc, char** argv, PreviewOptions& o) {
       for (int k = 0; k < 4; k++)
         if (!strcmp(name, kFam[k])) f = k;
       if (f < 0) bad(prog, "unknown spine family", name);
-      if (f >= 3) fprintf(stderr, "%s: --spine %s is not built yet: the loop plays the evening\n", prog, name);
       o.spine = 1 + f;
     } else if (!strcmp(a, "--status")) {
       need(1);

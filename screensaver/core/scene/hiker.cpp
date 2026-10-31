@@ -85,16 +85,18 @@ const HikerPose kPoses[POSE_COUNT] = {
     /* FISH_SIT*/{-0.05f,  0.15f, 0.f,   0.f,   { 2.25f, 2.10f},{2.87f,2.90f}, { 0.90f, 0.55f},{0.75f,1.00f}},
     /* CAST */   {-0.14f, -0.12f, 0.f,   0.f,   { 0.16f,-0.14f},{0.06f,0.08f}, { 2.70f, 2.40f},{0.35f,0.50f}},
     /* HUG */    { 0.12f,  0.22f, 0.f,   0.f,   { 0.08f,-0.04f},{0.05f,0.05f}, { 0.22f, 0.14f},{2.45f,2.55f}},
+    /* CLIMB */  { 0.20f, -0.10f, 0.f,   0.f,   { 0.85f,-0.05f},{1.25f,0.10f}, { 0.38f,-0.25f},{0.10f,0.45f}},
+    /* PERCH */  {-0.04f,  0.10f, 0.f,   0.f,   { 1.45f, 1.35f},{1.35f,1.05f}, { 1.30f, 1.15f},{0.30f,0.45f}},
 };
 
 const char* const kPoseNames[POSE_COUNT] = {
     "stand", "look_around", "crouch", "sit", "reach_up", "carry", "blow",
-    "yelp", "lie", "wave", "hands_on_hips", "scratch_head", "hold_mug", "read", "fish_stand", "fish_sit", "cast", "hug"};
+    "yelp", "lie", "wave", "hands_on_hips", "scratch_head", "hold_mug", "read", "fish_stand", "fish_sit", "cast", "hug", "climb", "perch"};
 
 BlendKind blendKindFor(PoseId p) {
   switch (p) {
     case POSE_REACH_UP: case POSE_YELP: case POSE_WAVE: case POSE_CAST: return BLEND_ACTION;
-    case POSE_SIT: case POSE_CROUCH: case POSE_LIE: case POSE_FISH_SIT: return BLEND_LAND;
+    case POSE_SIT: case POSE_CROUCH: case POSE_LIE: case POSE_FISH_SIT: case POSE_PERCH: return BLEND_LAND;
     default: return BLEND_PLAIN;
   }
 }
@@ -126,7 +128,7 @@ HikerPose mix(const HikerPose& a, const HikerPose& b, float t) {
 }
 
 bool groundPose(PoseId p) {
-  return p == POSE_SIT || p == POSE_LIE || p == POSE_CROUCH || p == POSE_BLOW || p == POSE_READ || p == POSE_FISH_SIT;
+  return p == POSE_PERCH || p == POSE_SIT || p == POSE_LIE || p == POSE_CROUCH || p == POSE_BLOW || p == POSE_READ || p == POSE_FISH_SIT;
 }
 
 // Small looping motion layered on a held pose; rate in Hz.
@@ -349,7 +351,7 @@ void build(const Hiker& h, Prims& ps, Vec2* rod_tip = nullptr, RimAxis* rim_out 
   const float H = h.height;
   const HikerPose& P = h.pose;
   const float still = 1.f - h.walk_w;
-  const float breath = still * kBreathAmp * H * (0.5f + 0.5f * sinT(h.breath_phase));
+  const float breath = still * kBreathAmp * H * h.breath_scale * (0.5f + 0.5f * sinT(h.breath_phase));
   const float bob = h.walk_w * kPackBob * H * sinT(2.f * h.walk_phase - 0.2f);
 
   // Local frame: hips at (dx, 0), y down; grounded below.
@@ -506,6 +508,21 @@ void hikerInit(Hiker& h, Vec2 feet, int facing) {
   h.walk_rest = POSE_STAND;
   h.carry = CARRY_NONE;
   h.breath_phase = 0.f;
+  h.breath_rate = h.breath_scale = 1.f;
+}
+
+void hikerApplyClimb(Hiker& h, float w) {
+  if (w <= 0.f) return;
+  HikerPose c = kPoses[POSE_CLIMB];
+  if (h.walking) {   // knees high in step with the walk: the leg swinging forward lifts onto the next tread
+    const float s = sinT(h.walk_phase), q = cosT(h.walk_phase);
+    c.thigh[0] = 0.35f + 0.5f * s;
+    c.thigh[1] = 0.35f - 0.5f * s;
+    c.knee[0] = 0.25f + 1.2f * (q > 0.f ? q : 0.f) + 0.4f * (s > 0.f ? s : 0.f);
+    c.knee[1] = 0.25f + 1.2f * (q < 0.f ? -q : 0.f) + 0.4f * (s < 0.f ? -s : 0.f);
+    c.shoulder[1] = 0.6f * s;
+  }
+  h.pose = mix(h.pose, c, w > 1.f ? 1.f : w);
 }
 
 void hikerSetPose(Hiker& h, PoseId p, float blend_seconds) {
@@ -540,7 +557,7 @@ void hikerCarry(Hiker& h, CarryId c) {
 
 void hikerTick(Hiker& h, float dt) {
   if (dt < 0.f) dt = 0.f;
-  h.breath_phase += dt / kBreathPeriod;
+  h.breath_phase += dt / kBreathPeriod * h.breath_rate;
   h.breath_phase -= floorf(h.breath_phase);
 
   // Base pose: the blend, or the held target exactly.

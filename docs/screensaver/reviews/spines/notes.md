@@ -13,10 +13,9 @@ committed by this session.
 - The pick is a function of the inputs only (no rng): `Inputs::spine_force`
   (new; 0 auto, 1 + family forces it, the preview's `--spine`), then the
   Lookout window, then night mode (the evening), then the mood: morning in
-  [0.5, 2.5), midday in [2.5, 3.5), evening otherwise. **Midday and the Lookout
-  are not built: the pick falls back to the evening for them** (and `--spine
-  midday|lookout` says so on stderr). The midday implementer removes that
-  fallback line in `spineFamilyFor`.
+  [0.5, 2.5), midday in [2.5, 3.5), evening otherwise. (Written before the
+  midday landed: the mood picks the midday since 9fef80d; `test_scene` forces
+  the evening for its own checks. The Lookout's fallback goes when it lands.)
 - `app.cpp beginLoop`: `worldBeginLoop`, family, `spinePlan` (dispatches),
   `memoryBeginLoop`, `spineBeginLoop` (the morning's camp state). The family
   costs the loop rng nothing.
@@ -282,7 +281,10 @@ fixes: re-capture if the morning changes again) and the midday's own 10.
 - Minors run in the midday's pauses and fillers only (its beat names are not
   in the minors' calm list), as for the morning.
 
-### The mood does not pick the midday yet (open)
+### The mood picks the midday (resolved by the chief at 9fef80d)
+
+The fallback line is gone; `test_spines`, `test_midday` and `test_scene` were
+updated with it (the last forces the evening). What follows is the history.
 
 The brief asked for the fallback line in `spineFamilyFor` to go. Taken out
 whole, two of `test_spines`' family-pick cases fail (they assert mood 2.5 and
@@ -345,3 +347,171 @@ by the minors' gust (now on top, marked resting), the brush arm buried in his
 outline, the chipmunk's crumbs on the pit's stones (moved in front), the boot
 held against his face (now held out), the read filler's book left out to the
 fade (the afternoon picks it up).
+
+## Lookout (section 5)
+
+Written 2026-10-31 by the session that built `SPINES_WEATHER_LOOKOUT_SPEC.md`
+section 5 on top of the landscape and tower already in `lookout_land.*`
+(`lookout_land_notes.md`). Branch `screensaver`, not committed.
+
+Files: `core/scene/lookout.h/.cpp` (new: plan, fit, beats, scripts, birds,
+glyphs, the scene's static and dynamic draws, the palette tweak),
+`tests/test_lookout.cpp` (new); `lookout_land.h/.cpp` (layered draw, build
+parameters, the tower split for occlusion, `lookoutHeightAt`,
+`lookoutCabBounds`), `world.h/.cpp` (`World::lk`, `look`, `mood_override`;
+the Lookout's own tick, sort, static and dynamic paths), `app.cpp`
+(`sceneMood`, the palette tweak, `appPalette`), `spine.h/.cpp` and
+`spine_family.h` (dispatch; the fallback in `spineFamilyFor` is gone;
+`LoopPlan::fsec[8], fsteps, fbirds`; `spineBeginLoop(World&, Rng&)`),
+`memory.cpp` (a Lookout loop leaves memory alone), `hiker.h/.cpp`
+(`POSE_CLIMB`, `POSE_PERCH`, `hikerApplyClimb`, `breath_rate/breath_scale`),
+`ambient.h/.cpp` (the bird's size, colour, glide, a partner, `bird_manual`),
+`majors.h/.cpp` (two shapes, `SH_PERCH`, `SH_CHIP`; the table and weights
+untouched), `ss_app.h` (`appPalette`, a test hook), `sim/preview_common.cpp`
+(the "not built" message gone), `tests/test_spines.cpp` (the pick case for the
+window now wants `SF_LOOKOUT`; no pinned line touched).
+
+### What plays
+
+| # | Beat | s (20 seeds) | What |
+|---|---|---|---|
+| 0 | build | 13 | the frame up from black; the sky fades in from SKY4 (the hill there from the start, as the camp's ground is), the three valley layers rise from behind the hill far to near, the trail draws itself up from the foot, the pines and grass pop in (popcorn order, overshoot), a hold |
+| 1 | approach | 38 to 43 | in from off the left edge at 90 px, up the switchback legs to the last left turn; his height is 90 at the trail's foot and 44 at the stair foot, linear in screen y and ratcheted (never grows); his pace 0.5 heights a second (a stroll), up to 0.75 on a long trail so the beat stays near 40 s |
+| 2 | trail_pause | 8 | stops, turns uphill, out of breath (bent, chest heaving), hand to his brow looking up; the hawk (the ambient bird at 1.8x, gliding, 22 px/s) crosses the top right to left over this and the next beats |
+| 3 | reveal | 12 | he watches, head up, then hands on hips; the tower rises from behind the ridge as a flat silhouette (6 s, ease out), then the frame, the cab and roof, the windows switch in (`lookout_land`'s staged reveal) |
+| - | pause | 4 | |
+| 4 | climb | 30 to 36 | the last leg to the stair foot; a bird glides down onto the deck rail's east end; three flights at 0.2 heights a second with the climbing gait (`hikerApplyClimb`: knees high in step, leaning in, near hand down on the handrail) and two landings at 0.4; on the first landing he turns and looks out over the valley for 6 s; when he moves on the bird flies off west |
+| - | pause | 4 | |
+| 5 | explore | 50 | peeks into the front-right and front-left panes (leaning to the glass), round the corner to the west pane, along the front to the east end and into the cab (behind its front wall: seen only through the far windows), a hand on the fire-finder's table, out, two taps on the compass plate on the front rail (a small ring of arcs each), a look down at the chipmunk; the chipmunk comes out from behind the left leg onto the middle girt at the start and watches him (turns his way, head up) |
+| - | pause | 4 | |
+| 6 | settle | 20 | the chipmunk goes; he walks to the west edge of the deck, sits on the edge facing west, legs over, forearms forward on the rail (`POSE_PERCH`, his feet let down below the seat as the pose blends) |
+| 7 | sunset | 113 to 117 | nothing moves but his breath (4 s, 1 px) and the sky: `mood_override` steps 4.0 to 5.9 in 10 to 12 even steps (0.158 to 0.19 each), step k at k / (n + 1) of the beat; birds cross every 15 to 25 s (5 or 6 a loop), at 44 to 168 px, 40 to 60 px/s, a third of them pairs; the second or third is a pair that comes in from the left, circles once over the far treeline and comes down into it, shrinking |
+| 8 | fade | 10 | mood 0.0 at its start, 0.1 at 3 s; the star (GL_DOT in STAR, 1.6 px) comes out at 4 s; the last 2.5 s go to black |
+
+Loop length: the sunset is stretched first (to 120 s at most), then the three
+pauses (2 to 12 s), to land in 255 to 315 s; with these trails every loop
+comes out at 315 s with 4 s pauses and a 113 to 117 s sunset. The approach is
+longer than the spec's 30 s: the trails are 1300 to 2100 px of switchbacks,
+and a stroll at the walking pace the rig was made for takes 38 to 43 s even
+with the pace raised on the long ones. The climb is shorter than 40 s (30 to
+36): the stairs are small. Explore ends with about 12 s of him standing at
+the east rail.
+
+### How it is built
+
+- **Family and rng.** `spineFamilyFor` now plays the Lookout in the window
+  (and when forced). `lookoutPlan` draws only the sunset's step count; the
+  landscape, the clouds, the star, the landing place and the birds are drawn
+  in `lookoutBeginLoop` (from `spineBeginLoop`, after `memoryBeginLoop`), so
+  every other draw of the loop start happens first and in the same order as
+  before. No rng is drawn during the loop (the birds are planned; the ambient
+  bird is the scene's, `bird_manual`). The other families' paths draw nothing
+  new: the evening's, morning's and midday's pinned lines pass.
+- **World.** `World::lk` (1,916 bytes) and `World::look` (`LookoutState`, 248
+  bytes) sit beside `land`. `worldTick` hands a Lookout loop to its own tick
+  (clouds, `lookoutStep`, the hiker, a sort of him and the scene's glyphs, the
+  dirty marks); `worldDrawStatic` / `worldDrawDynamic` to
+  `lookoutDrawStatic` / `lookoutDrawDynamic`. The camp's stream glints, fire,
+  smoke, tent, props, critters, minors and the weather's effects neither step
+  nor draw nor mark. `stepHiker` calls `lookoutHikerPre` (height from feet y,
+  pace from height) and `lookoutHikerPost` (the climbing gait) and skips the
+  stream's wading lift.
+- **Cache.** `lookoutLandDraw` draws any set of layers (sky, valley, hill,
+  trail, plants, tower, cab, rails) with build parameters. The cache holds:
+  in the build, the finished layers below the one animating (the camp's
+  rule); then the landscape; through the reveal the landscape with the tower
+  drawn dynamically as it rises; from the reveal's end the landscape and the
+  tower without the cab's front and the rails, which the dynamic pass draws
+  round him: the cab's front before him while he is outside it, after him
+  while he is in it (with holes where the far windows show, so he is seen
+  through them), the rails always after him. Nothing is drawn twice over
+  itself, so no antialiased edge darkens round him. A change of cached layers
+  invalidates the cache (5 a loop, not palette rebuilds).
+- **Palette.** `World::mood_override` (-1: the host's mood) is what
+  `computeAppPalette` and `appTick`'s threshold use. Through the sunset the
+  clouds' two slots come from a palette 0.45 of mood behind (never before
+  4.0), with the same weather and night rule (`lookoutPaletteTweak`), so they
+  hold their colour last; in the fade they are the sky's.
+- **Weather.** `weatherPlan` runs as for every loop (its own rng), so the
+  kind's tint (overcast for rain, snow and storm, the fog screen) reaches the
+  palette; nothing else of the weather runs: no `weatherStep`, so no
+  lightning, gusts, rain, snow, fog bands, shimmer or hiker gags, and no
+  rain_shelter (no majors at all). A storm sunset is a muted one.
+- **Occlusion.** The tower's parts are split in `lookout_land.cpp` (the old
+  `drawTower` order kept within each part). Visible change to the stills: the
+  stair handrails are now drawn after the cab's front (they are nearer), and
+  are 16 px above the treads (were 12) so his hand meets them at 44 px.
+- **Memory.** `memoryBeginLoop` (after its one rng draw), `memoryEndLoop` and
+  `spinePlan` leave memory alone in a Lookout loop; `loop_count` still moves
+  (`worldBeginLoop`).
+
+### Numbers (`tests/test_lookout.cpp`, clang)
+
+- 20 seeds (forced, mood 4, random weather; every fourth with the night rule
+  on): 0 overruns, every loop 315 s, his height never grew on the approach,
+  in frame throughout (but for his walk in from the left), nothing in the
+  reserved corner (the hiker, birds, clouds, glyphs and the tower's bounds;
+  740 rendered checks of the corner's pixels, ground or grass only), World::busy
+  every tick, exactly one landing pair a loop, 5 or 6 sunset birds.
+- Sunset steps: 10 to 12, monotone, 0.158 to 0.19 each, ending at 5.9.
+- Palette rebuilds per loop: 13 to 15 (loop start 1, the sunset's 10 to 12,
+  the fade's 2), under the 16 the brief asked for.
+- Night caps in the fade: with the night rule on, the highest slot is 0.560
+  (cap 0.60); without it, the slots on screen stay at or under 0.340 (the
+  palette's TENT_LIT is 0.66 at mood 0.1 without the dim, but no Lookout
+  shape uses it).
+- Strips per frame, 4 whole loops rendered every tick, build excluded: avg
+  3.26, max 15 (a palette step or the fade). Incremental equals a full render
+  at 453 checkpoints, every beat and the build.
+- `sizeof(App)`: 70,320 of 98,304 (`LookoutLand` 1,916, `LookoutState` 248; 8 bytes of it from a concurrent weather change).
+- Regression: `test_spines` (evening 20/20) and `test_midday` (evening 20/20,
+  morning 10/10, midday 10/10) pinned lines identical, under clang and GCC 16.
+- GCC 16: all 10 suites pass; the Lookout's `--loops 2` lines for seeds 1 to 3
+  and 60 frames of seed 2 (`--every 131`) are byte-identical to clang's.
+
+### Looked at
+
+`ss_preview --spine lookout --mood 4 --every 25` for seeds 1 (clear and its
+random storm), 2 (clear) and 3 (wind), sheets of every beat and through the
+sunset, and 3x to 6x crops of the tower: the build, the walk up and the
+shrinking, the hawk, the reveal's stages, the stairs (he reads at 44 px:
+pack, hat, knees up, hand forward), the landing look, the rail bird (moved to
+the rail's east end, against the sky: on the front rail it was lost against
+the lit pane), the peeks, him in the cab seen through the far windows with
+his hand on the finder, the taps, the chipmunk, the sitting on the edge with
+the rail across him, the sunset's colours (gold, orange, pink, violet, deep
+blue, the clouds pink to the last), the birds, the landing pair, the star
+(made 1.6 px: at 1.3 it was a single pixel), the fade. Fixed on the way: the
+build's first second showed an unpainted band under the sky (the lowest sky
+band now runs to the frame's bottom); the rail bird's place; the star's size.
+
+### Judgment calls
+
+- Height follows screen y, not trail distance (the land notes' suggestion),
+  ratcheted so it never grows; the stairs and deck are 44 px.
+- The approach ends at the last left turn (the trail_pause is there, high on
+  the hill, near the ridge); the last leg belongs to the climb.
+- The Lookout plays at mood 4.0 from loop start whatever the host's mood (the
+  sunset starts from 4.0; a host mood of, say, 4.6 would otherwise step back).
+- The fade's mood goes to 0.0 then 0.1 as the spec says; the night key's sky
+  is a touch lighter and greener than 5.9's, so the fade's first step reads as
+  a small lift before the dark. 5.95 and 5.99 would keep it darker; not done.
+- The birds are drawn over everything (they are near): one crossing at a
+  tower's height passes in front of it, dark on dark.
+- "The wind sway rises a little" on the approach is not done: the Lookout's
+  grass is static (no swaying tufts on the hill).
+- `--loops` prints `family=lookout approach=.. trail_pause=.. reveal=..
+  climb=.. explore=.. settle=.. sunset=.. fade=.. pauses=a,b,c steps=N birds=B`.
+
+### Not verified
+
+- Anything on the board: the cache rebuild cost per palette step (13 to 15 a
+  loop, each a full static redraw of the Lookout's landscape and tower), the
+  readability of a 44 px hiker, a 7 px chipmunk and a 1.6 px star at real size.
+- The perched pose's feet offset (0.215 of his height) was set by hand and
+  checked in crops only.
+- `tools/review_clips.py` / `review_page.py` were not run on the Lookout (no
+  clips cut); they read the family from the plan line and the beat names are
+  the spec's.
+- A camp loop after a Lookout loop was run (test_lookout's memory check: an
+  evening plays to its end with no overrun); a morning or midday after one was not.

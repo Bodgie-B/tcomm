@@ -150,7 +150,7 @@ static void testFamilyPick() {
       {0.2f, 0, false, false, SF_EVENING},  {0.5f, 0, false, false, SF_MORNING}, {1.5f, 0, false, false, SF_MORNING},
       {2.49f, 0, false, false, SF_MORNING}, {2.5f, 0, false, false, SF_MIDDAY},
       {3.f, 0, false, false, SF_MIDDAY},    {4.f, 0, false, false, SF_EVENING},  {5.5f, 0, false, false, SF_EVENING},
-      {7.5f, 0, false, false, SF_MORNING},  {1.5f, 0, true, false, SF_EVENING},  {1.5f, 0, false, true, SF_EVENING},
+      {7.5f, 0, false, false, SF_MORNING},  {1.5f, 0, true, false, SF_EVENING},  {1.5f, 0, false, true, SF_LOOKOUT},
       {4.f, kForceMorning, false, false, SF_MORNING}, {1.5f, 1 + SF_EVENING, false, false, SF_EVENING},
   };
   for (const Case& c : cases) {

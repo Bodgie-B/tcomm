@@ -110,7 +110,7 @@ tent, the hiker away (he is on a day hike).
 | 1 | return | walks in from the right with a walking stick (CARRY_STICK). a: drops onto `sit`, takes the hat off, fans himself with it (hat as an item in his hand: ITEM_HAT held), puts it back. b: limps in, sits, boot off (the shoe item), shakes a stone out (a BIT_DIRT fleck), boot on. c: walks in picking burrs off his sleeves and trousers (small arm flicks), one off his hat. | 34 |
 | 2 | lunch | rummages the pack, sits with the pot (cold) and the fork. a: eats, a bee (BIT_BEE) comes for it, he swats, it comes back, he eats faster. b: the chipmunk edges in for a crumb, gets it, runs (the dinner deer/chip machinery, chip only). | 40 |
 | 3 | wade | boots off by the bank (two shoes down), wades in (`fx.wade`). a: stands midstream looking down at a fish that circles his feet (a GL_SHAPE fish from majors), tries to grab it, misses. b: slips, sits down in the water, a splash (rings), sits there a moment, shrugs. c: skips stones from midstream (the `Skip` prop). Out, boots on. | 45 |
-| 4 | nap | lies in the shade at `lie` with the hat over his face (POSE_LIE, hat item on the head). a: the chipmunk raids the open pack and leaves with something (memory: `last_stolen`). b: a leaf lands on his belly, he brushes it off without waking. c: a fly circles (BIT_MOTH flutter), he swats in his sleep, the hat falls off, he sits up. | 60 |
+| 4 | nap | lies in the shade at `lie` with the hat over his face (POSE_LIE, hat item on the head). a: the chipmunk raids the open pack and leaves with a bar (no memory: `last_stolen` holds an item the raccoon can bring back). b: a leaf lands on his belly, he brushes it off without waking. c: a fly circles (BIT_MOTH flutter), he swats in his sleep, the hat falls off, he sits up. | 60 |
 | 5 | map | sits with the map (SH_MAP open), turns it round twice, scratches his head, looks at the ridge, turns it again. a: calm. b: a gust nearly takes it; he grabs it, folds it, sits on it. | 30 |
 | 6 | afternoon | lays out the wood for the evening (if the pile is small), sits by the pit with the mug, looks out; the last 2.5 s fade. | 25 |
 
@@ -269,4 +269,8 @@ link). Push after each chunk.
   `tests/test_weather.cpp`; the evening's `--loops` lines unchanged (a
   `weather=` column appended by the preview). Notes, numbers, judgment calls
   and asks: `reviews/spines/weather_notes.md`. Awaiting the Opus review.
-- Lookout: not started.
+- Lookout: built in the preview, not committed (2026-10-31). `lookout.h/.cpp`,
+  `tests/test_lookout.cpp`; `--spine lookout` / `--lookout` play it (the
+  fallback in `spineFamilyFor` is gone). The evening's, morning's and
+  midday's pinned `--loops` lines unchanged. Notes, numbers, judgment calls:
+  `reviews/spines/notes.md` (Lookout). Awaiting the Opus review.

@@ -2005,8 +2005,8 @@ void middayPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
   static const MajorSlots kMiddaySlots = {SF_MIDDAY, {MD_RETURN, MD_LUNCH, MD_WADE, 0}, 1 | 2 | 4};
   majorsPlan(p, rng, in, mem, kMiddaySlots);
   // fishing_good leaves a fish roasting over the fire for the evening's
-  // dinner; at midday the pit is cold and lunch is over: it is left out (the
-  // pool's midday mask still has it; see the notes).
+  // dinner; at midday the pit is cold and lunch is over. The pool's midday
+  // mask no longer offers it (majors.cpp), so this guard is belt and braces.
   for (int i = 0; i < p.n_majors;) {
     if (p.major[i] != MJ_FISHING_GOOD) {
       ++i;

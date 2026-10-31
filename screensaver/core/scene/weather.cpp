@@ -21,6 +21,7 @@
 #include "../anim/ease.h"
 #include "../render/renderer.h"
 #include "../ss_app.h"
+#include "ambient.h"
 #include "director.h"
 #include "landscape.h"
 #include "script.h"
@@ -113,6 +114,8 @@ Rect breathBounds(const Steam& b) {
 }
 
 bool windy(const Weather& x) { return x.kind == WX_WIND || x.kind == WX_STORM || x.extra == WXE_GUST; }
+// The night rule is in force (the host's night mode, or the night dim tint).
+bool weatherNight(const World& w) { return w.weather.night; }
 
 // ---- the weather's bits ---------------------------------------------------------------------
 
@@ -182,6 +185,16 @@ void endGag(Weather& x) {
   x.ov_w = 0.f;
 }
 
+// A gag cut short (a beat began under it): him back where it found him, in
+// the pose he had, not walking, so the beat's first step reads him at rest.
+void gagHome(World& w) {
+  Weather& x = w.weather;
+  Hiker& h = w.hiker;
+  h.feet = x.home;
+  h.facing = x.home_face;
+  hikerSetPose(h, (PoseId)x.home_pose, 0.05f);
+}
+
 // Where the blown hat comes down: downwind (left), on the clearing, not in
 // the stream, clear of the frame's edge. Returns false when nowhere fits.
 bool hatLanding(const World& w, Vec2& to) {
@@ -228,6 +241,7 @@ void stepHat(World& w) {
     hat.down = hat.held = false;
     h.hat_on = true;
     w.fx.path_on = x.home_path;
+    gagHome(w);   // back where it found him, at rest, before the script reads him
     endGag(x);
     return;
   }
@@ -297,6 +311,7 @@ void stepFan(World& w) {
   if (lost || x.stage > 3) {
     hat.held = hat.down = false;
     h.hat_on = true;
+    if (lost) gagHome(w);
     endGag(x);
     return;
   }
@@ -428,7 +443,7 @@ void stepOverlay(World& w) {
     x.shiver_dx = x.shiver > 0.f ? (((t >> 1) & 1u) ? 1.5f : -1.5f) : 0.f;
   } else if (x.kind == WX_CHILL && t >= x.next_shiver) {
     x.next_shiver = t + ticksOf(x.rng.range(9.f, 18.f));
-    if (w.fx.on && h.visible && !h.walking && !w.major.on) x.shiver = 0.45f;
+    if (w.fx.on && h.visible && !h.walking && !w.major.on && scriptDone(w)) x.shiver = 0.45f;
   }
 }
 
@@ -483,6 +498,7 @@ void weatherPlan(World& w, uint64_t loop_seed, const Inputs& in, uint32_t loop_t
   Weather& x = w.weather;
   x = Weather{};
   x.rng.seed(loop_seed ^ 0x5745415448455221ull, 0x5745415448455203ull);
+  x.night = in.night_mode || in.weather.night_dim > 0.5f;
   if (in.have_outside) {
     x.kind = weatherKindForCode(in.weather_code);
     x.from_data = true;
@@ -522,6 +538,7 @@ void weatherPlan(World& w, uint64_t loop_seed, const Inputs& in, uint32_t loop_t
   x.breath = Steam{Vec2{0.f, 0.f}, -1.f, 1};
   x.d_breath_s = x.breath;
   x.next_flash = x.next_gust = x.next_gag = 0xFFFFFFFFu;
+  x.smoke_mul = 1.f;
 }
 
 void weatherStep(World& w) {
@@ -594,8 +611,14 @@ void weatherStep(World& w) {
     const float gap = x.rng.range(100.f, 140.f);
     x.next_flash = t + ticksOf(gap);
   }
-  x.flash = maxf(0.f, x.flash - kDt / 0.3f);
+  // By day a strike decays in 0.3 s; at night (brief section 11: a palette
+  // shift, never a flash) it is a quarter the strength and takes 1 s, still
+  // three palette steps.
+  x.flash = maxf(0.f, x.flash - kDt / (weatherNight(w) ? 1.f : 0.3f));
   x.flash_q = x.flash > 0.6f ? 2 : (x.flash > 0.2f ? 1 : 0);
+  // The smoke's rain swelling is sampled on the ambient sub-tick only, so the
+  // puffs change size only on ticks the ambient layer already marks dirty.
+  if (ambientSubTick(w)) x.smoke_mul = x.rain > 0.05f ? 1.f + 0.6f * x.rain : 1.f;
 
   // The tent: the gusts lean it; snow builds on it and comes off once when
   // he walks past; rain drips off its ridge.
@@ -721,17 +744,19 @@ float weatherTint(const World& w, WeatherTint& t) {
   // every one of its 0.05 steps a visible step: 0.05 x 0.55 > the app's 0.02).
   if (x.kind == WX_FOG) t.fog = 1.f - (1.f - clamp01(t.fog)) * (1.f - 0.45f);
   static const float kFlash[3] = {0.f, 0.5f, 1.f};
-  return kFlash[x.flash_q < 3 ? x.flash_q : 2];
+  static const float kFlashNight[3] = {0.f, 0.15f, 0.3f};
+  const float* fl = weatherNight(w) ? kFlashNight : kFlash;
+  return fl[x.flash_q < 3 ? x.flash_q : 2];
 }
 
 float weatherSwayMul(const World& w) {
   const Weather& x = w.weather;
   if (!windy(x) || !x.live) return 1.f;
   const float base = x.kind == WX_WIND || x.kind == WX_STORM ? 0.35f : 0.f;
-  return 1.f + 1.5f * fabsf(x.wind) * (base + (1.f - base) * x.gust);
+  return minf(2.2f, 1.f + 1.5f * fabsf(x.wind) * (base + (1.f - base) * x.gust));   // tuft bounds allow ~16 px of tip
 }
 
-float weatherSmokeMul(const World& w) { return w.weather.rain > 0.05f ? 1.f + 0.6f * w.weather.rain : 1.f; }
+float weatherSmokeMul(const World& w) { return w.weather.smoke_mul; }
 float weatherFireCap(const World& w) { return w.weather.rain > 0.05f ? lerp(1.f, 0.5f, w.weather.rain) : 1.f; }
 
 void weatherApplyPose(const World& w, HikerPose& p, float height) {

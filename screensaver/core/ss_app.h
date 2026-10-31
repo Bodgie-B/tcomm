@@ -117,5 +117,7 @@ int appLeaves(const App* app);
 // Test hook: the scene's World (core/scene/world.h; core-internal). Tests only.
 struct World;
 const World* appWorld(const App* app);
+// Test hook: the palette the app draws with now (after the scene's mood and weather).
+const Palette* appPalette(const App* app);
 
 }  // namespace ss

@@ -73,4 +73,22 @@ int middayVariantCount(int beat);
 // and what his hand holds that World does not place.
 void middayTick(World& w);
 
+// ---- the Lookout (lookout.cpp) ---------------------------------------------------------
+
+enum LookoutBeatId : uint8_t {
+  LB_APPROACH = 0, LB_TRAIL_PAUSE, LB_REVEAL, LB_CLIMB, LB_EXPLORE, LB_SETTLE, LB_SUNSET, LB_FADE, LB_COUNT
+};
+
+// The plan's own draws (the sunset's steps, the birds); the beats' seconds
+// are fitted in lookoutBeginLoop, once the landscape (and so the trail) is known.
+void lookoutPlan(LoopPlan& p, Rng& rng, const Inputs& in);
+// After the plan and memoryBeginLoop: the Lookout's landscape and clouds from
+// `rng` (after every other draw of the loop start), its places, the birds'
+// schedule, the beats' fitted seconds; the camp's things off.
+void lookoutBeginLoop(World& w, Rng& rng);
+void lookoutBuildTimeline(Timeline& tl, const LoopPlan& p);
+uint32_t lookoutLoopTicks(const LoopPlan& p);
+int lookoutFormatPlan(const LoopPlan& p, char* buf, size_t n);
+const char* lookoutBeatName(int beat);
+
 }  // namespace ss

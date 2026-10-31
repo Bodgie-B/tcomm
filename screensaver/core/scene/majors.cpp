@@ -137,6 +137,8 @@ float shapeReach(uint8_t sh) {
     case SH_ROD: return 0.5f * kItemRodLen + 3.f;
     case SH_LOG: return 23.f;
     case SH_DEADFISH: return 11.f;
+    case SH_PERCH: return 8.f;
+    case SH_CHIP: return 7.f;
     default: return 12.f;
   }
 }
@@ -356,6 +358,31 @@ void drawShape(const Glyph& g, Surface& s, const Rect& clip, const Palette& pal)
       capX(s, X, -3.6f, -1.6f, 3.6f, -1.4f, 1.3f, lt, clip);
       capX(s, X, 3.6f, -0.4f, 5.4f, 1.3f, 1.0f, lt, clip);
       capX(s, X, 3.6f, 1.3f, 5.4f, -0.4f, 1.0f, lt, clip);
+      break;
+    }
+    case SH_PERCH: {    // the Lookout's rail bird: body, head, beak, tail; wings by k
+      fillEllipse(s, X(0.f, -2.6f), 2.6f * g.scale, 1.7f * g.scale, c, clip);
+      fillCircle(s, X(2.2f, -4.2f), 1.25f * g.scale, c, clip);
+      static const float beak[3][2] = {{3.2f, -4.6f}, {4.9f, -4.1f}, {3.2f, -3.6f}};
+      polyX(s, X, beak, 3, c, clip);
+      static const float tail[3][2] = {{-1.8f, -2.9f}, {-5.2f, -1.2f}, {-4.6f, -0.3f}};
+      polyX(s, X, tail, 3, c, clip);
+      if (g.k < 0.5f) {
+        capX(s, X, 0.2f, -1.2f, 0.2f, 0.f, 0.7f, c, clip);   // legs on the rail
+      } else {
+        const float fl = 3.5f * sinT(g.t);
+        const float w[4][2] = {{-1.5f, -3.2f}, {-3.5f, -7.5f - fl}, {-1.f, -7.f - fl}, {1.2f, -3.4f}};
+        polyX(s, X, w, 4, c, clip);
+      }
+      break;
+    }
+    case SH_CHIP: {     // sitting up on its haunches, tail curled up behind
+      fillEllipse(s, X(0.f, -2.2f), 1.9f * g.scale, 2.4f * g.scale, c, clip);
+      const float hy = -4.8f - 0.6f * g.k;
+      fillCircle(s, X(1.0f + 0.3f * g.k, hy), 1.3f * g.scale, c, clip);
+      fillCircle(s, X(0.4f, hy - 1.2f), 0.5f * g.scale, c, clip);   // ear
+      capX(s, X, -1.6f, -0.8f, -3.4f, -3.6f, 1.3f, c, clip);
+      capX(s, X, -3.4f, -3.6f, -2.6f, -6.0f, 1.1f, c, clip);
       break;
     }
     case SH_BEAR: {     // round head, two round ears, a snout; the jaw opens by k (a roar)

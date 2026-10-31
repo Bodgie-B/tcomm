@@ -14,6 +14,8 @@
 #include "critters.h"
 #include "hiker.h"
 #include "landscape.h"
+#include "lookout.h"
+#include "lookout_land.h"
 #include "props.h"
 #include "spine.h"
 #include "minors.h"
@@ -152,6 +154,10 @@ struct WorldDirty {
 
 struct World {
   Landscape land;
+  // The Lookout's own landscape and state (lookout.h), beside the camp's; only
+  // a Lookout loop generates and draws them.
+  LookoutLand lk;
+  LookoutState look;
   Cloud clouds[2];
   BuildState build;
   Ambient amb;
@@ -185,6 +191,10 @@ struct World {
   // computeAppPalette, clamped). The morning opens in it and lifts it in 0.05
   // steps, each a palette change and a cache rebuild.
   float fog_extra;
+  // The palette's mood when the scene sets it (>= 0), instead of the host's
+  // Inputs::mood (app.cpp computeAppPalette): the Lookout's sunset steps it.
+  // -1 from worldBeginLoop: the host's.
+  float mood_override;
   // This loop's weather (weather.h): weatherPlan at loop start (app.cpp).
   Weather weather;
   LoopPlan plan;

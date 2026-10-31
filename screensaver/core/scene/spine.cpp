@@ -2621,8 +2621,6 @@ uint8_t spineFamilyFor(const Inputs& in) {
     if (m >= 0.5f && m < 2.5f) f = SF_MORNING;
     else if (m >= 2.5f && m < 3.5f) f = SF_MIDDAY;
   }
-  // Not built yet: it plays the evening until it is.
-  if (f == SF_LOOKOUT) f = SF_EVENING;
   return f;
 }
 
@@ -2795,6 +2793,9 @@ void spinePlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
     morningPlan(p, rng, in, mem);
   } else if (p.family == SF_MIDDAY) {
     middayPlan(p, rng, in, mem);
+  } else if (p.family == SF_LOOKOUT) {
+    lookoutPlan(p, rng, in);
+    return;   // memory is the camp's: the Lookout leaves it as it was (but the loop count)
   } else {
     p.family = SF_EVENING;
     eveningPlan(p, rng, in, mem);
@@ -2803,9 +2804,10 @@ void spinePlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
   for (int i = 0; i < 8; ++i) mem.last_fvar[i] = p.fvar[i];
 }
 
-void spineBeginLoop(World& w) {
+void spineBeginLoop(World& w, Rng& rng) {
   if (w.plan.family == SF_MORNING) morningLayout(w);
   if (w.plan.family == SF_MIDDAY) middayLayout(w);
+  if (w.plan.family == SF_LOOKOUT) lookoutBeginLoop(w, rng);
 }
 
 void spineLayout(World& w) {
@@ -2917,6 +2919,7 @@ void spineCritterScenes(World& w) {
 void spineBuildTimeline(Timeline& tl, const LoopPlan& p) {
   if (p.family == SF_MORNING) return morningBuildTimeline(tl, p);
   if (p.family == SF_MIDDAY) return middayBuildTimeline(tl, p);
+  if (p.family == SF_LOOKOUT) return lookoutBuildTimeline(tl, p);
   tl.add(kBuildBeat);
   for (int b = 0; b < SB_COUNT; ++b) {
     tl.add(Beat{kBeatNames[b], (float)beatSeconds(p, b), kBegin[b], kUpdate[b], kEnd[b]});
@@ -2939,6 +2942,7 @@ void spineBuildTimeline(Timeline& tl, const LoopPlan& p) {
 uint32_t spineLoopTicks(const LoopPlan& p) {
   if (p.family == SF_MORNING) return morningLoopTicks(p);
   if (p.family == SF_MIDDAY) return middayLoopTicks(p);
+  if (p.family == SF_LOOKOUT) return lookoutLoopTicks(p);
   // Every beat is whole seconds except the build, which is whole ticks.
   const uint32_t build = (uint32_t)ceilf(SS_BUILD_SECONDS * (float)SS_TICK_HZ - 1e-3f);
   const int rest = busySeconds(p) - (int)(SS_BUILD_SECONDS + 0.5f) + pauseSeconds(p);
@@ -2949,6 +2953,7 @@ int spineFormatPlan(const LoopPlan& p, char* buf, size_t n) {
   if (!buf || n == 0) return 0;
   if (p.family == SF_MORNING) return morningFormatPlan(p, buf, n);
   if (p.family == SF_MIDDAY) return middayFormatPlan(p, buf, n);
+  if (p.family == SF_LOOKOUT) return lookoutFormatPlan(p, buf, n);
   int k = snprintf(buf, n, "family=evening arrival=%d setup=%d firewood=%d fire=%d dinner=%d foodbag=%d bear=%d close=%d fillers=",
                    p.arrival, p.setup, p.firewood, p.fire, p.dinner, p.foodbag, p.bear, p.close);
   if (k < 0 || (size_t)k >= n) return k;

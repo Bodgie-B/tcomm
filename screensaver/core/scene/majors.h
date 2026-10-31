@@ -72,6 +72,8 @@ enum ShapeId : uint8_t {
   SH_ROD,        // the fishing rod tumbling through the air (or the stick); k 1: the stick
   SH_LOG,        // a log afloat (TRUNK), rot along the stream
   SH_DEADFISH,   // a small fish floating belly-up; scale grows from 0 as it surfaces
+  SH_PERCH,      // a small bird side on, pos its feet: k 0 perched, 1 wings up (taking off, flying); t flap phase
+  SH_CHIP,       // a chipmunk sitting up side on, pos its feet, tail curled up behind; k 0..1 head turned up
   SH_COUNT
 };
 

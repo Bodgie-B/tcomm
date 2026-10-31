@@ -41,14 +41,13 @@ struct Memory;
 // the stage 4 to 6 spine (arrival .. close); morning wakes in fog and breaks
 // camp (spine_morning.cpp); midday comes back from a day hike, lunches,
 // wades, naps (spine_midday.cpp: plays when forced; the mood does not pick it
-// yet). The Lookout is not built yet: it plays the evening until it is.
+// yet). The Lookout (lookout.cpp) is the sunset set piece on its own
+// landscape, played in the host's sunset window.
 enum SpineFamily : uint8_t { SF_EVENING = 0, SF_MORNING, SF_MIDDAY, SF_LOOKOUT, SF_COUNT };
 const char* spineFamilyName(int family);
 // The family this loop plays: in.spine_force when set, else the Lookout in
 // its window, the evening at night, the morning at mood [0.5, 2.5), midday at
-// [2.5, 3.5), the evening otherwise; then the Lookout (not built yet) falls
-// back to the evening, and so, for now, does midday picked by the mood (not
-// when forced: spine.cpp says why).
+// [2.5, 3.5), the evening otherwise.
 uint8_t spineFamilyFor(const Inputs& in);
 
 enum SpineBeatId : uint8_t {
@@ -104,6 +103,11 @@ struct LoopPlan {
   // coffee beat's pause), in 0.05 steps.
   uint8_t fog_steps;
   uint32_t fog_t0, fog_t1;
+  // The Lookout (lookout.cpp): each beat's fitted seconds (LookoutBeatId
+  // order; the pauses after reveal, climb and explore are in pause_s), its
+  // sunset's palette steps and how many birds cross in it.
+  uint8_t fsec[8];
+  uint8_t fsteps, fbirds;
 };
 
 // Variants a beat draws from at random, and a plan's pick. (Dinner also has
@@ -205,8 +209,10 @@ void spinePlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem);
 void spineLayout(World& w);
 // Loop start, after the plan and memoryBeginLoop: what the family needs set
 // up before the first tick (the morning: the camp already pitched, the hiker
-// asleep in the tent, the fog). Nothing for the evening.
-void spineBeginLoop(World& w);
+// asleep in the tent, the fog; the Lookout: its landscape, from `rng` after
+// every other draw of the loop start, and its fitted length). Nothing for the
+// evening, and no other family draws from `rng` here.
+void spineBeginLoop(World& w, Rng& rng);
 // Add the build beat, then the spine beats, pauses and fillers in order. The
 // loop ends with the close.
 void spineBuildTimeline(Timeline& tl, const LoopPlan& p);

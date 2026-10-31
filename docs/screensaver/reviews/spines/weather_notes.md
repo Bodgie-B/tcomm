@@ -119,6 +119,9 @@ for the loop, and an identical palette is not rebuilt. Measured whole loops,
 | chill | 1 | 9-14 | 1 |
 | storm | 16-25 (6.5 strikes) | 26-34 (6.0 strikes) | 16-22 (6.2 strikes) |
 
+(The morning storm figure measured 26 to 37 across later runs; `test_weather`
+asserts the bound.)
+
 The 1 is the loop's own rebuild; the morning's 9-17 are its own fog lift
 (the identical-palette skip drops the steps that land on the same 565
 colours, so it is now often fewer than 1 + fog steps). `test_weather` checks
@@ -126,7 +129,8 @@ these bounds (weather adds 0 but in a storm, at most 26 there). Each rebuild
 is a full static redraw plus 15 strips: cheap on the PC, **unverified on the
 board**.
 
-`sizeof(App)`: 68,080 of 98,304 (`sizeof(Weather)` 888).
+`sizeof(App)`: 68,096 of 98,304 at 9fef80d (`sizeof(Weather)` 888; the
+Lookout adds its land after this).
 
 ## rain_shelter (`MJ_RAIN_SHELTER`)
 
@@ -244,3 +248,26 @@ or to the loop-length trim). No overruns over those 20 loops.
   8.3 Hz per strip, the shimmer's speed, the leaves' path, the tent's sway.
 - The fan's hat position at the hand is approximate (the hat item's base at
   the hand).
+
+## Review fixes (chief, after the independent review of 9fef80d)
+
+- Night lightning was still a flash: the sky mean jumped 0.071 to 0.273 in
+  one tick (within the caps, but brief section 11 wants a palette shift).
+  At night a strike is now a quarter the strength (flash 0.3, 0.15, 0) and
+  decays over 1 s instead of 0.3 s, still three palette steps. Measured on
+  seed 3, night storm, the first strike: sky mean 0.071, 0.128, 0.094, 0.071.
+- The smoke puffs' rain swelling (`weatherSmokeMul`) is now sampled on the
+  ambient sub-tick only, so a puff never changes size on a tick nothing
+  marks dirty (the every-tick incremental check had found two such frames
+  inside rain_shelter).
+- The chill shiver runs only when no script holds him, as the header said.
+- A gag cut short by a beat starting under it (never seen in 480 loops, but
+  the path exists) now puts him back where the gag found him, in his pose
+  and not walking, before the beat's first step reads him.
+- The wind's sway multiplier is capped at 2.2 (the tuft bounds allow a 16 px
+  tip swing; the uncapped 2.49 left 0.3 px).
+- Not changed: random weather with no data ignores the season (there is no
+  date in `Inputs`); snow can come on a summer night. **Unverified against
+  the brief's "suits the season" until a date or season input exists**
+  (stage 8). The midday nap's stolen bar writes no memory (`last_stolen`
+  holds an `ItemId`); the spec is amended to say so.

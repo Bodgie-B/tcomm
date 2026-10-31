@@ -11,6 +11,9 @@ void memoryBeginLoop(World& w, Rng& rng) {
   Memory& m = w.memory;
   // One rng call every loop, used or not, so the sequence never depends on it.
   const uint32_t roll = rng.next();
+  // The Lookout plays somewhere else: the camp's memory waits for the next
+  // camp loop as it was (but the loop count, which worldBeginLoop moves).
+  if (w.plan.family == SF_LOOKOUT) return;
   if (m.loop_count <= 1 || m.persona_age >= 2) {
     m.brave = (uint16_t)(roll & ((1u << CR_COUNT) - 1u));
     m.persona_age = 0;
@@ -26,6 +29,7 @@ void memoryBeginLoop(World& w, Rng& rng) {
 
 void memoryEndLoop(World& w) {
   Memory& m = w.memory;
+  if (w.plan.family == SF_LOOKOUT) return;
   m.cairn_n = w.cairn.n;
   if (m.mouse_tent_runs >= 2) m.mouse_hole = true;
 }

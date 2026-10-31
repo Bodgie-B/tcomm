@@ -21,7 +21,7 @@ inline float maxf(float a, float b) { return a > b ? a : b; }
 inline float minf(float a, float b) { return a < b ? a : b; }
 
 // Sky bands as the camp draws them; the lowest runs down under the valley.
-const int kBand[6] = {0, 58, 118, 178, 228, 340};
+const int kBand[6] = {0, 58, 118, 178, 228, SS_HEIGHT};   // the lowest runs down under the valley (and the hill, in the build)
 
 float crestAt(const float* c, float x) {
   float f = (x - fl(LS_CREST_X0)) / fl(LS_CREST_STEP);
@@ -201,8 +201,9 @@ Tier tierGeom(int i, int n, float top, float fbot, float h, float pct) {
 
 // Hillside pine: trunk, tiers in `body`, a shade wedge on the east (right)
 // half: the low sun is in the west.
-void drawHillPine(Surface& s, const LsPine& p, Pixel body, Pixel shade, Pixel trunk, const Rect& clip) {
-  const float h = fl(p.h);
+void drawHillPine(Surface& s, const LsPine& p, Pixel body, Pixel shade, Pixel trunk, const Rect& clip, float k) {
+  if (k <= 0.01f) return;
+  const float h = fl(p.h) * k;
   const float base = fl(p.base_y);
   const float top = base - h;
   const float fbot = base - maxf(3.f, h * 0.16f);
@@ -221,27 +222,28 @@ void drawHillPine(Surface& s, const LsPine& p, Pixel body, Pixel shade, Pixel tr
   }
 }
 
-void drawTuft(const LsTuft& t, Surface& s, Pixel col, const Rect& clip) {
+void drawTuft(const LsTuft& t, Surface& s, Pixel col, const Rect& clip, float sc) {
+  if (sc <= 0.01f) return;
   for (int k = 0; k < t.n; ++k) {
     const float bx = fl(t.x + t.off[k]);
     const Vec2 tri[3] = {{bx - 1.4f, fl(t.y)}, {bx + 1.4f, fl(t.y)},
-                         {bx + fl(t.lean[k]), fl(t.y) - fl(t.h[k])}};
+                         {bx + fl(t.lean[k]) * sc, fl(t.y) - fl(t.h[k]) * sc}};
     fillPolygon(s, tri, 3, col, clip);
   }
 }
 
 // ---- terrain -----------------------------------------------------------------
 
-void drawCrestFill(Surface& s, const float* crest, Pixel col, const Rect& clip) {
+void drawCrestFill(Surface& s, const float* crest, Pixel col, const Rect& clip, float dy = 0.f) {
   Vec2 p[LS_CREST_N + 2];
-  for (int i = 0; i < LS_CREST_N; ++i) p[i] = Vec2{fl(LS_CREST_X0 + LS_CREST_STEP * i), crest[i]};
+  for (int i = 0; i < LS_CREST_N; ++i) p[i] = Vec2{fl(LS_CREST_X0 + LS_CREST_STEP * i), crest[i] + dy};
   p[LS_CREST_N] = Vec2{fl(LS_CREST_X0 + LS_CREST_STEP * (LS_CREST_N - 1)), fl(SS_HEIGHT + 2)};
   p[LS_CREST_N + 1] = Vec2{fl(LS_CREST_X0), fl(SS_HEIGHT + 2)};
   fillPolygon(s, p, LS_CREST_N + 2, col, clip);
 }
 
 // Serrated tree line along the near valley crest (as the camp's far trees).
-void drawValleyTrees(const LookoutLand& lk, Surface& s, Pixel col, const Rect& clip) {
+void drawValleyTrees(const LookoutLand& lk, Surface& s, Pixel col, const Rect& clip, float dy) {
   const int kMaxTeeth = 20;
   const float* c = lk.valley[2];
   int i = 0;
@@ -254,14 +256,14 @@ void drawValleyTrees(const LookoutLand& lk, Surface& s, Pixel col, const Rect& c
       const float x0 = fl(lk.spikes[i + j].x);
       const float x1 = fl(lk.spikes[i + j + 1].x);
       const float xm = 0.5f * (x0 + x1);
-      p[n++] = Vec2{x0, crestAt(c, x0)};
-      p[n++] = Vec2{xm, crestAt(c, xm) - fl(lk.spikes[i + j].h)};
+      p[n++] = Vec2{x0, crestAt(c, x0) + dy};
+      p[n++] = Vec2{xm, crestAt(c, xm) - fl(lk.spikes[i + j].h) + dy};
     }
     const float xe = fl(lk.spikes[i + m].x);
-    p[n++] = Vec2{xe, crestAt(c, xe)};
+    p[n++] = Vec2{xe, crestAt(c, xe) + dy};
     for (int j = m; j >= 0; --j) {
       const float x = fl(lk.spikes[i + j].x);
-      p[n++] = Vec2{x, crestAt(c, x) + 4.f};
+      p[n++] = Vec2{x, crestAt(c, x) + 4.f + dy};
     }
     fillPolygon(s, p, n, col, clip);
     i += m;
@@ -297,11 +299,19 @@ void drawShoulder(const LookoutLand& lk, Surface& s, Pixel col, const Rect& clip
 // The trail, coloured by the tone it lies on: `lo` on the near shoulder, `hi`
 // on the farther upper slope. Each leg is split where it crosses the shoulder
 // line (found by sampling, then bisection), so the colour change sits on the edge.
-void drawTrail(const LookoutLand& lk, Surface& s, Pixel lo, Pixel hi, const Rect& clip) {
+void drawTrail(const LookoutLand& lk, Surface& s, Pixel lo, Pixel hi, const Rect& clip, float upto) {
   const LkTrail& t = lk.trail;
   const float total = t.cum[t.n - 1];
+  const float dmax = clamp01(upto) * total;
   for (int i = 0; i + 1 < t.n; ++i) {
-    const Vec2 a = t.p[i], b = t.p[i + 1];
+    if (t.cum[i] >= dmax) break;
+    const Vec2 a = t.p[i];
+    Vec2 b = t.p[i + 1];
+    if (t.cum[i + 1] > dmax) {   // the leg being drawn in (the build): up to dmax
+      const float seg = t.cum[i + 1] - t.cum[i];
+      const float f = seg > 1e-4f ? (dmax - t.cum[i]) / seg : 1.f;
+      b = Vec2{lerp(a.x, b.x, f), lerp(a.y, b.y, f)};
+    }
     const float w = lerp(2.6f, 1.6f, 0.5f * (t.cum[i] + t.cum[i + 1]) / total);
     const int kSub = 16;
     float u0 = 0.f;
@@ -399,6 +409,9 @@ void drawLitPane(Surface& s, const Vec2* q, const TowerCols& c, const Rect& clip
   quad(s, quadAt(q, 0.80f, 0.f), quadAt(q, 0.90f, 0.f), quadAt(q, 0.56f, 1.f), quadAt(q, 0.46f, 1.f), c.glint, clip);
 }
 
+constexpr float kHand = 16.f;   // stair handrail height above the tread line (about a 44 px hiker's hand)
+
+// A flight's treads: a sawtooth polygon (LKL_TOWER).
 void drawFlight(Surface& s, const T& t, const float* a, const float* b, const TowerCols& c, const Rect& clip) {
   const int n = 5;
   const float w = (b[0] - a[0]) / fl(n), h = (b[1] - a[1]) / fl(n);
@@ -413,88 +426,23 @@ void drawFlight(Surface& s, const T& t, const float* a, const float* b, const To
   p[k++] = t.p(b[0], b[1] + off + 3.f);
   p[k++] = t.p(a[0], a[1] + off + 3.f);
   fillPolygon(s, p, k, c.stair, clip);
-  // Handrail on posts.
-  cap(s, t, a[0], a[1] - 12.f, b[0], b[1] - 12.f, 1.3f, c.stair, clip);
-  cap(s, t, a[0], a[1], a[0], a[1] - 12.f, 1.1f, c.stair, clip);
 }
 
-void drawTower(const LookoutLand& lk, Surface& s, const TowerCols& c, float rise) {
-  const T t{fl(lk.tower_x), fl(lk.tower_gy) + rise};
-  // Everything stands behind the ridge edge: nothing below the crest line.
-  const Rect clip = s.bounds().clipped(Rect{0, 0, SS_WIDTH, lk.tower_gy});
+// A flight's handrail on posts (LKL_RAILS).
+void drawFlightRail(Surface& s, const T& t, const float* a, const float* b, const TowerCols& c, const Rect& clip) {
+  cap(s, t, a[0], a[1] - kHand, b[0], b[1] - kHand, 1.3f, c.stair, clip);
+  cap(s, t, a[0], a[1], a[0], a[1] - kHand, 1.1f, c.stair, clip);
+}
 
-  // -- back legs (north side), darker.
-  const float bl = -fl(LK_LEG_BASE_HW), tl = -kCabHW;
-  cap(s, t, bl + kDX, 2.f + kDY, tl + kDX, kDeck + kDY, 3.0f, c.back, clip);
-  cap(s, t, -bl + kDX, 2.f + kDY, -tl + kDX, kDeck + kDY, 3.0f, c.back, clip);
-  // Back face girts, seen between the front legs.
-  for (int g = 1; g <= 2; ++g) {
-    const float y = g == 1 ? -0.5f * fl(LK_LEG_H) : kDeck + 3.f;
-    const float hw = legHW(y);
-    cap(s, t, -hw + kDX, y + kDY, hw + kDX, y + kDY, 1.4f, c.back, clip);
-  }
+// The see-through holes in the cab's front (the far windows against the
+// sky): integer rects, relative to the base. LKL_TOWER draws the sky and the
+// finder in them; LKL_CAB draws the wall and glass round them.
+const float kHole[2][4] = {{-7.f, kWin0 + kDY, 8.f, kWin1}, {16.f, kWin0 + 2.f, 26.f, kWin1}};
 
-  // -- west face bracing (front-left leg to back-left leg), two tiers.
-  const float lv[3] = {-3.f, -0.5f * fl(LK_LEG_H), kDeck + 3.f};
-  for (int i = 0; i < 3; ++i) {
-    const float x = -legHW(lv[i]);
-    cap(s, t, x, lv[i], x + kDX, lv[i] + kDY, 1.7f, c.brace, clip);
-  }
-  for (int i = 0; i < 2; ++i) {
-    const float xa = -legHW(lv[i]), xb = -legHW(lv[i + 1]);
-    cap(s, t, xa, lv[i], xb + kDX, lv[i + 1] + kDY, 1.4f, c.brace, clip);
-    cap(s, t, xa + kDX, lv[i] + kDY, xb, lv[i + 1], 1.4f, c.brace, clip);
-  }
-
-  // -- front legs, girts and X bracing.
-  cap(s, t, bl, 2.f, tl, kDeck, 3.4f, c.leg, clip);
-  cap(s, t, -bl, 2.f, -tl, kDeck, 3.4f, c.leg, clip);
-  for (int i = 0; i < 3; ++i) {
-    const float hw = legHW(lv[i]);
-    cap(s, t, -hw, lv[i], hw, lv[i], 1.8f, c.brace, clip);
-  }
-  for (int i = 0; i < 2; ++i) {
-    const float ha = legHW(lv[i]), hb = legHW(lv[i + 1]);
-    cap(s, t, -ha, lv[i], hb, lv[i + 1], 1.5f, c.brace, clip);
-    cap(s, t, ha, lv[i], -hb, lv[i + 1], 1.5f, c.brace, clip);
-  }
-
-  // -- deck: underside sliver, then the front and west edges.
-  quad(s, t.p(-kWalkHW, kDeck + 3.f), t.p(kWalkHW, kDeck + 3.f), t.p(kWalkHW + kDX, kDeck + 3.f + kDY),
-       t.p(-kWalkHW + kDX, kDeck + 3.f + kDY), c.under, clip);
-  quad(s, t.p(-kWalkHW, kDeck), t.p(-kWalkHW + kDX, kDeck + kDY), t.p(-kWalkHW + kDX, kDeck + 3.f + kDY),
-       t.p(-kWalkHW, kDeck + 3.f), c.deck, clip);
-  fillRectF(s, t.ox - kWalkHW, t.oy + kDeck, t.ox + kWalkHW, t.oy + kDeck + 3.f, c.deck, clip);
-
-  // -- stair: three flights, two landings, in front of the frame.
-  drawFlight(s, t, kStair[0], kStair[1], c, clip);
-  drawFlight(s, t, kStair[2], kStair[3], c, clip);
-  drawFlight(s, t, kStair[4], kStair[5], c, clip);
-  for (int l = 0; l < 2; ++l) {
-    const float* a = kStair[1 + 2 * l];
-    const float* b = kStair[2 + 2 * l];
-    const float x0 = minf(a[0], b[0]), x1 = maxf(a[0], b[0]);
-    fillRectF(s, t.ox + x0 - 1.f, t.oy + a[1], t.ox + x1 + 1.f, t.oy + a[1] + 3.f, c.stair, clip);
-    const float xo = l == 0 ? x1 : x0;   // outer end: post and short rail
-    cap(s, t, xo, a[1], xo, a[1] - 12.f, 1.1f, c.stair, clip);
-    cap(s, t, x0, a[1] - 12.f, x1, a[1] - 12.f, 1.3f, c.stair, clip);
-  }
-
-  // -- rails behind the cab: north and east sides.
-  {
-    const float yb = kRail + kDY;
-    cap(s, t, -kWalkHW + kDX, yb, kWalkHW + kDX, yb, 1.4f, c.back, clip);
-    cap(s, t, kWalkHW, kRail, kWalkHW + kDX, yb, 1.4f, c.back, clip);
-    cap(s, t, kWalkHW + kDX, kDeck + kDY, kWalkHW + kDX, yb, 1.2f, c.back, clip);
-  }
-
-  // -- cab walls.
-  const Vec2 wFT = t.p(-kCabHW, kEave), wFB = t.p(-kCabHW, kDeck);
-  const Vec2 wBT = t.p(-kCabHW + kDX, kEave + kDY), wBB = t.p(-kCabHW + kDX, kDeck + kDY);
-  quad(s, wFT, wBT, wBB, wFB, c.wall_west, clip);
+// The cab's front: wall, glass, west pane, glints, roof, flagpole. Drawn
+// clipped to one piece of the area outside the holes (see drawCab).
+void drawCabPiece(const T& t, Surface& s, const TowerCols& c, const Rect& clip) {
   fillRectF(s, t.ox - kCabHW, t.oy + kEave, t.ox + kCabHW, t.oy + kDeck, c.wall_front, clip);
-
-  // -- windows. Front: three panes, x0 = -27 + 19 i, 16 wide.
   Vec2 west[4];
   {
     const float u0 = 0.2f, u1 = 0.8f;
@@ -513,23 +461,14 @@ void drawTower(const LookoutLand& lk, Surface& s, const TowerCols& c, float rise
   }
   for (int i = 0; i < 3; ++i) fillPolygon(s, pane[i], 4, c.glass, clip);
   fillPolygon(s, west, 4, c.glass, clip);
-  if (c.windows) {
-    // Through the middle and right panes: the far windows against the sky
-    // (back wall for the middle, east wall for the right), then the finder.
-    fillRectF(s, t.ox - 7.f, t.oy + kWin0 + kDY, t.ox + 8.f, t.oy + kWin1, c.through, clip);
-    fillRectF(s, t.ox + 16.f, t.oy + kWin0 + 2.f, t.ox + 26.f, t.oy + kWin1, c.through, clip);
-    const float fy = kDeck - 24.f;   // finder table top, about waist high on a 44 px hiker
-    fillRectF(s, t.ox - 1.2f, t.oy + fy, t.ox + 1.2f, t.oy + kWin1, c.finder, clip);
-    fillEllipse(s, t.p(0.f, fy), 6.5f, 1.6f, c.finder, clip);
-    fillRectF(s, t.ox - 6.f, t.oy + fy - 4.f, t.ox - 4.8f, t.oy + fy, c.finder, clip);   // sight vanes
-    fillRectF(s, t.ox + 4.8f, t.oy + fy - 3.f, t.ox + 6.f, t.oy + fy, c.finder, clip);
-    cap(s, t, -5.4f, fy - 2.5f, 5.4f, fy - 1.6f, 0.9f, c.finder, clip);                  // the sighting wire
-    // The near two catch the sun: west pane and front-left pane.
+  if (c.windows) {   // the near two catch the sun: west pane and front-left pane
     drawLitPane(s, west, c, clip);
     drawLitPane(s, pane[0], c, clip);
   }
 
-  // -- roof: soffit on the west, slopes, fascia, flagpole.
+  // Roof: soffit on the west, slopes, fascia, flagpole.
+  const Vec2 wFT = t.p(-kCabHW, kEave);
+  const Vec2 wBT = t.p(-kCabHW + kDX, kEave + kDY);
   const float o = fl(LK_ROOF_OVER);
   const float rs = (2.f * kCabHW + 2.f * o) / (2.f * kCabHW);   // roof depth scale
   const Vec2 eFL = t.p(-kCabHW - o, kEave), eFR = t.p(kCabHW + o, kEave);
@@ -547,9 +486,136 @@ void drawTower(const LookoutLand& lk, Surface& s, const TowerCols& c, float rise
        Vec2{eFL.x, eFL.y + 1.8f}, c.roof_west, clip);
   strokeCapsule(s, apex, Vec2{apex.x, apex.y - fl(LK_POLE_H)}, 1.4f, c.leg, clip);
   fillCircle(s, Vec2{apex.x, apex.y - fl(LK_POLE_H)}, 1.3f, c.leg, clip);
+}
 
-  // -- rails in front of the cab: west side and front (gap for the stair).
-  {
+// The cab's front, round the see-through holes when the windows show (so
+// whatever is inside the cab, drawn before it, shows through them): the clip
+// cut into bands of rows, each band into the spans between the holes.
+void drawCab(const T& t, Surface& s, const TowerCols& c, const Rect& clip) {
+  if (!c.windows) {
+    drawCabPiece(t, s, c, clip);
+    return;
+  }
+  Rect h[2];
+  for (int i = 0; i < 2; ++i)
+    h[i] = Rect{(int)(t.ox + kHole[i][0]), (int)(t.oy + kHole[i][1]), (int)(t.ox + kHole[i][2]), (int)(t.oy + kHole[i][3])};
+  int ys[6] = {clip.y0, clip.y1, h[0].y0, h[0].y1, h[1].y0, h[1].y1};
+  for (int i = 1; i < 6; ++i)   // sort
+    for (int j = i; j > 0 && ys[j] < ys[j - 1]; --j) {
+      const int tmp = ys[j];
+      ys[j] = ys[j - 1];
+      ys[j - 1] = tmp;
+    }
+  for (int k = 0; k + 1 < 6; ++k) {
+    const int ya = ys[k] < clip.y0 ? clip.y0 : ys[k];
+    const int yb = ys[k + 1] > clip.y1 ? clip.y1 : ys[k + 1];
+    if (yb <= ya) continue;
+    int x = clip.x0;
+    for (int i = 0; i < 2; ++i) {   // h[0] is left of h[1]
+      if (h[i].y0 > ya || h[i].y1 < yb) continue;   // the hole does not cover this band
+      if (h[i].x0 > x) drawCabPiece(t, s, c, Rect{x, ya, h[i].x0 < clip.x1 ? h[i].x0 : clip.x1, yb});
+      if (h[i].x1 > x) x = h[i].x1;
+    }
+    if (x < clip.x1) drawCabPiece(t, s, c, Rect{x, ya, clip.x1, yb});
+  }
+}
+
+void drawTower(const LookoutLand& lk, Surface& s, const TowerCols& c, float rise, const Rect& clip_in, uint16_t mask) {
+  const T t{fl(lk.tower_x), fl(lk.tower_gy) + rise};
+  // Everything stands behind the ridge edge: nothing below the crest line.
+  const Rect clip = clip_in.clipped(Rect{0, 0, SS_WIDTH, lk.tower_gy});
+  if (clip.empty()) return;
+  const float bl = -fl(LK_LEG_BASE_HW), tl = -kCabHW;
+  const float lv[3] = {-3.f, -0.5f * fl(LK_LEG_H), kDeck + 3.f};
+
+  if (mask & LKL_BIT(LKL_TOWER)) {
+    // -- back legs (north side), darker.
+    cap(s, t, bl + kDX, 2.f + kDY, tl + kDX, kDeck + kDY, 3.0f, c.back, clip);
+    cap(s, t, -bl + kDX, 2.f + kDY, -tl + kDX, kDeck + kDY, 3.0f, c.back, clip);
+    // Back face girts, seen between the front legs.
+    for (int g = 1; g <= 2; ++g) {
+      const float y = g == 1 ? -0.5f * fl(LK_LEG_H) : kDeck + 3.f;
+      const float hw = legHW(y);
+      cap(s, t, -hw + kDX, y + kDY, hw + kDX, y + kDY, 1.4f, c.back, clip);
+    }
+    // -- west face bracing (front-left leg to back-left leg), two tiers.
+    for (int i = 0; i < 3; ++i) {
+      const float x = -legHW(lv[i]);
+      cap(s, t, x, lv[i], x + kDX, lv[i] + kDY, 1.7f, c.brace, clip);
+    }
+    for (int i = 0; i < 2; ++i) {
+      const float xa = -legHW(lv[i]), xb = -legHW(lv[i + 1]);
+      cap(s, t, xa, lv[i], xb + kDX, lv[i + 1] + kDY, 1.4f, c.brace, clip);
+      cap(s, t, xa + kDX, lv[i] + kDY, xb, lv[i + 1], 1.4f, c.brace, clip);
+    }
+    // -- front legs, girts and X bracing.
+    cap(s, t, bl, 2.f, tl, kDeck, 3.4f, c.leg, clip);
+    cap(s, t, -bl, 2.f, -tl, kDeck, 3.4f, c.leg, clip);
+    for (int i = 0; i < 3; ++i) {
+      const float hw = legHW(lv[i]);
+      cap(s, t, -hw, lv[i], hw, lv[i], 1.8f, c.brace, clip);
+    }
+    for (int i = 0; i < 2; ++i) {
+      const float ha = legHW(lv[i]), hb = legHW(lv[i + 1]);
+      cap(s, t, -ha, lv[i], hb, lv[i + 1], 1.5f, c.brace, clip);
+      cap(s, t, ha, lv[i], -hb, lv[i + 1], 1.5f, c.brace, clip);
+    }
+    // -- deck: underside sliver, then the front and west edges.
+    quad(s, t.p(-kWalkHW, kDeck + 3.f), t.p(kWalkHW, kDeck + 3.f), t.p(kWalkHW + kDX, kDeck + 3.f + kDY),
+         t.p(-kWalkHW + kDX, kDeck + 3.f + kDY), c.under, clip);
+    quad(s, t.p(-kWalkHW, kDeck), t.p(-kWalkHW + kDX, kDeck + kDY), t.p(-kWalkHW + kDX, kDeck + 3.f + kDY),
+         t.p(-kWalkHW, kDeck + 3.f), c.deck, clip);
+    fillRectF(s, t.ox - kWalkHW, t.oy + kDeck, t.ox + kWalkHW, t.oy + kDeck + 3.f, c.deck, clip);
+    // -- stair: three flights' treads and two landings' floors, in front of the frame.
+    drawFlight(s, t, kStair[0], kStair[1], c, clip);
+    drawFlight(s, t, kStair[2], kStair[3], c, clip);
+    drawFlight(s, t, kStair[4], kStair[5], c, clip);
+    for (int l = 0; l < 2; ++l) {
+      const float* a = kStair[1 + 2 * l];
+      const float* b = kStair[2 + 2 * l];
+      const float x0 = minf(a[0], b[0]), x1 = maxf(a[0], b[0]);
+      fillRectF(s, t.ox + x0 - 1.f, t.oy + a[1], t.ox + x1 + 1.f, t.oy + a[1] + 3.f, c.stair, clip);
+    }
+    // -- rails behind the cab: north and east sides.
+    {
+      const float yb = kRail + kDY;
+      cap(s, t, -kWalkHW + kDX, yb, kWalkHW + kDX, yb, 1.4f, c.back, clip);
+      cap(s, t, kWalkHW, kRail, kWalkHW + kDX, yb, 1.4f, c.back, clip);
+      cap(s, t, kWalkHW + kDX, kDeck + kDY, kWalkHW + kDX, yb, 1.2f, c.back, clip);
+    }
+    // -- the west wall, and inside the cab: the far windows against the sky
+    // through the middle and right panes, and the fire-finder table.
+    const Vec2 wFT = t.p(-kCabHW, kEave), wFB = t.p(-kCabHW, kDeck);
+    const Vec2 wBT = t.p(-kCabHW + kDX, kEave + kDY), wBB = t.p(-kCabHW + kDX, kDeck + kDY);
+    quad(s, wFT, wBT, wBB, wFB, c.wall_west, clip);
+    if (c.windows) {
+      for (int i = 0; i < 2; ++i)
+        fillRectF(s, t.ox + kHole[i][0], t.oy + kHole[i][1], t.ox + kHole[i][2], t.oy + kHole[i][3], c.through, clip);
+      const float fy = kDeck - 24.f;   // finder table top, about waist high on a 44 px hiker
+      fillRectF(s, t.ox - 1.2f, t.oy + fy, t.ox + 1.2f, t.oy + kWin1, c.finder, clip);
+      fillEllipse(s, t.p(0.f, fy), 6.5f, 1.6f, c.finder, clip);
+      fillRectF(s, t.ox - 6.f, t.oy + fy - 4.f, t.ox - 4.8f, t.oy + fy, c.finder, clip);   // sight vanes
+      fillRectF(s, t.ox + 4.8f, t.oy + fy - 3.f, t.ox + 6.f, t.oy + fy, c.finder, clip);
+      cap(s, t, -5.4f, fy - 2.5f, 5.4f, fy - 1.6f, 0.9f, c.finder, clip);                  // the sighting wire
+    }
+  }
+
+  if (mask & LKL_BIT(LKL_CAB)) drawCab(t, s, c, clip);
+
+  if (mask & LKL_BIT(LKL_RAILS)) {
+    // -- stair handrails, landing posts and rails.
+    drawFlightRail(s, t, kStair[0], kStair[1], c, clip);
+    drawFlightRail(s, t, kStair[2], kStair[3], c, clip);
+    drawFlightRail(s, t, kStair[4], kStair[5], c, clip);
+    for (int l = 0; l < 2; ++l) {
+      const float* a = kStair[1 + 2 * l];
+      const float* b = kStair[2 + 2 * l];
+      const float x0 = minf(a[0], b[0]), x1 = maxf(a[0], b[0]);
+      const float xo = l == 0 ? x1 : x0;   // outer end: post and short rail
+      cap(s, t, xo, a[1], xo, a[1] - kHand, 1.1f, c.stair, clip);
+      cap(s, t, x0, a[1] - kHand, x1, a[1] - kHand, 1.3f, c.stair, clip);
+    }
+    // -- rails in front of the cab: west side and front (gap for the stair).
     const float xw0 = -kWalkHW, xw1 = -kWalkHW + kDX;
     cap(s, t, xw0, kRail, xw1, kRail + kDY, 1.5f, c.rail_west, clip);
     cap(s, t, xw0, kRail + 10.f, xw1, kRail + 10.f + kDY, 1.1f, c.rail_west, clip);
@@ -615,6 +681,23 @@ void towerColours(const Palette& pal, float mood, float reveal, TowerCols& c) {
   c.finder = A;
   // The sky seen through the cab: the band behind the window line.
   c.through = pal[SKY1];
+}
+
+// Stable 0..1 per position (as buildup.cpp's), so a plant pops at the same
+// moment in every strip.
+float hash01(float x, float y) {
+  uint32_t h = (uint32_t)(int32_t)x * 73856093u ^ (uint32_t)(int32_t)y * 19349663u;
+  h ^= h >> 13;
+  h *= 0x5bd1e995u;
+  h ^= h >> 15;
+  return (float)(h & 0xFFFFu) / 65536.f;
+}
+
+// A plant's scale in the build's plants phase u: popcorn order, overshoot.
+float lookoutPlantScale(float u, float x, float y) {
+  if (u >= 2.f) return 1.f;
+  const float d = 0.62f * hash01(x, y);
+  return easeOutBack(window(u, d, d + 0.12f));
 }
 
 }  // namespace
@@ -691,36 +774,80 @@ void lookoutLandGenerate(LookoutLand& lk, Rng& rng) {
   lk.sh_ph = rng.uniform();
 }
 
-void lookoutLandDrawStatic(const LookoutLand& lk, Surface& frame, const Palette& pal, float mood,
-                           float tower_reveal) {
-  const Rect clip = frame.bounds();
-  for (int b = 0; b < 5; ++b) {
-    fillRect(frame, Rect{0, kBand[b], SS_WIDTH, kBand[b + 1]}, pal[(Slot)(SKY0 + b)], clip);
+LkDraw lookoutDrawDone(float mood, float reveal, uint16_t layers) {
+  LkDraw d;
+  d.layers = layers;
+  d.sky = 1.f;
+  d.valley_drop[0] = d.valley_drop[1] = d.valley_drop[2] = 0.f;
+  d.trail = 1.f;
+  d.plants_u = 2.f;
+  d.reveal = reveal;
+  d.mood = mood;
+  return d;
+}
+
+void lookoutLandDraw(const LookoutLand& lk, Surface& s, const Rect& clip_in, const Palette& pal, const LkDraw& d) {
+  const Rect clip = clip_in.clipped(s.bounds());
+  if (clip.empty()) return;
+  const uint16_t L = d.layers;
+  if (L & LKL_BIT(LKL_SKY)) {
+    const float k = clamp01(d.sky);
+    for (int b = 0; b < 5; ++b) {
+      const Pixel c = k >= 1.f ? pal[(Slot)(SKY0 + b)] : mixRGB(pal[SKY4], pal[(Slot)(SKY0 + b)], k);
+      fillRect(s, Rect{0, kBand[b], SS_WIDTH, kBand[b + 1]}, c, clip);
+    }
   }
-  for (int L = 0; L < 3; ++L) drawCrestFill(frame, lk.valley[L], pal[(Slot)(RIDGE_FAR + L)], clip);
-  drawValleyTrees(lk, frame, pal[TREES_FAR], clip);
-
+  if (L & LKL_BIT(LKL_VALLEY)) {
+    for (int l = 0; l < 3; ++l) drawCrestFill(s, lk.valley[l], pal[(Slot)(RIDGE_FAR + l)], clip, d.valley_drop[l]);
+    drawValleyTrees(lk, s, pal[TREES_FAR], clip, d.valley_drop[2]);
+  }
   const Pixel upper = mixRGB(pal[GROUND], pal[RIDGE_NEAR], 0.3f);   // the farther slope
-  drawCrestFill(frame, lk.hill, upper, clip);
-  drawShoulder(lk, frame, pal[GROUND], clip);
-  drawForeground(lk, frame, pal[GROUND_DARK], clip);
-
+  if (L & LKL_BIT(LKL_HILL)) {
+    drawCrestFill(s, lk.hill, upper, clip);
+    drawShoulder(lk, s, pal[GROUND], clip);
+    drawForeground(lk, s, pal[GROUND_DARK], clip);
+  }
   // Trail: a lighter ground path on either tone, a little narrower as it climbs.
-  drawTrail(lk, frame, mixRGB(pal[GROUND], pal[GRASS], 0.55f), mixRGB(upper, pal[GRASS], 0.55f), clip);
-
-  for (int i = 0; i < lk.n_tufts; ++i) drawTuft(lk.tufts[i], frame, pal[GRASS], clip);
-  const Pixel shade = mixRGB(pal[FOLIAGE_DARK], pal[ACTOR], 0.45f);
-  for (int i = 0; i < lk.n_pines; ++i) drawHillPine(frame, lk.pines[i], pal[FOLIAGE_DARK], shade, pal[TRUNK], clip);
-
-  const float r = clamp01(tower_reveal);
-  if (r > 0.f) {
+  if ((L & LKL_BIT(LKL_TRAIL)) && d.trail > 0.f)
+    drawTrail(lk, s, mixRGB(pal[GROUND], pal[GRASS], 0.55f), mixRGB(upper, pal[GRASS], 0.55f), clip, d.trail);
+  if ((L & LKL_BIT(LKL_PLANTS)) && d.plants_u >= 0.f) {
+    for (int i = 0; i < lk.n_tufts; ++i) {
+      const LsTuft& t = lk.tufts[i];
+      drawTuft(t, s, pal[GRASS], clip, lookoutPlantScale(d.plants_u, fl(t.x), fl(t.y)));
+    }
+    const Pixel shade = mixRGB(pal[FOLIAGE_DARK], pal[ACTOR], 0.45f);
+    for (int i = 0; i < lk.n_pines; ++i) {
+      const LsPine& p = lk.pines[i];
+      drawHillPine(s, p, pal[FOLIAGE_DARK], shade, pal[TRUNK], clip, lookoutPlantScale(d.plants_u, fl(p.x), fl(p.base_y)));
+    }
+  }
+  const uint16_t tower = (uint16_t)(L & (LKL_BIT(LKL_TOWER) | LKL_BIT(LKL_CAB) | LKL_BIT(LKL_RAILS)));
+  const float r = clamp01(d.reveal);
+  if (tower && r > 0.f) {
     TowerCols c;
-    towerColours(pal, mood, r, c);
+    towerColours(pal, d.mood, r, c);
     // Rising from behind the ridge: the whole tower plus a margin below the crest.
     const float h = fl(LK_LEG_H + LK_CAB_H + LK_ROOF_H + LK_POLE_H) + 10.f;
     const float rise = r < 0.5f ? (1.f - easeOutCubic(r * 2.f)) * h : 0.f;
-    drawTower(lk, frame, c, rise);
+    drawTower(lk, s, c, rise, clip, tower);
   }
+}
+
+void lookoutLandDrawStatic(const LookoutLand& lk, Surface& frame, const Palette& pal, float mood,
+                           float tower_reveal) {
+  lookoutLandDraw(lk, frame, frame.bounds(), pal, lookoutDrawDone(mood, tower_reveal, LKL_ALL));
+}
+
+float lookoutHeightAt(const LookoutLand& lk, float y) {
+  const float y0 = lk.trail.p[0].y, y1 = fl(lk.tower_gy);
+  return lerp(44.f, 90.f, clamp01((y - y1) / (y0 - y1)));
+}
+
+Rect lookoutCabBounds(const LookoutLand& lk) {
+  const int ox = lk.tower_x, oy = lk.tower_gy;
+  const int top = (int)floorf(kEave + kDY * 0.6f - fl(LK_ROOF_H) - fl(LK_POLE_H)) - 3;
+  return Rect{ox + (int)floorf(-kCabHW - fl(LK_ROOF_OVER) + kDX) - 3, oy + top, ox + (int)kCabHW + LK_ROOF_OVER + 3,
+              oy + (int)kDeck + 2};
 }
 
 Vec2 lookoutTrailAt(const LookoutLand& lk, float s) {

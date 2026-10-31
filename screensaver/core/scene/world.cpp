@@ -59,6 +59,11 @@ void addPines(ActorList& L, const World& w, const Rect& r, int owner) {
 
 void sortActors(World& w) {
   ActorList L{w.actors, 0};
+  if (w.plan.family == SF_LOOKOUT) {   // the Lookout: him and the scene's glyphs, nothing of the camp
+    if (w.hiker.visible) L.add(ACT_HIKER, 0, baseY(w.hiker.feet.y));
+    for (int i = 0; i < GLYPH_MAX; ++i)
+      if (w.major.g[i].kind != GL_NONE) L.add(ACT_MAJOR, (uint8_t)i, w.major.g[i].base_y);
+  } else {
   L.add(ACT_FIRE, 0, (int16_t)(w.fire.pos.y + 5.f));   // front stones
   for (int i = 0; i < w.amb.n_tufts; ++i) L.add(ACT_TUFT, (uint8_t)i, w.land.tufts[w.amb.tuft[i]].y);
   const Hiker& h = w.hiker;
@@ -101,6 +106,7 @@ void sortActors(World& w) {
     if (w.weather.bit[i].kind != BIT_NONE) L.add(ACT_WXBIT, (uint8_t)i, baseY(w.weather.bit[i].land_y));
   for (int i = 0; i < GLYPH_MAX; ++i)   // a major's glyphs (majors.h)
     if (w.major.g[i].kind != GL_NONE) L.add(ACT_MAJOR, (uint8_t)i, w.major.g[i].base_y);
+  }
   const int n = L.n;
   ActorRef* a = w.actors;
   for (int i = 1; i < n; ++i) {
@@ -127,6 +133,8 @@ void stepHiker(World& w) {
     return;
   }
   const bool was_walking = h.walking;
+  const bool lookout = w.plan.family == SF_LOOKOUT;
+  if (lookout) lookoutHikerPre(w);   // his height from where he is on the hill, his pace from his height
   hikerTick(h, SS_TICK_DT);
   if (h.walking && fx.path_on) {
     const float span = fx.path_x1 - fx.path_x0;
@@ -135,6 +143,7 @@ void stepHiker(World& w) {
   } else if (was_walking && fx.path_on && fabsf(h.feet.x - fx.path_x1) < 0.5f) {
     h.feet.y = fx.path_y1;   // arrived this tick: the last step's y too
   }
+  if (lookout) lookoutHikerPost(w);   // the climbing gait on the stairs
 
   HikerPose& P = h.pose;
   P.lean += fx.lean;
@@ -152,7 +161,7 @@ void stepHiker(World& w) {
   if (h.walking) {
     float cy, half;
     // Wading: each step lifts him a little higher than on the bank.
-    if (landscapeStreamSpan(w.land, h.feet.x, cy, half) && fabsf(h.feet.y - cy) < half) {
+    if (!lookout && landscapeStreamSpan(w.land, h.feet.x, cy, half) && fabsf(h.feet.y - cy) < half) {
       const float s = sinT(h.walk_phase * 2.f);
       P.lift += 0.045f * s * s;
     }
@@ -352,9 +361,65 @@ void worldBeginLoop(World& w, Rng& rng) {
   d.u = w.build.u;
   d.fire_stones = 0.f;
   d.fire_int = 0.f;
+  w.mood_override = -1.f;   // the host's mood (the Lookout sets its own in spineBeginLoop)
 }
 
+namespace {
+
+// A Lookout loop's tick: the clouds, the scene's own step, the hiker, the
+// actor sort and the dirty marks. None of the camp's dynamic things (stream,
+// fire, smoke, tent, props, critters, minors, the weather's effects) run or
+// mark; the loop rng is not drawn from (the birds are planned at loop start).
+void lookoutTick(World& w, Renderer& r) {
+  ++w.tick;
+  for (Cloud& c : w.clouds) cloudStep(c);
+  lookoutStep(w);
+  stepHiker(w);
+  sortActors(w);
+
+  WorldDirty& d = w.dirty;
+  LookoutState& L = w.look;
+  if (w.fade != d.fade) {
+    r.markAllDirty();
+    d.fade = w.fade;
+  }
+  const uint16_t cached = lookoutCached(w);
+  if (cached != L.d_cached) {   // the cache holds another set of layers: rebuild it
+    r.invalidateCache();
+    L.d_cached = cached;
+  }
+  const int bphase = lookoutBuildPhase(w);
+  if (bphase != L.d_bphase) {
+    r.markAllDirty();
+    L.d_bphase = (uint8_t)bphase;
+  } else if (L.build_t != L.d_build_t) {
+    int y0, y1;
+    lookoutBuildRows(w, y0, y1);
+    if (y1 > y0) r.markDirtyRows(y0, y1);
+  }
+  L.d_build_t = L.build_t;
+  if (L.reveal != L.d_reveal) {
+    if (L.stage == LKS_REVEAL || L.d_reveal > 0.f) markOn(r, lookoutTowerBounds(w.lk));
+    L.d_reveal = L.reveal;
+  }
+  if (L.inside != L.d_inside) {   // the cab's front goes from behind him to in front of him
+    markOn(r, lookoutCabBounds(w.lk));
+    L.d_inside = L.inside;
+  }
+  const bool sky_fading = buildSkyFade(w.build) < 1.f;   // the clouds fade in with the sky
+  for (int i = 0; i < 2; ++i) track(r, d.cloud[i], cloudBounds(w.clouds[i]), sky_fading);
+  track(r, d.bird, ambientBirdBounds(w), w.amb.bird.active);
+  track(r, d.hiker, w.hiker_rect, w.hiker.visible);
+  majorsTrack(w.major, r);
+}
+
+}  // namespace
+
 void worldTick(World& w, Rng& rng, Renderer& r) {
+  if (w.plan.family == SF_LOOKOUT) {
+    lookoutTick(w, r);
+    return;
+  }
   ++w.tick;
   for (Cloud& c : w.clouds) cloudStep(c);
   ambientStep(w, rng);
@@ -481,12 +546,20 @@ void worldDrawWater(const World& w, Surface& s, const Rect& clip, const Palette&
 }
 
 void worldDrawStatic(const World& w, Surface& frame, const Palette& pal, float mood) {
+  if (w.plan.family == SF_LOOKOUT) {
+    lookoutDrawStatic(w, frame, pal, mood);
+    return;
+  }
   landscapeDrawStatic(w.land, frame, pal, mood, w.build);
 }
 
 // The per-strip draw order, far to near. Everything dynamic is drawn here and
 // nowhere else.
 void worldDrawDynamic(const World& w, Surface& strip, const Rect& clip, const Palette& pal, float mood) {
+  if (w.plan.family == SF_LOOKOUT) {
+    lookoutDrawDynamic(w, strip, clip, pal, mood);
+    return;
+  }
   const BuildState& b = w.build;
 
   // 0. Heat shimmer: the cached rows of the far-ridge band shifted in place

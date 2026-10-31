@@ -119,18 +119,46 @@ bool smokeGeom(const World& w, int i, Vec2& c, float& r) {
   return true;
 }
 
+Rect boundsOf(float x0, float y0, float x1, float y1) {
+  return Rect{(int)floorf(x0), (int)floorf(y0), (int)ceilf(x1), (int)ceilf(y1)};
+}
+
 void birdGeom(const Bird& b, Vec2& l, Vec2& r) {
   // Wing angle in turns: flapping, with glides where the gate closes.
-  const float gate = clamp01(0.4f + sinT(b.x / 170.f + b.path_ph));
+  float gate = clamp01(0.4f + sinT(b.x / 170.f + b.path_ph));
+  if (b.glide > 0.f) gate *= 1.f - 0.8f * b.glide;
   const float ang = 0.045f + 0.05f * sinT(b.flap) * gate;
-  const float dx = kBirdHalfSpan * cosT(ang), dy = kBirdHalfSpan * sinT(ang);
+  const float span = kBirdHalfSpan * b.scale;
+  const float dx = span * cosT(ang), dy = span * sinT(ang);
   l = Vec2{b.x - dx, b.y - dy};
   r = Vec2{b.x + dx, b.y - dy};
 }
 
-Rect boundsOf(float x0, float y0, float x1, float y1) {
-  return Rect{(int)floorf(x0), (int)floorf(y0), (int)ceilf(x1), (int)ceilf(y1)};
+// The partner of a pair: the same bird, offset, a little out of step, its own size.
+Bird partnerOf(const Bird& b) {
+  Bird p = b;
+  p.x = b.x + b.pdx * b.scale;
+  p.y = b.y + b.pdy * b.scale;
+  p.flap = b.flap + 0.37f;
+  p.flap -= floorf(p.flap);
+  p.scale = b.scale * b.pscale;
+  p.pair = false;
+  return p;
 }
+
+Rect birdRect(const Bird& b) {
+  const float s = b.scale;
+  return boundsOf(b.x - 8.f * s, b.y - 8.f * s, b.x + 8.f * s, b.y + 4.f * s);
+}
+
+void drawOneBird(const Bird& b, Surface& s, const Rect& clip, const Palette& pal) {
+  Vec2 l, r;
+  birdGeom(b, l, r);
+  const float w = b.scale < 1.f ? maxf(1.f, 1.7f * b.scale) : 1.7f * b.scale;
+  strokeCapsule(s, Vec2{b.x, b.y}, l, w, pal[(Slot)b.slot], clip);
+  strokeCapsule(s, Vec2{b.x, b.y}, r, w, pal[(Slot)b.slot], clip);
+}
+
 
 // One flame pool: a flat polygon whose top edge is four tongues and three
 // valleys, every height and lean from its own sum of sines (top octave
@@ -200,6 +228,13 @@ void ambientInit(World& w, Rng& rng) {
   b.path_ph = 0.f;
   b.flap = 0.f;
   b.wait = (uint32_t)(rng.range(15.f, 45.f) * (float)SS_TICK_HZ);   // counted from the end of the build
+  b.scale = 1.f;
+  b.slot = TREES_FAR;
+  b.glide = 0.f;
+  b.pair = false;
+  b.pdx = b.pdy = 0.f;
+  b.pscale = 1.f;
+  a.bird_manual = false;
 }
 
 bool ambientSubTick(const World& w) { return (w.tick & 1u) == 0u; }
@@ -250,7 +285,7 @@ void ambientStep(World& w, Rng& rng) {
   // The bird waits for the build to finish, then crosses every 40 to 90 s
   // (start to start; a crossing takes 20 to 30 s).
   Bird& b = a.bird;
-  if (!buildDone(w.build)) return;
+  if (a.bird_manual || !buildDone(w.build)) return;
   if (b.wait > 0) --b.wait;
   if (!b.active && b.wait == 0) {
     b.active = true;
@@ -287,7 +322,12 @@ Rect ambientGlintBounds(const World& w, int i) {
 Rect ambientBirdBounds(const World& w) {
   const Bird& b = w.amb.bird;
   if (!b.active) return kEmpty;
-  return boundsOf(b.x - 8.f, b.y - 8.f, b.x + 8.f, b.y + 4.f);
+  Rect r = birdRect(b);
+  if (b.pair) {
+    const Rect q = birdRect(partnerOf(b));
+    r = Rect{r.x0 < q.x0 ? r.x0 : q.x0, r.y0 < q.y0 ? r.y0 : q.y0, r.x1 > q.x1 ? r.x1 : q.x1, r.y1 > q.y1 ? r.y1 : q.y1};
+  }
+  return r;
 }
 
 Rect ambientSmokeBounds(const World& w, int i) {
@@ -334,10 +374,8 @@ void ambientDrawGlints(const World& w, Surface& s, const Rect& clip, const Palet
 void ambientDrawBird(const World& w, Surface& s, const Rect& clip, const Palette& pal) {
   if (!overlaps(ambientBirdBounds(w), clip)) return;
   const Bird& b = w.amb.bird;
-  Vec2 l, r;
-  birdGeom(b, l, r);
-  strokeCapsule(s, Vec2{b.x, b.y}, l, 1.7f, pal[TREES_FAR], clip);
-  strokeCapsule(s, Vec2{b.x, b.y}, r, 1.7f, pal[TREES_FAR], clip);
+  drawOneBird(b, s, clip, pal);
+  if (b.pair) drawOneBird(partnerOf(b), s, clip, pal);
 }
 
 void ambientDrawSmoke(const World& w, Surface& s, const Rect& clip, const Palette& pal) {

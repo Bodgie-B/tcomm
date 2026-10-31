@@ -35,6 +35,10 @@ enum PoseId : uint8_t {
                      // to POSE_FISH_STAND quickly to whip it forward
   POSE_HUG,          // cold: arms crossed tight over the chest, hunched, chin tucked (the chill
                      // weather lays its upper body over a sit or a stand: weather.cpp)
+  POSE_CLIMB,        // a stair step: knee high, leaning into it, the near hand down on the handrail
+                     // (the Lookout's stairs blend a climbing gait over the walk: hikerApplyClimb)
+  POSE_PERCH,        // sitting on an edge, legs hanging over it, forearms forward on a rail (the
+                     // Lookout's deck: his feet hang about 0.215 height below the seat)
   POSE_COUNT
 };
 
@@ -93,6 +97,10 @@ struct Hiker {
 
   CarryId carry;
   float breath_phase;  // turns
+  // Breathing: rate and depth multipliers on the rig's own (3.6 s, about 1 %
+  // of height); 1 and 1 from hikerInit. The Lookout's sunset slows it to a
+  // 4 s cycle and deepens it to 1 px at 44 px.
+  float breath_rate, breath_scale;
 };
 
 void hikerInit(Hiker& h, Vec2 feet, int facing);
@@ -103,6 +111,10 @@ void hikerCarry(Hiker& h, CarryId c);
 void hikerTick(Hiker& h, float dt);                           // advances blend, walk, breathing; dt 0 recomposes
 Rect hikerBounds(const Hiker& h);                             // every pixel hikerDraw can touch, plus 2 px
 void hikerDraw(const Hiker& h, Surface& s, const Palette& pal, const Rect& clip);
+// A climbing gait over the composed pose (after hikerTick), weight w 0..1:
+// while walking, knees high in step with the walk phase and a forward lean;
+// standing, POSE_CLIMB. The near hand stays down on the handrail.
+void hikerApplyClimb(Hiker& h, float w);
 // Hand i (0 near, 1 far) in frame space, from the composed pose (breathing and
 // grounding included): where hikerDraw puts the end of that forearm.
 Vec2 hikerHandPos(const Hiker& h, int i);

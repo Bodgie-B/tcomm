@@ -37,6 +37,15 @@ struct Bird {
   float path_ph;     // path sine phase, turns
   float flap;        // flap clock, turns
   uint32_t wait;     // ticks until the next crossing starts
+  // The Lookout's birds (lookout.cpp drives them; ambientInit sets the camp's
+  // one bird's defaults, which draw exactly as before): size, colour, a slow
+  // glide (the hawk), and a partner flying at (pdx, pdy) from it.
+  float scale;       // 1 the camp's bird
+  uint8_t slot;      // palette Slot (TREES_FAR)
+  float glide;       // 0..1: 1 wings held out, a slow beat now and then
+  bool pair;
+  float pdx, pdy;    // the partner's offset, px (before scale)
+  float pscale;      // the partner's size relative to `scale` (it lands smaller, farther)
 };
 
 struct Ambient {
@@ -53,6 +62,8 @@ struct Ambient {
   // Smoke amount: 1 normal, 0 none (the fire put to bed). Eases toward
   // smoke_k_to on the sub-tick, with the puffs.
   float smoke_k, smoke_k_to;
+  // The bird is the scene's to drive (the Lookout): ambientStep leaves it be.
+  bool bird_manual;
 };
 
 // Loop start. Picks the swaying tufts (flags them in the landscape so the

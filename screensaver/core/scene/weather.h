@@ -107,6 +107,8 @@ struct Weather {
   float shiver;                // seconds left of a shiver
   float shiver_dx;             // px, whole
   float shake;                 // seconds left of the tent's snow shake
+  float smoke_mul;             // the fire smoke's rain swelling, sampled on the ambient sub-tick
+  bool night;                  // the night rule was in force at loop start (the flash is a shift, not a flash)
 
   // Dirty tracking (weatherTrack).
   Rect d_bit[WX_BITS];
