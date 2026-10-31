@@ -31,6 +31,10 @@ runs. The flash already has room: two 3 MB program slots, and the panel firmware
 
 ## Updating a mounted panel
 
+Compile first, `bash tools/fw.sh radio`, so the build is ready before the panel starts waiting: a
+build from scratch can take longer than the updater's ten minutes (it did once on 2026-10-31, and
+the panel went back to its old firmware as it should).
+
 1. On the panel: Settings > Update over Wi-Fi > Restart. (Over USB serial, `update` does the same.)
 2. Wait for READY FOR THE UPLOAD and note the address on the screen, for example
    "WI-FI 192.168.1.37".

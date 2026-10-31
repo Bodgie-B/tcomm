@@ -675,10 +675,13 @@ void Controller::handle(const Msg &m) {
     case MsgType::Outside:
       if (m.sender != kSenderGateway && m.sender != peer) return;
       // A panel that lost its clock (a power cut: no coin cell) takes the Pi's internet time from
-      // the gateway's weather message (Mike, 2026-10-31), never a time of 0 (HANDOFF 2026-10-30:
-      // the Pi hasn't synced yet). It's when the Pi took the reading, so it can lag a little: ranked
-      // with a copy from the other panel, below a clock set by hand.
-      if (!w.valid && m.sender == kSenderGateway && m.u.outside.time >= kClockFloor)
+      // the weather message, the gateway's or upstairs passing it on (Mike, 2026-10-31), never a
+      // time of 0 (HANDOFF 2026-10-30: the Pi hasn't synced yet). It's when the Pi took the
+      // reading, and the Pi sends one reading more than once: the first after a power cut was 10
+      // minutes old on the panel that day. So a clock from here (or from the other panel) moves on
+      // to any later reading's time, never back; one set by hand is left alone.
+      if (m.u.outside.time >= kClockFloor &&
+          (!w.valid || (w.quality <= kClockFromPeer && m.u.outside.time > w.utc + 2)))
         p_.set_wall(m.u.outside.time, kClockFromPeer);
       if (!(m.u.outside.flags & kOutsideValid)) return;
       // HANDOFF (2026-10-30): staleness counts from when this panel received the reading, never from

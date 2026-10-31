@@ -1444,12 +1444,28 @@ static void test_reading_and_outside() {
     p.run(200);
     CHECK(p.pa.w.valid && p.pa.w.utc >= real + 30 && p.pa.w.utc < real + 35);
     CHECK(p.pa.w.quality == kClockFromPeer);  // below a clock set by hand
+    // The Pi sends a reading more than once, so the first can be old: a later reading's time moves
+    // the clock on, and a repeat of the old one doesn't pull it back.
     o.seq = 82;
+    o.u.outside.time = real + 600;
+    n = encode(o, buf, sizeof(buf));
+    p.a.on_radio(buf, n);
+    p.run(200);
+    CHECK(p.pa.w.utc >= real + 600 && p.pa.w.utc < real + 605);
+    o.seq = 83;
+    o.u.outside.time = real + 30;
+    n = encode(o, buf, sizeof(buf));
+    p.a.on_radio(buf, n);
+    p.run(200);
+    CHECK(p.pa.w.utc >= real + 600);
+    // A clock set by hand is left alone.
+    p.pa.set_wall(real + 700, kClockManual);
+    o.seq = 84;
     o.u.outside.time = real + 4000;
     n = encode(o, buf, sizeof(buf));
     p.a.on_radio(buf, n);
     p.run(200);
-    CHECK(p.pa.w.utc < real + 1000);
+    CHECK(p.pa.w.utc < real + 1000 && p.pa.w.quality == kClockManual);
   }
 
   // LucyGate: out, then in.

@@ -87,7 +87,7 @@ started from PowerShell). Close any serial monitor on a board's port before flas
   Change the status on one; the other follows.
 - Ring the doorbell from each side. The receiving panel chimes, shakes the bell and turns it red.
 - The new panel shows the right time. If its own clock was never set, it copies the time from the
-  first panel.
+  first panel, or takes the Pi's time from the next weather message (passed on by upstairs).
 - The first panel's calendar events appear on the new one within about a minute. Past events
   archived on the first panel's SD card stay there.
 - Downstairs fills its Outside tile at the Pi's next weather send, passed on by upstairs. Lucy shows

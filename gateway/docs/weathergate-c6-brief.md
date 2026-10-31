@@ -140,8 +140,14 @@ line, and whitespace between the parts is fine.
 | 8 | clearing |
 | 9 | heavy rain |
 
-The panel drops a reading more than 15 minutes old by its own clock, so `time` has to be right
-(NTP), or 0. With `time` 0 the panel counts the reading's age from when it arrived.
+`time` is Unix seconds (UTC), or 0 until the Pi's clock has synced over NTP. The panels count a
+reading's age from when it arrives (handoff rule of 2026-10-30), so `time` no longer decides
+whether a reading is stale.
+
+Since 2026-10-31 a panel that has lost its clock in a power cut sets it from `time`, and moves it
+forward to any later `time`. So `time` should be the moment the line is sent, not when the reading
+was taken. On the first test that day the panel's clock came out about 10 minutes behind real time,
+which means the Pi's clock, or the reading's timestamp, was about that far behind.
 
 ### C6 to Pi
 
@@ -235,6 +241,8 @@ problem back; tell TComm.
   nothing: the newer one replaced it.
 - OUTSIDE: when there's a new reading, no more than once a minute and at least every 5 minutes.
   On `failed`, just wait for the next one.
+- Keep the Pi's clock on internet time (`timedatectl` should say "System clock synchronized: yes"),
+  and send `time` as the moment each OUTSIDE line goes out, 0 until that sync.
 - Log the `gw:` lines. They say what went wrong (next section).
 
 ## When something fails
