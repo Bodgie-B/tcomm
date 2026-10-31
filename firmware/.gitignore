@@ -1,0 +1,14 @@
+# The repository's .gitignore keeps secrets.* out, secrets.h included. The template goes in.
+!tcomm/src/config/secrets.example.h
+**/arduino_secrets.h
+
+# Reference clone of Waveshare's repo
+ref/
+
+# Simulator scratch and raw screen dumps
+sim/out/
+*.rgb
+*.raw
+
+# Python bytecode (tools/boards_to_art.py imports tools/forecast_icons.py)
+__pycache__/

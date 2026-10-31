@@ -20,7 +20,10 @@ The panels talk to each other directly over ESP-NOW, so the system works with th
 
 ## Status
 
-Early. The first board runs Waveshare's factory firmware and has been flashed and restored over USB. No project firmware exists yet.
+The first panel runs the project firmware with its radio on, talking to the gateway on the Pi: weather, Lucy, the mail badge and the calendar all work on it. The second panel hasn't arrived yet.
+
+- [`firmware/`](firmware/README.md): the panel firmware, its tests, simulator, tools and notes
+- [`gateway/`](gateway/README.md): the ESP32-C6 gateway between the Pi and the panels
 
 ## Where to start
 

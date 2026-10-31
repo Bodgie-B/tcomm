@@ -1,0 +1,370 @@
+<title>TComm Sensor Wiring</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Source+Sans+3:wght@400;600;700&family=JetBrains+Mono:wght@500;700&display=swap">
+<style>
+/* Layout: one reading column of numbered bench steps, each drawing full-width beside its step. */
+:root {
+  --bg: #eef1ec;
+  --surface: #ffffff;
+  --fg: #1b1f1a;
+  --muted: #59625a;
+  --line: #c8d0c4;
+  --term: #4cc23a;
+  --term-dark: #2c8a1c;
+  --case: #1f2022;
+  --case-edge: #1f2022;
+  --case-ink: #f1f2ef;
+  --pcb: #26428f;
+  --copper: #c77b30;
+  --warn-bg: #fff3d6;
+  --warn-ink: #6b4a00;
+  --w-red: #d33a2c;
+  --w-black: #1a1a1a;
+  --w-blue: #2d6cdf;
+  --w-yellow: #e2b100;
+  --halo: #ffffff;
+  --eyebrow: #2c8a1c;
+  --ok: #2f8a3a;
+  --bad: #c2362b;
+  --font-display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --font-body: "Source Sans 3", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121512; --surface: #1b1f1b; --fg: #e6ebe4; --muted: #a2ab9f; --line: #333a32;
+    --case-edge: #5b605a; --warn-bg: #3a2f12; --warn-ink: #f3d68c; --halo: #a9b0a8; --w-black: #262626; --eyebrow: #4cc23a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #121512; --surface: #1b1f1b; --fg: #e6ebe4; --muted: #a2ab9f; --line: #333a32;
+  --case-edge: #5b605a; --warn-bg: #3a2f12; --warn-ink: #f3d68c; --halo: #a9b0a8; --w-black: #262626; --eyebrow: #4cc23a;
+  color-scheme: dark;
+}
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font: 400 1.0625rem/1.55 var(--font-body);
+}
+.page {
+  max-width: 46rem;
+  margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 2rem 4rem;
+  display: grid;
+  gap: 2.25rem;
+}
+h1, h2 { font-family: var(--font-display); font-weight: 700; letter-spacing: 0.01em; text-wrap: balance; margin: 0; line-height: 1.05; }
+h1 { font-size: clamp(2.2rem, 7vw, 3.1rem); text-transform: uppercase; }
+h2 { font-size: 1.6rem; text-transform: uppercase; }
+p { margin: 0; }
+.lede { color: var(--muted); max-width: 38rem; }
+.eyebrow { font-family: var(--font-display); font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--eyebrow); font-size: 0.95rem; }
+section { display: grid; gap: 0.9rem; }
+.mono { font-family: var(--font-mono); font-weight: 500; font-size: 0.92em; }
+.wire { display: inline-block; width: 0.9em; height: 0.9em; border-radius: 50%; vertical-align: -0.1em; margin-right: 0.35em; box-shadow: 0 0 0 1.5px var(--halo); }
+.wire.red { background: var(--w-red); } .wire.black { background: var(--w-black); } .wire.blue { background: var(--w-blue); } .wire.yellow { background: var(--w-yellow); }
+.table-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; min-width: 30rem; background: var(--surface); }
+th, td { text-align: left; padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-family: var(--font-display); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.95rem; color: var(--muted); }
+tr:last-child td { border-bottom: 0; }
+.warn { background: var(--warn-bg); color: var(--warn-ink); padding: 0.9rem 1rem; border-radius: 6px; display: grid; gap: 0.4rem; }
+.warn strong { font-family: var(--font-display); text-transform: uppercase; letter-spacing: 0.06em; font-size: 1.05rem; }
+figure { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 1rem; display: grid; gap: 0.6rem; }
+figure svg { width: 100%; height: auto; display: block; }
+figcaption { color: var(--muted); font-size: 0.95rem; }
+ul.list { margin: 0; padding-left: 1.2rem; display: grid; gap: 0.35rem; }
+ol.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 1.6rem; counter-reset: step; }
+ol.steps > li { counter-increment: step; display: grid; grid-template-columns: 2.4rem minmax(0, 1fr); gap: 0.2rem 0.9rem; }
+ol.steps > li::before {
+  content: counter(step);
+  font-family: var(--font-display); font-weight: 700; font-size: 1.5rem; line-height: 2.4rem;
+  width: 2.4rem; height: 2.4rem; border-radius: 50%; text-align: center;
+  background: var(--term); color: #10240c; grid-row: span 2;
+}
+ol.steps h3 { margin: 0; font-family: var(--font-display); font-size: 1.3rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em; line-height: 2.4rem; }
+.step-body { display: grid; gap: 0.7rem; min-width: 0; }
+.trouble { display: grid; gap: 0.8rem; }
+.trouble div { border-left: 3px solid var(--line); padding-left: 0.9rem; }
+.trouble b { display: block; }
+/* SVG text and strokes from the theme */
+.s-fg { fill: var(--fg); } .s-muted { fill: var(--muted); } .s-case { fill: var(--case); stroke: var(--case-edge); }
+.s-ink { fill: var(--case-ink); } .s-term { fill: var(--term); stroke: var(--term-dark); } .s-termd { fill: var(--term-dark); }
+.s-line { stroke: var(--line); } .s-fgline { stroke: var(--fg); } .s-pcb { fill: var(--pcb); }
+.s-halo { stroke: var(--halo); fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.w-red { stroke: var(--w-red); } .w-black { stroke: var(--w-black); } .w-blue { stroke: var(--w-blue); } .w-yellow { stroke: var(--w-yellow); }
+.wc { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.f-red { fill: var(--w-red); } .f-black { fill: var(--w-black); } .f-blue { fill: var(--w-blue); } .f-yellow { fill: var(--w-yellow); }
+.f-copper { fill: var(--copper); } .f-ok { fill: var(--ok); } .f-bad { fill: var(--bad); } .s-ok { stroke: var(--ok); } .s-bad { stroke: var(--bad); }
+svg text { font-family: var(--font-mono); }
+svg .disp { font-family: var(--font-display); font-weight: 700; }
+</style>
+
+<main class="page">
+
+<header style="display:grid; gap:0.7rem">
+  <p class="eyebrow">TComm · Phase 5 · SHT40 at I2C address 0x44</p>
+  <h1>Wiring the temperature sensor</h1>
+  <p class="lede">Four wires: from the I2C group on the panel's green terminal to the four pins on your SHT40 board. Do it with the panel unplugged. Once you plug the panel back in, I'll flash the firmware that reads the sensor (after you confirm the port) and check the readings over serial.</p>
+</header>
+
+<section aria-labelledby="glance">
+  <h2 id="glance">The four connections</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Panel terminal</th><th>Sensor pin</th><th>Suggested wire</th></tr></thead>
+      <tbody>
+        <tr><td><span class="mono">VOUT</span> (3.3 V)</td><td><span class="mono">VIN</span>, <span class="mono">VCC</span>, <span class="mono">V+</span> or <span class="mono">3V3</span></td><td><span class="wire red"></span>Red</td></tr>
+        <tr><td><span class="mono">GND</span> (the one next to VOUT)</td><td><span class="mono">GND</span></td><td><span class="wire black"></span>Black</td></tr>
+        <tr><td><span class="mono">SDA</span></td><td><span class="mono">SDA</span></td><td><span class="wire blue"></span>Blue</td></tr>
+        <tr><td><span class="mono">SCL</span></td><td><span class="mono">SCL</span></td><td><span class="wire yellow"></span>Yellow</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Any colors work. These are the ones the common Qwiic and STEMMA QT sensor cables use, so if your sensor came with one of those cables, the colors already match. If yours differ, write down which color went where.</p>
+</section>
+
+<section aria-labelledby="need">
+  <h2 id="need">What you need</h2>
+  <ul class="list">
+    <li>The SHT40 sensor board.</li>
+    <li>Four wires, 22 to 26 AWG, ideally no longer than about 50 cm (20 in). Shorter is better.</li>
+    <li>A wire stripper and a small flat screwdriver (2 to 2.5 mm blade) for the green terminal.</li>
+    <li>For the sensor end: whatever its pins take (female jumper wires, a soldering iron, or the sensor's cable).</li>
+    <li>Optional: a multimeter, for the 3.3 V check in step 6.</li>
+  </ul>
+  <div class="warn" role="note">
+    <strong>Only VOUT for power</strong>
+    <p>The SHT40 runs on 3.3 V and is rated for 3.6 V at most. <span class="mono">VOUT</span> is the panel's 3.3 V supply. Never use the <span class="mono">5V</span> or <span class="mono">VIN</span> positions for the sensor; 5 V or the 6–36 V input would destroy it.</p>
+  </div>
+</section>
+
+<section aria-labelledby="panel">
+  <h2 id="panel">Where it goes on the panel</h2>
+  <figure>
+    <svg viewBox="0 0 430 580" role="img" aria-labelledby="f1t">
+      <title id="f1t">Back of the panel with the green terminal on the right. The four I2C positions, VOUT, GND, SDA and SCL, are third to sixth from the bottom.</title>
+      <rect class="s-case" x="20" y="18" width="300" height="540" rx="20" stroke-width="2"/>
+      <circle cx="170" cy="62" r="7" fill="#0b0b0c"/>
+      <circle cx="170" cy="516" r="7" fill="#0b0b0c"/>
+      <!-- label panel -->
+      <rect x="148" y="96" width="128" height="376" rx="5" fill="#0d0e0f"/>
+      <g id="groups">
+        <rect class="s-term" x="151" y="100" width="18" height="138" stroke-width="0"/>
+        <rect class="s-term" x="151" y="238" width="18" height="92" stroke-width="0"/>
+        <rect class="s-term" x="151" y="330" width="18" height="92" stroke-width="0"/>
+        <rect class="s-term" x="151" y="422" width="18" height="46" stroke-width="0"/>
+        <g font-size="10" fill="#10240c" class="disp">
+          <text transform="translate(164 169) rotate(-90)" text-anchor="middle">ISOLATED I/O</text>
+          <text transform="translate(164 284) rotate(-90)" text-anchor="middle">POWER</text>
+          <text transform="translate(164 376) rotate(-90)" text-anchor="middle">I2C</text>
+          <text transform="translate(164 445) rotate(-90)" text-anchor="middle">6–36V</text>
+        </g>
+      </g>
+      <g font-size="12.5" class="s-ink" font-weight="700">
+        <text x="178" y="116">DI1</text><text x="178" y="139">DI0</text><text x="178" y="162">GND</text>
+        <text x="178" y="185">DI COM</text><text x="178" y="208">DO1</text><text x="178" y="231">DO0</text>
+        <text x="178" y="254">5V</text><text x="178" y="277">5V</text><text x="178" y="300">GND</text>
+        <text x="178" y="323">GND</text><text x="178" y="346">SCL</text><text x="178" y="369">SDA</text>
+        <text x="178" y="392">GND</text><text x="178" y="415">VOUT</text><text x="178" y="438">GND</text>
+        <text x="178" y="461">VIN</text>
+      </g>
+      <!-- position numbers counted from the VIN end -->
+      <g font-size="11" class="s-muted" text-anchor="end">
+        <text x="140" y="346">6</text><text x="140" y="369">5</text><text x="140" y="392">4</text>
+        <text x="140" y="415">3</text><text x="140" y="438">2</text><text x="140" y="461">1</text>
+      </g>
+      <!-- terminal block -->
+      <rect class="s-term" x="282" y="98" width="42" height="372" rx="3" stroke-width="2"/>
+      <g class="s-termd">
+        <rect x="290" y="105" width="18" height="12" rx="2"/><rect x="290" y="128" width="18" height="12" rx="2"/>
+        <rect x="290" y="151" width="18" height="12" rx="2"/><rect x="290" y="174" width="18" height="12" rx="2"/>
+        <rect x="290" y="197" width="18" height="12" rx="2"/><rect x="290" y="220" width="18" height="12" rx="2"/>
+        <rect x="290" y="243" width="18" height="12" rx="2"/><rect x="290" y="266" width="18" height="12" rx="2"/>
+        <rect x="290" y="289" width="18" height="12" rx="2"/><rect x="290" y="312" width="18" height="12" rx="2"/>
+        <rect x="290" y="335" width="18" height="12" rx="2"/><rect x="290" y="358" width="18" height="12" rx="2"/>
+        <rect x="290" y="381" width="18" height="12" rx="2"/><rect x="290" y="404" width="18" height="12" rx="2"/>
+        <rect x="290" y="427" width="18" height="12" rx="2"/><rect x="290" y="450" width="18" height="12" rx="2"/>
+      </g>
+      <!-- the I2C group outlined -->
+      <rect x="132" y="326" width="200" height="98" rx="6" fill="none" class="s-fgline" stroke-width="2" stroke-dasharray="6 4"/>
+      <!-- wires: the top one turns furthest out so none cross -->
+      <g stroke-width="9" class="s-halo">
+        <path d="M324 341 H406 V570"/><path d="M324 364 H392 V570"/><path d="M324 387 H378 V570"/><path d="M324 410 H364 V570"/>
+      </g>
+      <g stroke-width="6" class="wc">
+        <path class="w-yellow" d="M324 341 H406 V570"/><path class="w-blue" d="M324 364 H392 V570"/>
+        <path class="w-black" d="M324 387 H378 V570"/><path class="w-red" d="M324 410 H364 V570"/>
+      </g>
+      <text x="20" y="574" font-size="11" class="s-muted">Seen from the back, as in your photo. Numbers count from the VIN end.</text>
+    </svg>
+    <figcaption>The I2C group sits third to sixth from the VIN end: <span class="mono">VOUT</span>, <span class="mono">GND</span>, <span class="mono">SDA</span>, <span class="mono">SCL</span>. Leave every other position empty.</figcaption>
+  </figure>
+</section>
+
+<section aria-labelledby="sensor">
+  <h2 id="sensor">The sensor end</h2>
+  <figure>
+    <svg viewBox="0 0 380 250" role="img" aria-labelledby="f2t">
+      <title id="f2t">A typical SHT40 board with four pins labelled VCC, GND, SCL and SDA, each with its wire color.</title>
+      <rect class="s-pcb" x="70" y="20" width="240" height="150" rx="10"/>
+      <circle cx="92" cy="42" r="8" class="s-term" style="fill:var(--bg)" stroke-width="0"/>
+      <circle cx="288" cy="42" r="8" style="fill:var(--bg)"/>
+      <rect x="165" y="52" width="50" height="50" rx="4" fill="#d9dcd6"/>
+      <rect x="181" y="68" width="18" height="18" rx="2" fill="#b4b8b0"/>
+      <text x="190" y="118" font-size="11" text-anchor="middle" fill="#dfe6ff">SHT40</text>
+      <g font-size="12" fill="#ffffff" text-anchor="middle" font-weight="700">
+        <text x="120" y="150">VCC</text><text x="165" y="150">GND</text><text x="215" y="150">SCL</text><text x="260" y="150">SDA</text>
+      </g>
+      <g fill="#d8b24a">
+        <circle cx="120" cy="160" r="5"/><circle cx="165" cy="160" r="5"/><circle cx="215" cy="160" r="5"/><circle cx="260" cy="160" r="5"/>
+      </g>
+      <g stroke-width="9" class="s-halo">
+        <path d="M120 165 V244"/><path d="M165 165 V244"/><path d="M215 165 V244"/><path d="M260 165 V244"/>
+      </g>
+      <g stroke-width="6" class="wc">
+        <path class="w-red" d="M120 165 V244"/><path class="w-black" d="M165 165 V244"/>
+        <path class="w-yellow" d="M215 165 V244"/><path class="w-blue" d="M260 165 V244"/>
+      </g>
+    </svg>
+    <figcaption>An example layout. Makers order the pins differently, so match each wire by the name printed on your board, not by its position. On Adafruit's board (VIN, 3Vo, GND, SCL, SDA), use VIN and leave 3Vo empty. If your board has a small 4-pin socket (Qwiic or STEMMA QT) and you have that cable, it plugs straight in.</figcaption>
+  </figure>
+</section>
+
+<section aria-labelledby="map">
+  <h2 id="map">Wire by wire</h2>
+  <figure>
+    <svg viewBox="0 0 600 250" role="img" aria-labelledby="f3t">
+      <title id="f3t">Connection map: VOUT to VCC with red, GND to GND with black, SDA to SDA with blue, SCL to SCL with yellow.</title>
+      <text x="30" y="26" font-size="13" class="s-muted disp" style="font-size:15px; letter-spacing:.08em">PANEL TERMINAL</text>
+      <text x="570" y="26" font-size="13" class="s-muted disp" text-anchor="end" style="font-size:15px; letter-spacing:.08em">SENSOR BOARD</text>
+      <rect class="s-term" x="30" y="40" width="150" height="196" rx="6" stroke-width="2"/>
+      <rect class="s-pcb" x="420" y="40" width="150" height="196" rx="8"/>
+      <g font-size="15" font-weight="700">
+        <text x="48" y="78" fill="#10240c">3 VOUT</text><text x="48" y="124" fill="#10240c">4 GND</text>
+        <text x="48" y="170" fill="#10240c">5 SDA</text><text x="48" y="216" fill="#10240c">6 SCL</text>
+        <text x="552" y="78" fill="#ffffff" text-anchor="end">VCC/VIN</text><text x="552" y="124" fill="#ffffff" text-anchor="end">GND</text>
+        <text x="552" y="170" fill="#ffffff" text-anchor="end">SDA</text><text x="552" y="216" fill="#ffffff" text-anchor="end">SCL</text>
+      </g>
+      <g stroke-width="11" class="s-halo">
+        <path d="M180 73 H420"/><path d="M180 119 H420"/><path d="M180 165 H420"/><path d="M180 211 H420"/>
+      </g>
+      <g stroke-width="8" class="wc">
+        <path class="w-red" d="M180 73 H420"/><path class="w-black" d="M180 119 H420"/>
+        <path class="w-blue" d="M180 165 H420"/><path class="w-yellow" d="M180 211 H420"/>
+      </g>
+      <g font-size="12" class="s-fg" text-anchor="middle">
+        <text x="300" y="62">red · 3.3 V</text><text x="300" y="108">black · ground</text>
+        <text x="300" y="154">blue · data</text><text x="300" y="200">yellow · clock</text>
+      </g>
+    </svg>
+    <figcaption>Straight across, name to name. SDA never goes to SCL: if those two are swapped nothing breaks, but the panel won't find the sensor.</figcaption>
+  </figure>
+</section>
+
+<section aria-labelledby="steps">
+  <h2 id="steps">Step by step</h2>
+  <ol class="steps">
+    <li>
+      <h3>Keep the panel unplugged</h3>
+      <div class="step-body"><p>Wire with the USB-C cable out. Reconnect only after step 5.</p></div>
+    </li>
+    <li>
+      <h3>Read the sensor's labels</h3>
+      <div class="step-body"><p>Find the four names printed beside its pins: power (<span class="mono">VCC</span>, <span class="mono">VIN</span>, <span class="mono">V+</span> or <span class="mono">3V3</span>), <span class="mono">GND</span>, <span class="mono">SDA</span> and <span class="mono">SCL</span>. If the board has anything else (such as <span class="mono">3Vo</span> or <span class="mono">ADR</span>), leave it unconnected.</p></div>
+    </li>
+    <li>
+      <h3>Strip the panel ends</h3>
+      <div class="step-body">
+        <p>Strip about 6 mm (¼ in) of insulation from one end of each wire. If the wire is stranded, twist the strands tight so none stray, or crimp a small ferrule on.</p>
+        <figure>
+          <svg viewBox="0 0 560 190" role="img" aria-labelledby="f4t">
+            <title id="f4t">A stripped wire end, 6 millimetres of bare copper, going into the side opening of a terminal position, with its screw on top tightened by a screwdriver.</title>
+            <rect x="20" y="88" width="230" height="22" rx="11" class="f-red"/>
+            <rect x="244" y="92" width="62" height="14" rx="3" class="f-copper"/>
+            <path d="M246 132 V140 M304 132 V140 M246 136 H304" class="s-fgline" stroke-width="1.5" fill="none"/>
+            <text x="275" y="158" font-size="13" class="s-fg" text-anchor="middle">6 mm (¼ in)</text>
+            <path d="M318 99 H352" class="s-fgline" stroke-width="2.5" fill="none"/>
+            <path d="M352 92 L364 99 L352 106 Z" class="s-fg"/>
+            <rect class="s-term" x="372" y="56" width="120" height="96" rx="6" stroke-width="2"/>
+            <rect x="372" y="88" width="34" height="22" rx="3" class="s-termd"/>
+            <rect x="430" y="56" width="40" height="12" rx="2" class="s-termd"/>
+            <path d="M450 10 V54" class="s-fgline" stroke-width="5" stroke-linecap="round" fill="none"/>
+            <rect x="440" y="0" width="20" height="18" rx="4" class="s-muted"/>
+            <text x="500" y="70" font-size="12" class="s-fg">screw</text>
+            <text x="500" y="104" font-size="12" class="s-fg">opening</text>
+            <text x="372" y="176" font-size="12" class="s-muted">Loosen, insert, tighten, then tug gently.</text>
+          </svg>
+        </figure>
+      </div>
+    </li>
+    <li>
+      <h3>Fasten them in the green terminal</h3>
+      <div class="step-body">
+        <p>Loosen the screw for each position, push the bare end fully into its opening, and tighten it. Then tug each wire gently: it should not move. Use positions 3 to 6 counted from the <span class="mono">VIN</span> end, which the case label marks as the I2C group: red into <span class="mono">VOUT</span>, black into the <span class="mono">GND</span> just above it, blue into <span class="mono">SDA</span>, yellow into <span class="mono">SCL</span>.</p>
+        <p>The green block may pull straight off its pins, which makes wiring at the bench easier. If it doesn't come away with a firm, even pull, wire it in place.</p>
+      </div>
+    </li>
+    <li>
+      <h3>Connect the sensor end</h3>
+      <div class="step-body"><p>Match by name: red to the power pin, black to <span class="mono">GND</span>, blue to <span class="mono">SDA</span>, yellow to <span class="mono">SCL</span>. Check that no stray strand touches a neighbouring pin or screw at either end.</p></div>
+    </li>
+    <li>
+      <h3>Optional: check for 3.3 V</h3>
+      <div class="step-body">
+        <p>If you have a multimeter, plug the panel in and measure on the terminal, black probe on <span class="mono">GND</span>: <span class="mono">VOUT</span> and <span class="mono">SDA</span> should each read about 3.3 V.</p>
+        <div class="warn" role="note"><strong>If SDA reads about 5 V</strong><p>Unplug and stop. A jumper inside the case (marked H8, "I2C 3V3 / 5V") sets that voltage. It's set to 3.3 V at the factory, so this is unlikely, but 5 V on SDA would damage the sensor. Tell me and we'll change it together.</p></div>
+      </div>
+    </li>
+    <li>
+      <h3>Plug in and tell me</h3>
+      <div class="step-body"><p>Plug the panel back in and tell me it's on COM5. I'll flash the firmware with the sensor code and read its report over serial. Within a second of starting, the INSIDE reading on your floor's tile shows the real temperature and humidity. (It's the tile for the floor set in Settings > This unit is, which still says DOWNSTAIRS until you change it.) Breathe on the sensor: the humidity should climb within about 20 seconds.</p></div>
+    </li>
+  </ol>
+</section>
+
+<section aria-labelledby="place">
+  <h2 id="place">Where to mount it</h2>
+  <figure>
+    <svg viewBox="0 0 520 300" role="img" aria-labelledby="f5t">
+      <title id="f5t">Mount the sensor beside or below the panel, at least 10 to 15 centimetres away; not directly above it, where the panel's warm air rises.</title>
+      <rect x="0" y="0" width="520" height="300" fill="none"/>
+      <rect class="s-case" x="190" y="90" width="140" height="100" rx="10" stroke-width="2"/>
+      <text x="260" y="146" font-size="12" class="s-ink" text-anchor="middle">panel</text>
+      <g class="s-muted" opacity="0.7">
+        <path d="M232 80 q6 -10 0 -20 q-6 -10 0 -20" fill="none" stroke="currentColor" style="stroke:var(--muted)" stroke-width="2"/>
+        <path d="M260 80 q6 -10 0 -20 q-6 -10 0 -20" fill="none" style="stroke:var(--muted)" stroke-width="2"/>
+        <path d="M288 80 q6 -10 0 -20 q-6 -10 0 -20" fill="none" style="stroke:var(--muted)" stroke-width="2"/>
+      </g>
+      <rect x="246" y="6" width="28" height="18" rx="3" class="s-pcb"/>
+      <path d="M232 2 L288 28 M288 2 L232 28" class="s-bad" stroke-width="4" stroke-linecap="round"/>
+      <text x="300" y="20" font-size="12" class="s-fg">not above: warm air rises</text>
+      <rect x="70" y="210" width="28" height="18" rx="3" class="s-pcb"/>
+      <path d="M62 250 l10 10 l20 -22" class="s-ok" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="40" y="282" font-size="12" class="s-fg">beside or below</text>
+      <path d="M100 219 H188" class="s-fgline" stroke-width="1.5" stroke-dasharray="4 4" fill="none"/>
+      <text x="144" y="238" font-size="12" class="s-fg" text-anchor="middle">10–15 cm (4–6 in)</text>
+      <rect x="402" y="210" width="28" height="18" rx="3" class="s-pcb"/>
+      <path d="M394 250 l10 10 l20 -22" class="s-ok" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M332 219 H400" class="s-fgline" stroke-width="1.5" stroke-dasharray="4 4" fill="none"/>
+    </svg>
+    <figcaption>The panel's screen and processor warm the air around it, and that warm air rises. Put the sensor beside or below the panel, at least 10–15 cm away, out of sunlight, drafts and lamp heat. If it still reads a degree or two off a thermometer you trust, Settings > Temp offset corrects it.</figcaption>
+  </figure>
+</section>
+
+<section aria-labelledby="trouble">
+  <h2 id="trouble">If the reading shows dashes</h2>
+  <div class="trouble">
+    <div><b>Check SDA and SCL</b>Swapped data and clock wires are the most common mistake. Swapping them back is safe.</div>
+    <div><b>Check power and ground</b>Red in <span class="mono">VOUT</span>, black in the <span class="mono">GND</span> beside it, both screws tight, both sensor-end connections firm.</div>
+    <div><b>No restart needed</b>The panel looks for the sensor again every 30 seconds, so a fixed wire is picked up on its own.</div>
+    <div><b>If the touch screen stops responding</b>The sensor shares its two signal wires with the touch controller. A short from SDA or SCL to ground blocks both. Unplug, look for a stray strand, and try again.</div>
+  </div>
+</section>
+
+</main>

@@ -1,0 +1,281 @@
+<title>TComm Sound Tests</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Source+Sans+3:wght@400;600;700&family=JetBrains+Mono:wght@500;700&display=swap">
+<style>
+/* Layout: a bench test sheet. One column; each test is a row with what to do, what should
+   happen, and a Pass / Fail / Skip control whose result is saved for Claude to read back. */
+:root {
+  --bg: #eef1ec;
+  --surface: #ffffff;
+  --fg: #1b1f1a;
+  --muted: #59625a;
+  --line: #c8d0c4;
+  --term: #4cc23a;
+  --term-dark: #2c8a1c;
+  --chip: #e3e8df;
+  --pass: #2f8a3a;
+  --pass-bg: #e2f2e2;
+  --fail: #c2362b;
+  --fail-bg: #fbe4e1;
+  --skip: #6b6f68;
+  --skip-bg: #ececea;
+  --gold: #a87400;
+  --font-display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --font-body: "Source Sans 3", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121512; --surface: #1b1f1b; --fg: #e6ebe4; --muted: #a2ab9f; --line: #333a32; --chip: #262c25;
+    --pass: #6ccf72; --pass-bg: #1d3320; --fail: #f07a6e; --fail-bg: #3a1e1b; --skip: #b5b9b2; --skip-bg: #2a2d29;
+    --gold: #e7b74a; --term-dark: #4cc23a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #121512; --surface: #1b1f1b; --fg: #e6ebe4; --muted: #a2ab9f; --line: #333a32; --chip: #262c25;
+  --pass: #6ccf72; --pass-bg: #1d3320; --fail: #f07a6e; --fail-bg: #3a1e1b; --skip: #b5b9b2; --skip-bg: #2a2d29;
+  --gold: #e7b74a; --term-dark: #4cc23a;
+  color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font: 400 1.0625rem/1.5 var(--font-body); }
+.page {
+  max-width: 48rem; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 2rem 4rem;
+  display: grid; gap: 2.25rem;
+}
+h1, h2 { font-family: var(--font-display); font-weight: 700; text-transform: uppercase; text-wrap: balance; margin: 0; line-height: 1.05; letter-spacing: 0.01em; }
+h1 { font-size: clamp(2.2rem, 7vw, 3rem); }
+h2 { font-size: 1.6rem; }
+p { margin: 0; }
+.eyebrow { font-family: var(--font-display); font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--term-dark); font-size: 0.95rem; }
+.lede { color: var(--muted); max-width: 38rem; }
+.mono { font-family: var(--font-mono); font-weight: 500; font-size: 0.9em; }
+.ui { font-family: var(--font-display); font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+.gold { color: var(--gold); font-weight: 600; }
+header, section { display: grid; gap: 0.9rem; }
+
+.progress { display: grid; gap: 0.5rem; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 0.9rem 1rem; }
+.bar { height: 10px; border-radius: 5px; background: var(--chip); display: flex; overflow: hidden; }
+.bar span { display: block; height: 100%; transition: width 0.25s ease; }
+.bar .p { background: var(--pass); } .bar .f { background: var(--fail); } .bar .s { background: var(--skip); }
+.counts { display: flex; flex-wrap: wrap; gap: 0.4rem 1.2rem; font-variant-numeric: tabular-nums; color: var(--muted); }
+.counts b { color: var(--fg); }
+.status-line { font-size: 0.95rem; color: var(--muted); }
+
+.howto { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 0.9rem 1rem; display: grid; gap: 0.45rem; }
+.howto ul { margin: 0; padding-left: 1.2rem; display: grid; gap: 0.3rem; }
+.part-head { display: grid; gap: 0.4rem; }
+.part-head p { color: var(--muted); }
+
+.tests { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.9rem; }
+.test { background: var(--surface); border: 1px solid var(--line); border-left: 6px solid var(--line); border-radius: 8px; padding: 0.9rem 1rem; display: grid; gap: 0.55rem; }
+.test[data-result="pass"] { border-left-color: var(--pass); }
+.test[data-result="fail"] { border-left-color: var(--fail); }
+.test[data-result="skip"] { border-left-color: var(--skip); }
+.test-top { display: flex; gap: 0.7rem; align-items: baseline; flex-wrap: wrap; }
+.tid { font-family: var(--font-mono); font-weight: 700; font-size: 0.9rem; background: var(--chip); border-radius: 4px; padding: 0.05rem 0.4rem; }
+.test h3 { margin: 0; font-family: var(--font-display); font-size: 1.3rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em; }
+.rows { display: grid; grid-template-columns: 4.2rem minmax(0, 1fr); gap: 0.35rem 0.6rem; }
+.rows dt { font-family: var(--font-display); font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-size: 0.9rem; padding-top: 0.12rem; }
+.rows dd { margin: 0; min-width: 0; }
+.controls { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.seg button {
+  font: 700 1rem var(--font-display); text-transform: uppercase; letter-spacing: 0.05em;
+  padding: 0.45rem 0.9rem; min-height: 2.6rem; border: 0; background: var(--surface); color: var(--fg); cursor: pointer;
+}
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button:disabled { cursor: default; opacity: 0.5; }
+.seg button[aria-pressed="true"][data-v="pass"] { background: var(--pass-bg); color: var(--pass); }
+.seg button[aria-pressed="true"][data-v="fail"] { background: var(--fail-bg); color: var(--fail); }
+.seg button[aria-pressed="true"][data-v="skip"] { background: var(--skip-bg); color: var(--skip); }
+.seg button:focus-visible, .note:focus-visible { outline: 3px solid var(--term); outline-offset: 2px; }
+.note { flex: 1 1 14rem; min-width: 0; font: inherit; font-size: 0.98rem; padding: 0.5rem 0.65rem; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
+.saved { font-size: 0.85rem; color: var(--muted); min-width: 4rem; }
+@media (max-width: 30rem) { .rows { grid-template-columns: minmax(0, 1fr); } .rows dt { padding-top: 0.3rem; } }
+@media (prefers-reduced-motion: reduce) { .bar span { transition: none; } }
+</style>
+
+<main class="page">
+  <header>
+    <p class="eyebrow">TComm · Phase 4 · Sound and doorbell rules</p>
+    <h1>Sound tests</h1>
+    <p class="lede">Eighteen checks of what the panel does when the other floor rings it, when you ring the other floor, with the sound settings, and in quiet hours. The other floor is the demo's simulated panel. Mark each one as you go; your marks are saved, and I read them back when you tell me you're done.</p>
+    <div class="progress" aria-live="polite">
+      <div class="bar" aria-hidden="true"><span class="p" id="bar-p" style="width:0"></span><span class="f" id="bar-f" style="width:0"></span><span class="s" id="bar-s" style="width:0"></span></div>
+      <div class="counts"><span><b id="n-done">0</b> of <b id="n-all">0</b> marked</span><span><b id="n-pass">0</b> pass</span><span><b id="n-fail">0</b> fail</span><span><b id="n-skip">0</b> skipped</span></div>
+      <p class="status-line" id="status">Connecting to the saved results…</p>
+    </div>
+  </header>
+
+  <section aria-labelledby="setup">
+    <h2 id="setup">Before you start</h2>
+    <div class="howto">
+      <ul>
+        <li><b>You don't need the second panel.</b> This panel runs a pretend UPSTAIRS panel inside its own firmware. From the Test screen it rings you, answers your rings after 3 seconds, and can be unplugged. The pretend panel makes no sound, so every sound you hear is this panel following the rules.</li>
+        <li>The clock is set (from the laptop, at 7:51 AM). Parts A to C run in daytime; part D needs night time.</li>
+        <li>In Settings, Volume should read <span class="mono">4 of 5</span> (that's 90) and Ringtone <span class="mono">Westminster</span>.</li>
+        <li>This panel is set to DOWNSTAIRS, so the other floor is upstairs and banners read "Doorbell from upstairs".</li>
+        <li><b>To make the other floor ring you:</b> tap the gear, scroll to the bottom of Settings and tap <span class="ui">TEST PANEL</span> (the last tile, bottom right). Then tap <span class="ui">Other floor rings this panel</span> (third row, left). The Test screen stays open and the banner appears on top of it.</li>
+        <li><b>To change your own status:</b> tap your DOWNSTAIRS tile and pick one. Private and Sleeping open the timer screen: choose <span class="ui">Until changed</span>, then <span class="ui">Set status</span>.</li>
+        <li>On the Test screen, <span class="ui">Other floor answers</span> should say <span class="mono">Come on</span>.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section aria-labelledby="pa"><div class="part-head"><h2 id="pa">A · The other floor rings you</h2><p>What happens depends on your own status at the moment it rings.</p></div><ol class="tests" id="part-A"></ol></section>
+  <section aria-labelledby="pb"><div class="part-head"><h2 id="pb">B · You ring the other floor</h2><p>Close Settings first. The line under DOORBELL shows each step.</p></div><ol class="tests" id="part-B"></ol></section>
+  <section aria-labelledby="pc"><div class="part-head"><h2 id="pc">C · Sound settings</h2><p>Set your status to Open for these.</p></div><ol class="tests" id="part-C"></ol></section>
+  <section aria-labelledby="pd"><div class="part-head"><h2 id="pd">D · Quiet hours, 10 PM to 7 AM</h2><p>Set the clock to 11:00 PM: Settings → Time &amp; Date, hold <span class="ui">+ hour</span> until 11:00 PM, then <span class="ui">Save</span>. Or ask me in chat and I'll set it from the laptop. The screen changes to the night colours, and dims 30 seconds after your last touch. When you're finished, ask me to set the real time again.</p></div><ol class="tests" id="part-D"></ol></section>
+</main>
+
+<script>
+const TESTS = [
+  { id: "A1", part: "A", title: "Open", do: "Set your status to OPEN. Make the other floor ring you. Answer with <span class='ui'>Come on</span>.",
+    expect: "The Westminster chime at the set volume, and the banner “Doorbell from upstairs” with <span class='ui'>Come on</span> and <span class='ui'>Not now</span>. Come on closes it." },
+  { id: "A2", part: "A", title: "Busy", do: "Set BUSY. Make it ring. Answer with <span class='ui'>Not now</span>.",
+    expect: "The soft chime: shorter and clearly quieter than A1 (15 steps down, so 75). The same banner; Not now closes it." },
+  { id: "A3", part: "A", title: "Private", do: "Set PRIVATE (until changed). Make it ring.",
+    expect: "No sound at all. The banner appears; either button closes it." },
+  { id: "A4", part: "A", title: "Sleeping", do: "Set SLEEPING (until changed). Make it ring.",
+    expect: "No sound. The banner appears. (Night brightness is checked in D4.)" },
+  { id: "A5", part: "A", title: "Away, then back", do: "Set AWAY. Make it ring and wait a few seconds. Then set OPEN.",
+    expect: "While Away, nothing: no sound and no banner. As soon as you choose Open, a banner reads “Rang at 8:05 AM while you were away” (with the real time) and an <span class='ui'>OK</span> button." },
+  { id: "A6", part: "A", title: "Nobody answers", do: "Stay on OPEN. Make it ring and leave the banner alone for a minute.",
+    expect: "The chime, then after 60 seconds the banner closes by itself and the DOORBELL tile shows <span class='gold'>Missed 8:10 AM</span> in gold." },
+
+  { id: "B1", part: "B", title: "They say Come on", do: "Tap DOORBELL once.",
+    expect: "No sound from your own tap. The tile shows <span class='mono'>Ringing</span>, then <span class='mono'>Delivered</span>, then about 3 seconds later <span class='mono'>Come on</span> with the come-on tone." },
+  { id: "B2", part: "B", title: "They say Not now", do: "On the Test screen tap <span class='ui'>Other floor answers</span> until it says Not now. Close Settings and tap DOORBELL.",
+    expect: "<span class='mono'>Delivered</span>, then <span class='mono'>Not now</span> with the not-now tone, which sounds different from the come-on tone." },
+  { id: "B3", part: "B", title: "Nobody answers", do: "Set the answer to <span class='mono'>Off</span>. Tap DOORBELL and wait a minute.",
+    expect: "<span class='mono'>Delivered</span> stays on the tile; after 60 seconds it changes to <span class='gold'>No answer yet</span> in gold. No tone." },
+  { id: "B4", part: "B", title: "Two quick taps", do: "Set the answer back to <span class='mono'>Come on</span>. Tap DOORBELL twice within a couple of seconds.",
+    expect: "One ring only: a single come-on tone, not two. Taps are ignored for 10 seconds after a ring." },
+  { id: "B5", part: "B", title: "The other panel is off", do: "On the Test screen tap <span class='ui'>Unplug the other panel</span>. Close Settings and tap DOORBELL. Afterwards tap <span class='ui'>Plug the other panel back in</span>.",
+    expect: "<span class='mono'>Ringing</span>, then <span class='gold'>Couldn't reach</span> in gold within about 2 seconds, and the UPSTAIRS tile turns grey: NO SIGNAL. After plugging it back in, the UPSTAIRS tile returns." },
+
+  { id: "C1", part: "C", title: "Volume steps", do: "Settings → Volume: tap <span class='ui'>–</span> down to <span class='mono'>1 of 5</span>, then make the other floor ring you. Set it back to <span class='mono'>4 of 5</span>.",
+    expect: "Each tap plays a short preview at that level. The ring at 1 of 5 (60) is clearly quieter than A1." },
+  { id: "C2", part: "C", title: "Ringtone", do: "Settings → tap the Ringtone tile once (it previews), then make the other floor ring you. Tap Ringtone again to return to Westminster.",
+    expect: "The preview and the ring are the two-note ding-dong. The second tap brings back Westminster." },
+
+  { id: "D1", part: "D", title: "Open at night", do: "With the clock at 11 PM, set OPEN and make the other floor ring you.",
+    expect: "The Westminster chime, a little quieter than A1: quiet hours cap it at 80 instead of 90." },
+  { id: "D2", part: "D", title: "Busy at night", do: "Set BUSY and make it ring.",
+    expect: "The soft chime, quieter than A2 (65 instead of 75)." },
+  { id: "D3", part: "D", title: "Reply tone at night", do: "Close Settings and tap DOORBELL (answer: Come on).",
+    expect: "The come-on tone plays capped at 80, a little quieter than in B1." },
+  { id: "D4", part: "D", title: "Sleeping at night", do: "Set SLEEPING (until changed), make it ring, then don't touch the screen for 40 seconds.",
+    expect: "No sound. The banner shows. The screen is bright from your taps, then about 30 seconds after your last touch it drops to the dim night level with the banner still up. The doorbell itself never makes the screen brighter." },
+  { id: "D5", part: "D", title: "Screen off overnight (optional)", do: "Settings → tap <span class='ui'>Screen off overnight</span> to turn it on. Close Settings and wait 30 seconds until the screen goes black. Then message me “ring now” and I'll make the other floor ring from the laptop. Turn the setting off again afterwards.",
+    expect: "The banner lights the screen at the dim night level. Your first touch only wakes the screen and presses nothing; the next touch works normally." },
+];
+
+const els = {};
+const results = {};            // id -> {result, note}
+let db = null, col = null, canWrite = true;
+const chains = {};             // one write at a time per document
+
+function build() {
+  for (const t of TESTS) {
+    const li = document.createElement("li");
+    li.className = "test";
+    li.id = "t-" + t.id;
+    li.innerHTML =
+      `<div class="test-top"><span class="tid">${t.id}</span><h3>${t.title}</h3></div>` +
+      `<dl class="rows"><dt>Do</dt><dd>${t.do}</dd><dt>Expect</dt><dd>${t.expect}</dd></dl>` +
+      `<div class="controls"><div class="seg" role="group" aria-label="Result for ${t.id}">` +
+      `<button type="button" data-v="pass" aria-pressed="false" disabled>Pass</button>` +
+      `<button type="button" data-v="fail" aria-pressed="false" disabled>Fail</button>` +
+      `<button type="button" data-v="skip" aria-pressed="false" disabled>Skip</button></div>` +
+      `<input class="note" id="note-${t.id}" type="text" placeholder="What you heard or saw (optional)" aria-label="Note for ${t.id}" disabled>` +
+      `<span class="saved" aria-live="polite"></span></div>`;
+    document.getElementById("part-" + t.part).appendChild(li);
+    const buttons = li.querySelectorAll(".seg button");
+    const note = li.querySelector(".note");
+    els[t.id] = { li, buttons, note, saved: li.querySelector(".saved") };
+    buttons.forEach(b => b.addEventListener("click", () => {
+      const cur = results[t.id] && results[t.id].result;
+      save(t.id, { result: cur === b.dataset.v ? "" : b.dataset.v, note: note.value.trim() });
+    }));
+    note.addEventListener("change", () => {
+      save(t.id, { result: (results[t.id] && results[t.id].result) || "", note: note.value.trim() });
+    });
+  }
+  document.getElementById("n-all").textContent = TESTS.length;
+}
+
+function paint(id) {
+  const r = results[id] || {};
+  const e = els[id];
+  e.li.dataset.result = r.result || "";
+  e.buttons.forEach(b => b.setAttribute("aria-pressed", String(b.dataset.v === r.result)));
+  if (document.activeElement !== e.note && typeof r.note === "string") e.note.value = r.note;
+}
+
+function tally() {
+  let p = 0, f = 0, s = 0;
+  for (const t of TESTS) {
+    const r = results[t.id] && results[t.id].result;
+    if (r === "pass") p++; else if (r === "fail") f++; else if (r === "skip") s++;
+  }
+  const n = TESTS.length;
+  document.getElementById("n-done").textContent = p + f + s;
+  document.getElementById("n-pass").textContent = p;
+  document.getElementById("n-fail").textContent = f;
+  document.getElementById("n-skip").textContent = s;
+  document.getElementById("bar-p").style.width = (100 * p / n) + "%";
+  document.getElementById("bar-f").style.width = (100 * f / n) + "%";
+  document.getElementById("bar-s").style.width = (100 * s / n) + "%";
+}
+
+function setStatus(text) { document.getElementById("status").textContent = text; }
+
+function enable(on) {
+  for (const id in els) {
+    els[id].buttons.forEach(b => { b.disabled = !on; });
+    els[id].note.disabled = !on;
+  }
+}
+
+function save(id, body) {
+  if (!col || !canWrite) return;
+  results[id] = body;  // show it at once; the snapshot confirms it
+  paint(id); tally();
+  els[id].saved.textContent = "Saving…";
+  chains[id] = (chains[id] || Promise.resolve()).then(async () => {
+    try {
+      await col.doc(id).set({ result: body.result, note: body.note, at: new Date().toISOString() });
+      els[id].saved.textContent = "Saved";
+    } catch (e) {
+      if (e && e.code === "invalid_argument") { canWrite = false; enable(false); setStatus("This view can read the results but not change them."); }
+      else if (e && e.code === "unavailable") { els[id].saved.textContent = "Not saved, try again"; }
+      else { els[id].saved.textContent = "Not saved"; }
+    }
+  });
+}
+
+build();
+tally();
+
+(async () => {
+  db = await window.claude?.use?.("db");
+  if (!db) { setStatus("Results can't be saved in this view. Tell me your results in chat instead."); return; }
+  const user = await window.claude?.use?.("user");
+  if (user && user.can && user.can("data.write") === false) { canWrite = false; }
+  col = db.collection("results");
+  col.onSnapshot(snap => {
+    for (const d of snap.docs) results[d.id] = d.data();
+    for (const t of TESTS) paint(t.id);
+    tally();
+  }, () => setStatus("Lost the connection to the saved results. Reload the page to reconnect."));
+  if (canWrite) { enable(true); setStatus("Your marks save as you go."); }
+  else setStatus("This view can read the results but not change them.");
+})();
+</script>
