@@ -25,11 +25,13 @@ after the foundation. Mike and Mark changed that on 2026-10-30. The new order:
 | 4 | Story spine, with variants | PC preview. **Done.** |
 | 5 | Critters and the minor-effect scheduler | PC preview. **Done.** |
 | 6 | Surprise pool, variety system, per-loop seed | PC preview. **Done.** |
-| **Review gate** | **Now.** Mike and Mark watch `docs/screensaver/reviews/stages2-6/index.html` (every beat, variant, filler, minor and major as clips, plus the ten-loop table) and decide whether the look and the story land. Fixes from the review are preview work. Only after that does the work move to hardware. | |
+| Review gate 1 | Mike approved the evening spine on the draft PR (2026-10-31). **Done.** |
+| 6b | Morning and midday spines, the weather effects, the Lookout (`SPINES_WEATHER_LOOKOUT_SPEC.md`) | PC preview. **Done.** |
+| **Review gate 2** | **Now.** Mike and Mark watch `docs/screensaver/reviews/stages2-6/index.html` (the evening, morning and midday spines beat by beat, every weather kind by day and night, the Lookout) and decide. Fixes are preview work. Only after that does the work move to hardware. | |
 | 7 | On the board (the brief's old stage 2) | ESP32-S3 panel |
-| 8 | Integration hooks: status chip, doorbell, touch reveal, real inputs | Panel |
-| 9 | Night mode and weather systems | Panel, reviewed in a dark room |
-| 10 | Lookout scene, gated to real sunset | Panel |
+| 8 | Integration hooks: status chip, doorbell, touch reveal, real inputs (clock, OUTSIDE weather, the sunset window from the untracked lat/long) | Panel |
+| 9 | Night mode and weather on the panel: the night rule and the palette-step costs measured in a dark room (the systems exist since 6b) | Panel |
+| 10 | Lookout on the panel, gated to real sunset (the scene exists since 6b) | Panel |
 | 11 | Optional ambient sound, off by default | Panel |
 
 Why: the brief already makes the PC preview the main development loop, the

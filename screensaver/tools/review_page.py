@@ -9,8 +9,8 @@ the tables (the evening at --mood, the morning at --mood-morning with --spine mo
 midday at --mood-midday with --spine midday; each row carries the loop's family and
 weather) and rewrites the JSON <script> blocks (manifest, loops, loops_morning,
 loops_midday) in DIR/index.html. Also checks that every clip the page's data block D names
-exists (the Lookout section is a placeholder driven by lookout_* clips in the manifest and
-is not checked) and lists the ones that don't. Standard library only; run with `python3 -I`.
+exists (the Lookout's nine beat clips and two overviews included) and that every image the
+page's <img src="img/lookout_*.png"> tags name exists, and lists the ones that don't. Standard library only; run with `python3 -I`.
 """
 import argparse
 import json
@@ -78,7 +78,7 @@ def run_loops(preview, seed, mood, n, spine=None):
 # (the weather list names a day and a night clip per kind; weatherExtras names clips as is).
 CLIP_LISTS = [("opening", ""), ("spine", ""), ("fillers", ""), ("minors", "minor_"),
               ("majors", ""), ("morning", "morning_"), ("midday", "midday_"),
-              ("weather", "weather_"), ("weatherExtras", "")]
+              ("weather", "weather_"), ("weatherExtras", ""), ("lookout", "lookout_")]
 
 
 def wanted_clips(html):
@@ -138,14 +138,19 @@ def main():
     names = {c["name"] for c in manifest.get("clips", [])}
     missing = [w for w in wanted if w not in names or not os.path.exists(os.path.join(a.dir, "clips", w + ".mp4"))]
     # The overview cards are named in the page's script, outside D.
-    for extra in re.findall(r"id: '((?:morning|midday)_overview)'", html):
+    for extra in re.findall(r"id: '((?:morning|midday|lookout)_overview(?:_seed\d+)?)'", html):
         if extra not in names or not os.path.exists(os.path.join(a.dir, "clips", extra + ".mp4")):
             missing.append(extra)
         wanted.append(extra)
     lookout = sorted(n for n in names if n.startswith("lookout_"))
+    # The Lookout's stills (the sunset strip and the rail crop) are plain <img> tags in the page.
+    for img in sorted(set(re.findall(r'src="(img/lookout_[a-z0-9_]+\.png)"', html))):
+        if not os.path.exists(os.path.join(a.dir, img)):
+            missing.append(img)
+        wanted.append(img)
     print("page: %s; %d clips in manifest; %d clips checked; loops tables: %d evening, %d morning, %d midday"
           % (page, len(names), len(wanted), len(loops), len(loops_morning), len(loops_midday)))
-    print("missing clips: " + (", ".join(missing) if missing else "none") + " (lookout placeholder, %d clips so far)" % len(lookout))
+    print("missing clips: " + (", ".join(missing) if missing else "none") + " (lookout: %d clips in the manifest)" % len(lookout))
     total = sum(c.get("bytes", 0) for c in manifest.get("clips", []))
     print("clip bytes: %.1f MB" % (total / 1e6))
     sys.exit(1 if missing else 0)

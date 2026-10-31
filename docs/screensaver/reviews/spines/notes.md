@@ -385,7 +385,7 @@ window now wants `SF_LOOKOUT`; no pinned line touched).
 | 5 | explore | 50 | peeks into the front-right and front-left panes (leaning to the glass), round the corner to the west pane, along the front to the east end and into the cab (behind its front wall: seen only through the far windows), a hand on the fire-finder's table, out, two taps on the compass plate on the front rail (a small ring of arcs each), a look down at the chipmunk; the chipmunk comes out from behind the left leg onto the middle girt at the start and watches him (turns his way, head up) |
 | - | pause | 4 | |
 | 6 | settle | 20 | the chipmunk goes; he walks to the west edge of the deck, sits on the edge facing west, legs over, forearms forward on the rail (`POSE_PERCH`, his feet let down below the seat as the pose blends) |
-| 7 | sunset | 113 to 117 | nothing moves but his breath (4 s, 1 px) and the sky: `mood_override` steps 4.0 to 5.9 in 10 to 12 even steps (0.158 to 0.19 each), step k at k / (n + 1) of the beat; birds cross every 15 to 25 s (5 or 6 a loop), at 44 to 168 px, 40 to 60 px/s, a third of them pairs; the second or third is a pair that comes in from the left, circles once over the far treeline and comes down into it, shrinking |
+| 7 | sunset | 113 to 117 | nothing moves but his breath (4 s, 1 px) and the sky: `mood_override` steps 4.0 to 5.9 in 8 to 10 even steps (0.19 to 0.24 each; the review cut it from 10 to 12 so a step comes every 11 to 15 s as the brief says), step k at k / (n + 1) of the beat; birds cross every 15 to 25 s (5 or 6 a loop), at 44 to 168 px, 40 to 60 px/s, a third of them pairs; the second or third is a pair that comes in from the left, circles once over the far treeline and comes down into it, shrinking |
 | 8 | fade | 10 | mood 0.0 at its start, 0.1 at 3 s; the star (GL_DOT in STAR, 1.6 px) comes out at 4 s; the last 2.5 s go to black |
 
 Loop length: the sunset is stretched first (to 120 s at most), then the three
@@ -453,8 +453,8 @@ the east rail.
   reserved corner (the hiker, birds, clouds, glyphs and the tower's bounds;
   740 rendered checks of the corner's pixels, ground or grass only), World::busy
   every tick, exactly one landing pair a loop, 5 or 6 sunset birds.
-- Sunset steps: 10 to 12, monotone, 0.158 to 0.19 each, ending at 5.9.
-- Palette rebuilds per loop: 13 to 15 (loop start 1, the sunset's 10 to 12,
+- Sunset steps: 8 to 10 after the review (were 10 to 12), monotone, ending at 5.9.
+- Palette rebuilds per loop: 11 to 13 after the review (loop start 1, the sunset's 8 to 10,
   the fade's 2), under the 16 the brief asked for.
 - Night caps in the fade: with the night rule on, the highest slot is 0.560
   (cap 0.60); without it, the slots on screen stay at or under 0.340 (the
@@ -496,7 +496,7 @@ band now runs to the frame's bottom); the rail bird's place; the star's size.
 - The fade's mood goes to 0.0 then 0.1 as the spec says; the night key's sky
   is a touch lighter and greener than 5.9's, so the fade's first step reads as
   a small lift before the dark. 5.95 and 5.99 would keep it darker; not done.
-- The birds are drawn over everything (they are near): one crossing at a
+- The birds are drawn over everything, the tower included (they are near; the review moved them after the cab front and rails): one crossing at a
   tower's height passes in front of it, dark on dark.
 - "The wind sway rises a little" on the approach is not done: the Lookout's
   grass is static (no swaying tufts on the hill).
@@ -515,3 +515,27 @@ band now runs to the frame's bottom); the rail bird's place; the star's size.
   the spec's.
 - A camp loop after a Lookout loop was run (test_lookout's memory check: an
   evening plays to its end with no overrun); a morning or midday after one was not.
+
+### Review fixes (chief, after the independent review of 060c7f3)
+
+- Explore was 50 s with the script done at 32.7 s on every seed: 17 s of him
+  standing at the compass. It is 36 s now; the fit gives the time to the
+  sunset.
+- The fade's second step (0.0 to 0.1) lightened and greened the sky just
+  before the star; dropped. The clouds now keep their lagged colour through
+  the fade's one step (mood 0 is treated as 6), so they no longer snap to
+  night grey.
+- Birds drew under the cab front and the rails; they draw after them now.
+- `memoryBeginLoop` set the critters' persona on `loop_count <= 1`, so a
+  Lookout as the first loop left it unset for two camp loops; it keys on
+  `persona_age == 0` now (camp-only output unchanged: the pinned lines pass).
+- He stepped through the cab wall (the inside flag flipped at +33, the wall
+  ends at +30): the door is at +37.5 now.
+- The reveal marked the whole tower dirty every tick for 12 s; it marks only
+  while the tower rises and at its three detail stages.
+- With no weather data a Lookout loop drew rain, snow, fog or storm a quarter
+  of the time and tinted the sunset with nothing to show for it; those kinds
+  become clear for the Lookout (its weather rng draw is unchanged, so the
+  camp families are untouched).
+- Not changed: the approach stays 38 to 43 s (the switchbacks are long), the
+  climb 30 to 36 s (the stairs are small), no wind on the approach.

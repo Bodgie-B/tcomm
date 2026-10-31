@@ -504,6 +504,9 @@ void weatherPlan(World& w, uint64_t loop_seed, const Inputs& in, uint32_t loop_t
     x.from_data = true;
   } else {
     x.kind = randomKind(x.rng, in);
+    // The Lookout draws no precipitation, so a random rain, snow, fog or
+    // storm would tint its sunset with nothing to show for it.
+    if (w.plan.family == SF_LOOKOUT && x.kind != WX_WIND && x.kind != WX_HEAT && x.kind != WX_CHILL) x.kind = WX_CLEAR;
   }
   // One rng call per statement from here on.
   const float er = x.rng.uniform();

@@ -213,8 +213,8 @@ Beats (brief section 7), each a script as the spine's:
 | 4 | climb | 40 | the zigzag stairs; pauses at a landing to look at the valley; a bird on the rail leaves when he moves |
 | 5 | explore | 50 | round the catwalk, peeks in windows, into the cab, touches the finder table, taps the compass plate (a small arc glyph); a chipmunk on a beam watches |
 | 6 | settle | 20 | sits at the west rail, legs over the edge, arms on the rail |
-| 7 | sunset | 90 to 120 | he breathes (4 s cycle, 1 px) and nothing else; mood steps from 4.0 to 5.9 in 10 to 12 steps (a palette change and cache rebuild each), the valley layers go dark far to near, horizon clouds hold colour last; birds every 15 to 25 s at a random height and speed, sometimes a pair, once a pair circles and lands in the far treeline |
-| 8 | fade | 10 | deep blue (mood 5.9 to 0.1), one star (a GL_DOT in STAR), then the frame fades to black as the close does |
+| 7 | sunset | 90 to 120 | he breathes (4 s cycle, 1 px) and nothing else; mood steps from 4.0 to 5.9 in 8 to 10 steps, one every 11 to 15 s (a palette change and cache rebuild each), the valley layers go dark far to near, horizon clouds hold colour last; birds every 15 to 25 s at a random height and speed, sometimes a pair, once a pair circles and lands in the far treeline |
+| 8 | fade | 10 | deep blue (one step, mood 5.9 to 0 = night; the clouds keep their lagged colour through it), one star (a GL_DOT in STAR), then the frame fades to black as the close does |
 
 No fillers, no majors, no minors (the minor scheduler sees `busy`).
 Memory is untouched except `loop_count`. The Lookout never changes the
@@ -249,28 +249,42 @@ clips (new sections: morning, midday, weather, lookout) and
 "stages 2 to 6 and the spines" rather than a new page, so Mike has one
 link). Push after each chunk.
 
-## Status
+## Status (2026-10-31, chief)
 
-- Spine families and the morning spine: built in the preview, not committed
-  (2026-10-31). `spine_family.h`, `spine_morning.cpp`, `tests/test_spines.cpp`;
-  the evening's `--loops` output and frames unchanged (but for the new
-  `family=evening` prefix); midday and the Lookout fall back to the evening
-  until built. Notes, numbers and judgment calls:
-  `reviews/spines/notes.md`. Awaiting the Opus review (section 7).
-- Midday spine: built in the preview, not committed (2026-10-31).
-  `spine_midday.cpp`, `tests/test_midday.cpp`; plays when forced (`--spine
-  midday`); the mood's pick still falls back to the evening until
-  `test_scene` / `test_spines` move off mood 3 (one line in `spineFamilyFor`).
-  The evening's and the morning's `--loops` lines and frames unchanged. Notes,
-  numbers, judgment calls and asks: `reviews/spines/notes.md` (Midday spine).
-  Awaiting the Opus review.
-- Weather: built in the preview, not committed (2026-10-31). `weather.h/.cpp`,
-  `World::weather`, the `flash` palette argument, `POSE_HUG`, `MJ_RAIN_SHELTER`,
-  `tests/test_weather.cpp`; the evening's `--loops` lines unchanged (a
-  `weather=` column appended by the preview). Notes, numbers, judgment calls
-  and asks: `reviews/spines/weather_notes.md`. Awaiting the Opus review.
-- Lookout: built in the preview, not committed (2026-10-31). `lookout.h/.cpp`,
-  `tests/test_lookout.cpp`; `--spine lookout` / `--lookout` play it (the
-  fallback in `spineFamilyFor` is gone). The evening's, morning's and
-  midday's pinned `--loops` lines unchanged. Notes, numbers, judgment calls:
-  `reviews/spines/notes.md` (Lookout). Awaiting the Opus review.
+All four chunks are built in the PC preview, independently reviewed, fixed
+and pushed to `screensaver`:
+
+- Spine families and the morning spine: 05ace3b (review fixes in 9fef80d:
+  the leave c detour skipped whole when the cairn is full, the book goes in
+  the pack, the fly flag, beat-end cleanup). The evening's `--loops` lines and
+  frames are unchanged; `test_spines` pins seeds 1 and 7.
+- Midday spine: 9fef80d; the mood picks it from 2.5 to 3.5 (`test_scene`
+  forces the evening for its own checks). `test_midday` pins its lines.
+- Weather: 9fef80d, with review fixes in 060c7f3 (night lightning a palette
+  shift, smoke sampled on the sub-tick, shiver gated, gag abort restores
+  him, sway capped). Storm loops cost 16 to 25 rebuilds (morning up to 37),
+  every other kind none beyond the loop's own. `test_weather`.
+- Lookout: 060c7f3, review fixes after it (explore 36 s so he does not stand
+  17 s at the compass, 8 to 10 sunset steps, the fade's second step dropped
+  and the clouds held through it, birds over the tower, the persona set on
+  the first camp loop after a Lookout, the reveal marks dirty only when the
+  tower changes, random rain/snow/fog/storm never tint a Lookout). 315 s a
+  loop, 11 to 13 rebuilds, strips 3.3 a frame. `test_lookout`. Not done: the
+  approach's wind rising (no swaying grass on the hill).
+
+`sizeof(App)` 70,320 of 98,304. 10 test suites under clang and g++-16.
+Notes: `reviews/spines/notes.md`, `weather_notes.md`,
+`lookout_land_notes.md`. Clips: `reviews/stages2-6/index.html`.
+
+Deviations from this spec, all recorded in the notes: coffee runs 68 to
+74 s (not 55); `spineLayout` stays shared and each family's layout runs
+from `spineBeginLoop`; the fog band uses SKY4 (all 32 slots are taken);
+the wind always blows left; the nap's stolen bar leaves no memory; random
+weather ignores the season (no date input yet: **unverified** against the
+brief until stage 8 adds one); rain_shelter plays only for a storm from
+the data (a random storm still rains and strikes); the Lookout's approach
+is 38 to 43 s and its climb 30 to 36 s (trail and stair lengths).
+
+Everything is unverified on the panel: rebuild cost of the palette steps
+(the flash, the fog lift, the sunset), the rain's strip count (about 10 of
+15), readability of the 44 px hiker and the tower rails at real size.

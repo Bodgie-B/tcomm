@@ -14,7 +14,7 @@ void memoryBeginLoop(World& w, Rng& rng) {
   // The Lookout plays somewhere else: the camp's memory waits for the next
   // camp loop as it was (but the loop count, which worldBeginLoop moves).
   if (w.plan.family == SF_LOOKOUT) return;
-  if (m.loop_count <= 1 || m.persona_age >= 2) {
+  if (m.persona_age == 0 || m.persona_age >= 2) {   // the first camp loop (even after a Lookout), then every 2
     m.brave = (uint16_t)(roll & ((1u << CR_COUNT) - 1u));
     m.persona_age = 0;
   }

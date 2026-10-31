@@ -79,3 +79,50 @@ Clips named `lookout_*.mp4` in the manifest fill the Lookout section on their ow
 section's placeholder note hides when there is one. Its prose and the clip descriptions
 in the page's data block can be written then. Rebuild `$P` from the tree that has the Lookout
 (step 0 with the new commit) first. `review_page.py` does not check the Lookout clips.
+
+## The Lookout clips (added 2026-10-31, tree 060c7f3)
+
+This supersedes "After the Lookout lands" above: the Lookout has no variants, so it is not a
+`FAMILY_BEATS` entry; `review_clips.py --family lookout` has its own run (`run_lookout`, with
+`FAMILY_MOOD["lookout"] = 4` and the beat list `LOOKOUT_BEATS`). `review_page.py` now checks the
+Lookout's nine beat clips, the two overviews and the seven stills.
+
+```sh
+# 0. A preview binary from the clean copy of 060c7f3.
+S=/private/tmp/claude-501/-Users-mark--claude-spares-spare-mjlbDH/8ba60bf2-9ee9-4fb0-b995-8ac90a7e3bcd/scratchpad
+mkdir -p $S/src5 && git -C /Users/mark/Repos/TComm/tcomm archive 060c7f3 | tar -x -C $S/src5
+cmake -S $S/src5/screensaver -B $S/b_tools5
+cmake --build $S/b_tools5 -j8 --target ss_preview
+P=$S/b_tools5/ss_preview
+
+cd /Users/mark/Repos/TComm/tcomm
+D=docs/screensaver/reviews/stages2-6
+T=screensaver/tools
+
+# 1. --spine lookout --weather clear, mood 4. Seed 1 (the first of --seeds) gives, in clips/:
+#    lookout_build, _approach, _trail_pause, _reveal, _climb, _explore, _settle, _fade (the
+#    beat window plus 1 s either side, 640 px, crf 28, real time), lookout_sunset (the same
+#    window at 4x, about 30 s) and lookout_overview (the whole loop at 8x, about 39 s);
+#    and in img/: lookout_sunset_1..6.png (800x480, six ticks evenly spaced from 1 s after the
+#    sunset starts to 1 s before it ends: 4750, 5320, 5890, 6460, 7030, 7600 for seed 1) and
+#    lookout_rail.png (tick 4775, 2 s into the sunset: the top right 400x240 of the frame, 2x,
+#    nearest neighbour: fixed at x=400, y=0, so check it by eye if the tower's place changes).
+#    Seed 2 gives only lookout_overview_seed2 (the landscape differs per seed).
+python3 -I $T/review_clips.py --preview $P --out $D --family lookout --seeds 1,2
+
+# 2. The page: its Lookout section needs nothing but those clips and stills.
+python3 -I $T/review_page.py --preview $P --dir $D
+```
+
+Re-cutting `lookout_sunset`, `lookout_climb`, `lookout_overview` and `lookout_rail.png` into an
+empty directory gave byte-identical files. A name already in `manifest.json` is not cut again
+(`--force` re-cuts all of the family, stills included). `build` is cut as well as the eight beats
+named in the brief's table; the two 4 s `pause` beats are not.
+
+Last run of step 2 printed:
+
+```
+page: docs/screensaver/reviews/stages2-6/index.html; 123 clips in manifest; 130 clips checked; loops tables: 10 evening, 10 morning, 10 midday
+missing clips: none (lookout: 11 clips in the manifest)
+clip bytes: 15.2 MB
+```

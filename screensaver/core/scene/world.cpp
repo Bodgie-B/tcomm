@@ -399,7 +399,12 @@ void lookoutTick(World& w, Renderer& r) {
   }
   L.d_build_t = L.build_t;
   if (L.reveal != L.d_reveal) {
-    if (L.stage == LKS_REVEAL || L.d_reveal > 0.f) markOn(r, lookoutTowerBounds(w.lk));
+    // The tower's image changes while it rises (reveal < 0.5) and at the three
+    // detail stages after that (lookout_land.cpp towerColours: 0.6, 0.75, 0.9).
+    auto stageOf = [](float v) { return v < 0.5f ? -1 : (v < 0.6f ? 0 : (v < 0.75f ? 1 : (v < 0.9f ? 2 : 3))); };
+    const bool rising = L.reveal < 0.5f || L.d_reveal < 0.5f;
+    if ((L.stage == LKS_REVEAL || L.d_reveal > 0.f) && (rising || stageOf(L.reveal) != stageOf(L.d_reveal)))
+      markOn(r, lookoutTowerBounds(w.lk));
     L.d_reveal = L.reveal;
   }
   if (L.inside != L.d_inside) {   // the cab's front goes from behind him to in front of him

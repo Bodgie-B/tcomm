@@ -67,7 +67,7 @@ enum RailMode : uint8_t { RB_NONE = 0, RB_IN, RB_SIT, RB_OFF, RB_GONE };
 enum ChipMode : uint8_t { CH_NONE = 0, CH_IN, CH_SIT, CH_OFF, CH_GONE };
 
 // Fixed beat seconds (the approach and the climb are fitted to the trail).
-constexpr uint8_t kTrailPauseS = 8, kRevealS = 12, kExploreS = 50, kSettleS = 20, kFadeBeatS = 10;
+constexpr uint8_t kTrailPauseS = 8, kRevealS = 12, kExploreS = 36, kSettleS = 20, kFadeBeatS = 10;
 
 // The build: phases (s) sky, valley, trail, plants, hold; the end.
 const float kPhase[6] = {0.f, 1.8f, 4.6f, 7.4f, 11.6f, SS_BUILD_SECONDS};
@@ -190,7 +190,7 @@ void doPeekFrontRight(World& w, float) {
 }
 void doPeekFrontLeft(World& w, float) { targetTo(w, towerP(w, -16.f, -(float)LK_LEG_H)); }
 void doWestPeek(World& w, float) { targetTo(w, cabPoints(w).peek_feet[2]); }
-void doEastEnd(World& w, float) { targetTo(w, towerP(w, 33.f, -(float)LK_LEG_H)); }
+void doEastEnd(World& w, float) { targetTo(w, towerP(w, 37.5f, -(float)LK_LEG_H)); }   // past the wall (+30): the door
 void doInside(World& w, float) {
   w.look.inside = true;
   targetTo(w, towerP(w, 9.f, -(float)LK_LEG_H));
@@ -375,7 +375,6 @@ void fadeUpdate(SceneCtx& ctx, float t, float) {
   World& w = *ctx.w;
   const float d = (float)w.plan.fsec[LB_FADE];
   const float s = t * d;
-  if (s >= 3.f) w.mood_override = 0.1f;
   Glyph& g = w.major.g[G_STAR];
   const float k = easeOutCubic(window(s, 4.f, 5.4f));
   if (k > 0.f) {
@@ -572,7 +571,7 @@ void railBirdStep(World& w) {
       L.rail_mode = RB_SIT;
       L.rail_t = 0.f;
     }
-  } else if (L.rail_mode == RB_SIT) {   // perched, looking his way; a small hop round now and then
+  } else if (L.rail_mode == RB_SIT) {   // perched, looking his way, turning now and then
     g.pos = p;
     g.k = 0.f;
     g.t = 0.f;
@@ -735,7 +734,7 @@ void lookoutPlan(LoopPlan& p, Rng& rng, const Inputs&) {
   for (uint8_t& s : p.pause_s) s = 0;
   p.n_fillers = 0;
   p.n_majors = 0;
-  const int steps = rng.rangeInt(10, 12);
+  const int steps = rng.rangeInt(8, 10);   // one step every 11 to 15 s (brief section 7: 10 to 15)
   p.fsteps = (uint8_t)steps;
   p.fbirds = 0;
 }
@@ -964,7 +963,6 @@ void lookoutDrawDynamic(const World& w, Surface& s, const Rect& clip, const Pale
   } else {
     for (const Cloud& c : w.clouds) cloudDraw(c, s, pal, clip);
   }
-  ambientDrawBird(w, s, clip, pal);
 
   // 2. The build's layers in front of the sky, animating or in front of one that is.
   if (dyn & ~LKL_BIT(LKL_SKY)) {
@@ -993,6 +991,8 @@ void lookoutDrawDynamic(const World& w, Surface& s, const Rect& clip, const Pale
     const uint16_t front = (uint16_t)(LKL_BIT(LKL_RAILS) | (L.inside ? LKL_BIT(LKL_CAB) : 0));
     lookoutLandDraw(w.lk, s, clip, pal, lookoutDrawDone(mood, 1.f, front));
   }
+  // The birds, over the tower too (a bird never flies behind the cab).
+  ambientDrawBird(w, s, clip, pal);
 
   // 6. The loop's fade, over everything.
   if (w.fade > 0.f) {
@@ -1003,11 +1003,13 @@ void lookoutDrawDynamic(const World& w, Surface& s, const Rect& clip, const Pale
 }
 
 void lookoutPaletteTweak(const World&, float mood, const WeatherTint& t, float flash, Palette& p) {
-  // Through the sunset (4.0 to 5.9) the clouds hold their colour: computed
-  // 0.45 of mood behind the sky (never before 4.0), with the same weather and
-  // night rule. Not in the fade (night): there they are the sky's.
-  if (!(mood > kMoodFrom && mood <= kMoodTo + 1e-3f)) return;
-  const float lag = maxf(kMoodFrom, mood - 0.45f);
+  // Through the sunset (4.0 to 5.9) and into the fade (mood 0 = 6) the clouds
+  // hold their colour: computed 0.45 of mood behind the sky (never before
+  // 4.0), with the same weather and night rule, so the fade's one step does
+  // not snap them to night grey.
+  const float m = mood < 1.f ? mood + 6.f : mood;
+  if (!(m > kMoodFrom && m <= 6.f + 1e-3f)) return;
+  const float lag = maxf(kMoodFrom, m - 0.45f);
   Palette q;
   computePalette(lag, t, flash, q);
   p.c[CLOUD_LIT] = q.c[CLOUD_LIT];

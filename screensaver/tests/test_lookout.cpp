@@ -4,7 +4,7 @@
 // way up and he stays in the frame (but for his walk in), nothing but ground
 // and grass in the reserved corner (static and dynamic), the tower's bounds
 // clear of it; the sunset's mood steps rise monotonically from 4.0 to 5.9 in
-// 10 to 12 steps of 0.15 to 0.2; at most 16 palette rebuilds a loop; the
+// 8 to 10 steps of 0.19 to 0.24; at most 16 palette rebuilds a loop; the
 // night caps hold through the fade (night rule on); the birds, the rail bird,
 // the chipmunk, the tap and the star all show; incremental rendering equals a
 // full render at checkpoints in every beat; the camp's memory is untouched
@@ -179,14 +179,14 @@ static void testLoops() {
       if (w->major.g[2].kind == GL_ARCS) seen.tap = true;
       if (w->major.g[3].kind == GL_DOT && w->major.g[3].scale > 1.f) seen.star = true;
       if (w->look.inside) seen.inside = true;
-      // The sunset's steps: monotone, 4.0 .. 5.9, 0.15 .. 0.2 each.
+      // The sunset's steps: monotone, 4.0 .. 5.9, 0.19 .. 0.24 each.
       if (beatIs(a.app, "sunset")) {
         in_sunset = true;
         const float m = w->mood_override;
         if (m != mood_prev) {
           ++steps;
           const float q = m - mood_prev;
-          if (q < 0.15f - 1e-4f || q > 0.2f + 1e-4f) ++step_bad;
+          if (q < 0.19f - 1e-4f || q > 0.24f + 1e-4f) ++step_bad;
           mood_prev = m;
         }
       } else if (in_sunset && !beatIs(a.app, "fade")) {
@@ -221,7 +221,7 @@ static void testLoops() {
             }
       }
     }
-    if (steps < 10 || steps > 12 || fabsf(mood_prev - 5.9f) > 1e-4f) {
+    if (steps < 8 || steps > 10 || fabsf(mood_prev - 5.9f) > 1e-4f) {
       ++step_bad;
       printf("seed %d: %d sunset steps, ending at %.3f\n", (int)seed, steps, (double)mood_prev);
     }

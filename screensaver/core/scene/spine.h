@@ -40,9 +40,8 @@ struct Memory;
 // at loop start from the inputs alone (spineFamilyFor: no rng). Evening is
 // the stage 4 to 6 spine (arrival .. close); morning wakes in fog and breaks
 // camp (spine_morning.cpp); midday comes back from a day hike, lunches,
-// wades, naps (spine_midday.cpp: plays when forced; the mood does not pick it
-// yet). The Lookout (lookout.cpp) is the sunset set piece on its own
-// landscape, played in the host's sunset window.
+// wades, naps (spine_midday.cpp). The Lookout (lookout.cpp) is the sunset
+// set piece on its own landscape, played in the host's sunset window.
 enum SpineFamily : uint8_t { SF_EVENING = 0, SF_MORNING, SF_MIDDAY, SF_LOOKOUT, SF_COUNT };
 const char* spineFamilyName(int family);
 // The family this loop plays: in.spine_force when set, else the Lookout in

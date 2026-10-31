@@ -8,6 +8,7 @@ usage: python3 -I review_clips.py --preview PATH --out DIR [--seeds 1,2,3 | 1-12
        python3 -I review_clips.py --out DIR --list
        python3 -I review_clips.py --preview PATH --out DIR --family morning|midday
            [--seeds 1-40] [--mood M] [--pad-seconds 1]
+       python3 -I review_clips.py --preview PATH --out DIR --family lookout --seeds 1,2
        python3 -I review_clips.py --preview PATH --out DIR --weather-clips
            [--seeds 1-30] [--weather-seed 3]
 
@@ -34,6 +35,15 @@ variant seen over the seeds is cut as clips/<family>_<beat>_<letter>.mp4 (the be
 plus --pad-seconds either side), and clips/<family>_overview.mp4 is the whole first loop at
 8x. Fillers, majors and minors are not cut (the evening runs have them). Rows carry
 "family". Seeds are tried in order until every beat has all its variants (FAMILY_BEATS).
+--family lookout cuts the Lookout (no variants): the preview runs with --spine lookout
+--weather clear at mood 4; the first seed gives one clip per beat, clips/lookout_<beat>.mp4
+(build, approach, trail_pause, reveal, climb, explore, settle, fade: the beat's window plus
+--pad-seconds either side, real time; sunset at 4x, so about 30 s), clips/lookout_overview.mp4
+(the whole first loop at 8x), the sunset stills (img/lookout_sunset_1..6.png, 800x480, evenly
+spaced across the sunset beat) and the rail crop (img/lookout_rail.png: the top right 400x240
+of a frame 2 s into the sunset, he sitting at the west rail, scaled 2x with nearest
+neighbour). Every further seed in --seeds gives only clips/lookout_overview_seed<N>.mp4
+(the landscape differs per seed). Rows carry "family": "lookout".
 --weather-clips cuts the weather set (see cut_weather_set): weather_<kind>_day/night,
 weather_storm_flash, weather_wind_hat, major_rain_shelter and morning_fog_lift. --seeds is
 where major_rain_shelter is searched; the rest use --weather-seed (default 3).
@@ -63,7 +73,15 @@ FAMILY_BEATS = {
     "morning": {"wake": 3, "coffee": 3, "bag_down": 2, "break_camp": 3, "douse": 2, "leave": 3},
     "midday": {"return": 3, "lunch": 2, "wade": 3, "nap": 3, "map": 2, "afternoon": 2},
 }
-FAMILY_MOOD = {"morning": 1.5, "midday": 3.0}
+FAMILY_MOOD = {"morning": 1.5, "midday": 3.0, "lookout": 4.0}
+# The Lookout has no variants (so it is not in FAMILY_BEATS): one clip per beat, in beat order.
+# Speed is the ticks per frame at 12.5 fps (2 = real time, 8 = 4x).
+LOOKOUT_BEATS = ["build", "approach", "trail_pause", "reveal", "climb", "explore", "settle",
+                 "sunset", "fade"]
+LOOKOUT_BEAT_EVERY = {"sunset": 8}
+LOOKOUT_STILLS = 6
+LOOKOUT_RAIL_CROP = "crop=400:240:400:0,scale=iw*2:ih*2:flags=neighbor"   # x, y of the crop: 400, 0
+LOOKOUT_RAIL_AFTER = 2         # seconds into the sunset beat
 WEATHER_KINDS = ["wind", "rain", "snow", "fog", "heat", "chill", "storm"]
 WEATHER_SETTLED_TICK = 4000    # snow has grown on the tent (140 s), the gags have had pauses
 WEATHER_CLIP_SECONDS = 25
@@ -463,6 +481,106 @@ def run_family(args, seeds, st, work, clips_dir):
                        family=fam, weather="clear")
 
 
+def lookout_still(args, seed, tick, extra, work, png, vf=None):
+    """One frame of the Lookout at tick (frame 0 of a --every 1 --skip tick-1 run) as a PNG."""
+    framedir = os.path.join(work, "seed%d_still%d" % (seed, tick))
+    shutil.rmtree(framedir, ignore_errors=True)
+    try:
+        run_preview(args, seed, 1, 1, tick - 1, framedir, False, extra)
+        ffmpeg(["-i", os.path.join(framedir, "frame_00000.ppm"), "-frames:v", "1"]
+               + (["-vf", vf] if vf else []) + [png])
+    finally:
+        if not args.keep:
+            shutil.rmtree(framedir, ignore_errors=True)
+
+
+def run_lookout(args, seeds, st, work, clips_dir):
+    """--family lookout: a clip per beat of the first seed, an 8x overview of every seed, the
+    sunset stills and the rail crop (img/ beside clips/)."""
+    extra = ["--spine", "lookout", "--weather", "clear"]
+    pad = int(round(args.pad_seconds * TICKS_PER_SECOND))
+    img_dir = os.path.join(os.path.dirname(clips_dir), "img")
+    os.makedirs(img_dir, exist_ok=True)
+    for n, seed in enumerate(seeds):
+        overview = "lookout_overview" if n == 0 else "lookout_overview_seed%d" % seed
+        names = ["lookout_" + b for b in LOOKOUT_BEATS] if n == 0 else []
+        stills = [os.path.join(img_dir, "lookout_sunset_%d.png" % (k + 1))
+                  for k in range(LOOKOUT_STILLS)] + [os.path.join(img_dir, "lookout_rail.png")]
+        if (all(not st.want(x, "beat") for x in names) and not st.want(overview, "overview")
+                and (n > 0 or (all(os.path.isfile(x) for x in stills) and not args.force))):
+            continue
+        try:
+            info, beats, minors, end_tick = probe_log(args, seed, work, extra)
+        except RuntimeError as e:
+            print("seed %d: %s" % (seed, e), file=sys.stderr)
+            st.failed = True
+            continue
+        if info["family"] != "lookout":
+            print("seed %d: the preview played the %s spine, not the lookout (is it built?)" % (
+                seed, info["family"]), file=sys.stderr)
+            st.failed = True
+            continue
+        st.plans[:] = [p for p in st.plans
+                       if not (p.get("seed") == seed and bool(p.get("night")) == bool(args.night)
+                               and p.get("family", "evening") == "lookout")]
+        st.plans.append(dict(info, seed=seed, mood=args.mood_eff, night=bool(args.night),
+                             weather="clear"))
+        windows = {}
+        for tick, beat, nxt in beat_windows(beats, end_tick):
+            if beat in LOOKOUT_BEATS and beat not in windows and nxt > tick:
+                windows[beat] = (tick, nxt)
+        if n == 0:
+            for beat in LOOKOUT_BEATS:
+                name = "lookout_" + beat
+                if beat not in windows:
+                    print("seed %d: no %s beat in the log" % (seed, beat), file=sys.stderr)
+                    st.failed = True
+                    continue
+                if not st.want(name, "beat"):
+                    continue
+                tick, nxt = windows[beat]
+                start = max(0, tick - pad)
+                every = LOOKOUT_BEAT_EVERY.get(beat)
+                try:
+                    secs, mp4, png, gif = cut_clip(
+                        args, seed, name, start, nxt + pad, work, clips_dir, FAMILY_MAX_SECONDS,
+                        extra, every=every, play_rate=(TICKS_PER_SECOND / 2.0 if every else None))
+                except RuntimeError as e:
+                    print("seed %d %s: %s" % (seed, name, e), file=sys.stderr)
+                    st.failed = True
+                    continue
+                st.add_row(name, beat, "beat", None, seed, start, secs, mp4, gif,
+                           family="lookout", weather="clear")
+            # Stills: six frames evenly across the sunset (1 s in from either end), the rail crop.
+            if "sunset" in windows and (args.force or not all(os.path.isfile(x) for x in stills)):
+                s0, s1 = windows["sunset"]
+                lo, hi = s0 + TICKS_PER_SECOND, s1 - TICKS_PER_SECOND
+                try:
+                    for k in range(LOOKOUT_STILLS):
+                        tick = lo + int(round(k * (hi - lo) / (LOOKOUT_STILLS - 1)))
+                        lookout_still(args, seed, tick, extra, work, stills[k])
+                        print("  still %s tick %d" % (os.path.basename(stills[k]), tick), flush=True)
+                    lookout_still(args, seed, s0 + LOOKOUT_RAIL_AFTER * TICKS_PER_SECOND, extra,
+                                  work, stills[-1], LOOKOUT_RAIL_CROP)
+                    print("  still lookout_rail.png tick %d" % (s0 + LOOKOUT_RAIL_AFTER * TICKS_PER_SECOND),
+                          flush=True)
+                except RuntimeError as e:
+                    print("seed %d stills: %s" % (seed, e), file=sys.stderr)
+                    st.failed = True
+        if st.want(overview, "overview"):
+            nframes_end = (end_tick // 8) * 8 + 1   # nframes = end_tick // 8, as the evening's
+            try:
+                secs, mp4, png, gif = cut_clip(args, seed, overview, 0, nframes_end, work,
+                                               clips_dir, 10 ** 6, extra, every=8,
+                                               play_rate=TICKS_PER_SECOND)
+            except RuntimeError as e:
+                print("seed %d %s: %s" % (seed, overview, e), file=sys.stderr)
+                st.failed = True
+                continue
+            st.add_row(overview, "loop_overview", "overview", None, seed, 0, secs, mp4, gif,
+                       family="lookout", weather="clear")
+
+
 def ppm_mean(path, stride=53):
     """Mean of every stride-th byte of a binary P6 PPM's pixel data (a cheap brightness)."""
     with open(path, "rb") as f:
@@ -650,9 +768,10 @@ def main():
     ap.add_argument("--gif", action="store_true", help="also write a GIF for clips under 10 s")
     ap.add_argument("--loops-overview", action="store_true",
                     help="also render a whole-loop 8x clip of the first seed")
-    ap.add_argument("--family", choices=sorted(FAMILY_BEATS),
+    ap.add_argument("--family", choices=sorted(FAMILY_MOOD),
                     help="cut that spine family's beats x variants (clips/<family>_<beat>_<letter>) "
-                         "and its overview, at mood 1.5 (morning) or 3 (midday), weather clear")
+                         "and its overview, at mood 1.5 (morning) or 3 (midday), weather clear; "
+                         "lookout: a clip per beat, overviews and stills, mood 4")
     ap.add_argument("--pad-seconds", type=float, default=1.0,
                     help="--family: seconds added either side of each beat (default 1)")
     ap.add_argument("--weather-clips", action="store_true",
@@ -728,7 +847,9 @@ def main():
     overview_done = False
 
     if args.family or args.weather_clips:
-        if args.family:
+        if args.family == "lookout":
+            run_lookout(args, seeds, st, work, clips_dir)
+        elif args.family:
             run_family(args, seeds, st, work, clips_dir)
         else:
             run_weather(args, seeds, st, work, clips_dir)
