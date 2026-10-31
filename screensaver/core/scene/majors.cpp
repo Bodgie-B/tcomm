@@ -715,14 +715,12 @@ void tickDeer(World& w, float) {
       if (arrivedC(w, 0)) {   // snap
         for (Glyph& g : m.g)
           if (g.kind == GL_SHAPE && g.shape == SH_TWIG) g.k = 1.f;
-        for (Bit& b : w.bits) {
-          if (b.kind != BIT_NONE) continue;
-          b = Bit{};
-          b.kind = BIT_DUST;
+        const int s = worldTakeBit(w, BIT_DUST);
+        if (s >= 0) {
+          Bit& b = w.bits[s];
           b.pos = Vec2{m.p[0].x, m.p[0].y - 2.f};
           b.vel = Vec2{0.f, -6.f};
           b.land_y = m.p[0].y;
-          break;
         }
         critterSetAction(d, CA_STARTLE, 0.45f);
         fire(m, kE1);
@@ -1182,8 +1180,9 @@ void tickRaccoon(World& w, float) {
       if (r.carry == CC_SHOE) {   // last loop's shoe, back
         r.carry = CC_NONE;
         Item& s = w.items[ITEM_SHOE];
-        s = Item{m.p[1], true, false, 1, 1.f, m.p[1].y, false, 0, 0.f};
+        s = Item{m.p[1], true, false, 1, 1.f, m.p[1].y, false, 0, 0.f, 0.f, 1.f, false};
         w.memory.shoe_taken = false;
+        w.memory.shoe_back = true;   // he keeps it in the tent tonight (doShoeOff)
         m.u1 = 1.f;
       }
       critterSetAction(r, CA_SNIFF, 0.4f);
@@ -2161,16 +2160,13 @@ void majorEnd(SceneCtx& ctx) {
   // What a major leaves behind: a cone it dropped stays on the ground.
   for (Glyph& g : m.g) {
     if (g.kind != GL_SHAPE || g.shape != SH_CONE) continue;
-    for (Bit& b : w.bits) {
-      if (b.kind != BIT_NONE) continue;
-      b = Bit{};
-      b.kind = BIT_CONE;
-      b.resting = true;
-      b.pos = g.pos;
-      b.spin = 0.25f;
-      b.ground_y = b.land_y = g.pos.y;
-      break;
-    }
+    const int s = worldTakeBit(w, BIT_CONE);
+    if (s < 0) continue;
+    Bit& b = w.bits[s];
+    b.resting = true;
+    b.pos = g.pos;
+    b.spin = 0.25f;
+    b.ground_y = b.land_y = g.pos.y;
   }
   clearGlyphs(m, true);
   w.tent.wobble = 0.f;
@@ -2218,9 +2214,13 @@ void majorsPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
   // age, at most half the weight of a fresh one).
   // The last loop's own majors (the newest last_n picks) are out unless
   // nothing else is left.
+  // The raccoon's sequel: the night after it brought the shoe back (with
+  // nothing to bring now) it may raid the tent side; that one is not held
+  // back by the ring (it never could follow its own return otherwise).
+  const bool sequel = mem.shoe_back && !mem.shoe_taken;
   for (int i = 0; i < MJ_COUNT; ++i) {
     const int age = memoryMajorAge(mem, (uint8_t)i);
-    if (age < 0) continue;
+    if (age < 0 || (sequel && i == MJ_RACCOON_PACK)) continue;
     const float k = (float)(1 + age) / (float)(MEMORY_RING + 1);
     base[i] *= age < (int)mem.last_n ? 1e-4f : 0.5f * k * k;
   }
@@ -2236,8 +2236,10 @@ void majorsPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
     float wt[MJ_COUNT];
     for (int i = 0; i < MJ_COUNT; ++i) {
       uint8_t allowed = kMajors[i].slots & free_slots;
-      // The raccoon raids the tent side only while it has no shoe to bring back.
+      // The raccoon raids the tent side only while it has no shoe to bring
+      // back; the night after it brought it back, only the tent side.
       if (i == MJ_RACCOON_PACK && mem.shoe_taken) allowed &= kOut;
+      if (i == MJ_RACCOON_PACK && sequel) allowed &= kTent;
       wt[i] = allowed ? base[i] : 0.f;
       for (int j = 0; j < n; ++j)
         if (pick[j] == i) wt[i] = 0.f;
@@ -2250,8 +2252,12 @@ void majorsPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
     const uint32_t r_slot = rng.next();
     const uint32_t r_var = rng.next();
     if (k >= want || sum <= 0.f) continue;
+    // Past the first two, a pick is optional: never one held back by the ring
+    // or the recent sets (only that one was left, say for S4).
+    if (k >= 2 && wt[id] < 1e-3f) continue;
     uint8_t allowed = kMajors[id].slots & free_slots;
     if (id == MJ_RACCOON_PACK && mem.shoe_taken) allowed &= kOut;
+    if (id == MJ_RACCOON_PACK && sequel) allowed &= kTent;
     int cnt = 0;
     for (int b = 0; b < 4; ++b) cnt += (allowed >> b) & 1;
     if (cnt == 0) continue;

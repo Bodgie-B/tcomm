@@ -79,10 +79,15 @@ void actPackLift(World& w, float u) {
     hikerCarry(w.hiker, CARRY_BAG);
   }
 }
-void doPackSetDown(World& w, float) {
-  w.pack.held = false;
-  w.pack.pos.y = w.hiker.feet.y + 3.f;   // stands on the ground in front of his feet, not at his hands
-  hikerCarry(w.hiker, CARRY_NONE);
+// Down from his hands to stand on the ground in front of his feet (it used
+// to drop there in one tick, 4.5 to 7 px).
+void actPackSetDown(World& w, float u) {
+  if (w.pack.held) {
+    w.pack.held = false;
+    hikerCarry(w.hiker, CARRY_NONE);
+    w.spine.v0 = w.pack.pos;
+  }
+  w.pack.pos.y = lerp(w.spine.v0.y, w.hiker.feet.y + 3.f, easeInOut(u));
 }
 
 // Tent: spread the fabric, back pole, front pole, pegs. Each tweens progress
@@ -504,27 +509,39 @@ void chipTick(World& w) {
 // The close: a shoe by the tent door; a raccoon walks off with it.
 constexpr float kThiefWalk = 38.f;
 
-// Food bag, at the tent door: one crouch and a shoe comes off and stays outside.
+// Food bag, at the tent door: one crouch and a shoe comes off and stays
+// outside. Not while the raccoon has it (memory), nor on the night it brought
+// it back (raccoon_pack): he keeps it in the tent then. Its spot is kept
+// either way (the thief comes to the door).
 void doShoeOff(World& w, float) {
   Item& s = w.items[ITEM_SHOE];
   const Hiker& h = w.hiker;
   s.held = false;
   s.on_fire = false;
   s.critter = 0;
-  s.down = true;
+  s.down = !w.memory.shoe_taken && !w.memory.shoe_back;
   s.facing = 1;
   s.pos = Vec2{h.feet.x + 11.f, h.feet.y + 2.f};
 }
 
+// The night thief: the shoe at the door if it is out; else the mug or the
+// book, whichever is lying out; else it noses round the door and leaves.
 void hookTheft(World& w, float) {
   SpineState& sp = w.spine;
-  const Item& shoe = w.items[ITEM_SHOE];
-  if (sp.thief >= 0 || !shoe.down) return;
-  const int r = directorSpawn(w, CR_RACCOON, Vec2{-34.f, shoe.pos.y - 1.f}, 1);
+  if (sp.thief >= 0) return;
+  int loot = -1;
+  if (w.items[ITEM_SHOE].down) loot = ITEM_SHOE;
+  else if (w.items[ITEM_MUG].down) loot = ITEM_MUG;
+  else if (w.items[ITEM_BOOK].down) loot = ITEM_BOOK;
+  const Vec2 at = w.items[loot >= 0 ? loot : ITEM_SHOE].pos;
+  const int r = directorSpawn(w, CR_RACCOON, Vec2{-34.f, at.y - 1.f}, 1);
   if (r < 0) return;
   w.crit[r].tag = CT_THIEF;
-  directorWalk(w, r, Vec2{shoe.pos.x - 13.f, shoe.pos.y - 1.f}, kThiefWalk, CA_MOVE);
+  // Quicker when it is far in, so it is out before the fade.
+  const float v = maxf(kThiefWalk, (at.x + 21.f) / 7.f);
+  directorWalk(w, r, Vec2{at.x - 13.f, at.y - 1.f}, v, CA_MOVE);
   sp.thief = (int8_t)r;
+  sp.thief_loot = (uint8_t)(loot + 1);
   sp.thief_stage = 0;
   sp.thief_t = 0.f;
 }
@@ -537,7 +554,6 @@ void thiefTick(World& w) {
     return;
   }
   Critter& c = w.critters[sp.thief];
-  Item& shoe = w.items[ITEM_SHOE];
   sp.thief_t += SS_TICK_DT;
   auto next = [&](uint8_t st) {
     sp.thief_stage = st;
@@ -550,17 +566,26 @@ void thiefTick(World& w) {
         next(1);
       }
       break;
-    case 1:   // a good long sniff
-      if (sp.thief_t > 1.8f) {
-        critterSetAction(c, CA_CARRY, 0.5f);
+    case 1:   // a good long sniff (nothing to take: a second one, nosing about)
+      if (sp.thief_t > (sp.thief_loot ? 1.8f : 3.2f)) {
+        critterSetAction(c, sp.thief_loot ? CA_CARRY : CA_LOOK, 0.5f);
         next(2);
       }
       break;
     case 2:   // picks it up
-      if (sp.thief_t > 0.25f && shoe.down) {
-        shoe.down = false;
-        c.carry = CC_SHOE;
-        w.memory.shoe_taken = true;
+      if (sp.thief_t > 0.25f && sp.thief_loot && w.items[sp.thief_loot - 1].down) {
+        Item& it = w.items[sp.thief_loot - 1];
+        it.down = false;
+        if (sp.thief_loot == ITEM_SHOE + 1) {   // the shoe it carries itself (the rig draws it)
+          c.carry = CC_SHOE;
+          w.memory.shoe_taken = true;
+        } else {   // the mug or the book, in its mouth
+          it.held = true;
+          it.critter = (uint8_t)(sp.thief + 1);
+          it.angle = 0.f;
+          it.placed = false;
+        }
+        w.memory.last_stolen = sp.thief_loot;
       }
       if (sp.thief_t > 0.7f) {   // turns toward the tent
         directorWalk(w, sp.thief, Vec2{c.feet.x - 3.f, c.feet.y}, 10.f, CA_MOVE);
@@ -574,8 +599,8 @@ void thiefTick(World& w) {
       }
       break;
     case 4:   // the guilty pause, then off the way it came
-      if (sp.thief_t > 1.9f) {
-        directorExit(w, sp.thief, -1, kThiefWalk, CA_MOVE);
+      if (sp.thief_t > 1.9f) {   // (from far in, quicker: out before the fade)
+        directorExit(w, sp.thief, -1, maxf(kThiefWalk, (c.feet.x + 60.f) / 6.f), CA_MOVE);
         sp.thief = -1;   // the director releases it once it is out of sight
         next(5);
       }
@@ -900,11 +925,14 @@ constexpr float kBearWalk = 22.f, kBearRun = 72.f;
 Critter* bearOf(World& w) {
   return directorOwns(w, w.spine.bear, CT_BEAR) ? &w.critters[w.spine.bear] : nullptr;
 }
-bool bearArrived(const World& w) {
+// The bear's slot still holds the bear (once released, the slot may go to
+// another critter: the tag tells).
+bool bearHeld(const World& w) {
   const int b = w.spine.bear;
-  return b < 0 || !w.crit[b].in_use || critterArrived(w.critters[b]);
+  return b >= 0 && w.crit[b].in_use && w.crit[b].tag == CT_BEAR;
 }
-bool bearGone(const World& w) { return w.spine.bear < 0 || !w.crit[w.spine.bear].in_use; }
+bool bearArrived(const World& w) { return !bearHeld(w) || critterArrived(w.critters[w.spine.bear]); }
+bool bearGone(const World& w) { return !bearHeld(w); }
 
 float trunkX(const World& w) { return (float)w.land.camp_x; }
 constexpr float kBearTreeY = 346.f;   // in front of the camp pine's foot (340)
@@ -915,8 +943,8 @@ Vec2 bearSniffSpot(const World& w) {
   return Vec2{x, groundAt(w, x, kBearTreeY)};
 }
 
-void bearWalk(World& w, Vec2 to, float v) {
-  if (w.spine.bear >= 0) directorWalk(w, w.spine.bear, to, v, CA_MOVE);
+void bearWalk(World& w, Vec2 to, float v, bool back = false) {
+  if (bearHeld(w)) directorWalk(w, w.spine.bear, to, v, CA_MOVE, back);
 }
 
 void doBearEnter(World& w, float) {
@@ -964,7 +992,7 @@ void doBearToTrunk(World& w, float) {   // climb and shake: right of the trunk, 
 
 void doBearLeave(World& w, float) {
   SpineState& sp = w.spine;
-  if (sp.bear >= 0 && w.crit[sp.bear].in_use) directorExit(w, sp.bear, 1, kBearWalk, CA_MOVE);
+  if (bearHeld(w)) directorExit(w, sp.bear, 1, kBearWalk, CA_MOVE);
   sp.fear = 0.f;
 }
 
@@ -995,9 +1023,9 @@ void actBearSlide(World& w, float u) {
   c->feet.y = lerp(w.spine.u0, kBearTreeY, easeInCubic(u));
   if (u >= 1.f) {
     for (int k = 0; k < 2; ++k) {
-      Bit& b = w.bits[k];
-      b = Bit{};
-      b.kind = BIT_DUST;
+      const int s = worldTakeBit(w, BIT_DUST);
+      if (s < 0) break;
+      Bit& b = w.bits[s];
       b.pos = Vec2{c->feet.x + (k ? 14.f : -10.f), kBearTreeY - 3.f};
       b.vel = Vec2{k ? 14.f : -12.f, -9.f};
       b.land_y = kBearTreeY + 1.f;
@@ -1029,10 +1057,10 @@ void actBearRear(World& w, float u) {
   if (u <= 0.f) critterSetAction(*c, CA_REAR, 1.0f);
 }
 
-void dropCone(World& w, int k, Vec2 from, float hit_y, float land_y) {
-  Bit& b = w.bits[k];
-  b = Bit{};
-  b.kind = BIT_CONE;
+void dropCone(World& w, Vec2 from, float hit_y, float land_y) {
+  const int s = worldTakeBit(w, BIT_CONE);
+  if (s < 0) return;
+  Bit& b = w.bits[s];
   b.pos = from;
   b.vel = Vec2{0.f, 30.f};
   b.ground_y = hit_y;
@@ -1050,10 +1078,10 @@ void actBearShake(World& w, float u) {
     if (floorf(ph) != floorf(ph - SS_TICK_DT * 2.f)) bagKick(w, w.spine.bag_v < 0.f ? -0.55f : 0.55f);
   }
   if (prev < 1.6f && s >= 1.6f)   // a cone off the canopy to the ground
-    dropCone(w, 2, Vec2{trunkX(w) - 26.f, 236.f}, kBearTreeY + 6.f, kBearTreeY + 6.f);
+    dropCone(w, Vec2{trunkX(w) - 26.f, 236.f}, kBearTreeY + 6.f, kBearTreeY + 6.f);
   if (prev < 4.4f && s >= 4.4f) {   // ...and one right on its head
     const Vec2 h = critterHead(*c);
-    dropCone(w, 3, Vec2{h.x, h.y - 64.f}, h.y + 2.f, c->feet.y + 4.f);
+    dropCone(w, Vec2{h.x, h.y - 64.f}, h.y + 2.f, c->feet.y + 4.f);
   }
 }
 
@@ -1078,38 +1106,67 @@ void actBearStartle(World& w, float u) {
 }
 void doBearRunOff(World& w, float) {
   SpineState& sp = w.spine;
-  if (sp.bear >= 0 && w.crit[sp.bear].in_use) directorExit(w, sp.bear, 1, kBearRun, CA_RUN);
+  if (bearHeld(w)) directorExit(w, sp.bear, 1, kBearRun, CA_RUN);
   sp.fear = 0.f;
 }
 
 // c) The stick: the fire-poking stick if it is lying out, else a fallen branch
 // (laid by the bag pine at the start of the loop). Carried in the mouth,
-// swung from the paw.
+// trailing back along its side, swung from the paw.
+//
+// The point of the lying stick its mouth takes it by: kItemMouthGrip of the
+// stick ahead of the mouth (facing `f`), as the director carries it.
+float stickGripX(const Item& st, int f) {
+  return st.pos.x + (float)f * (0.5f - kItemMouthGrip) * kItemStickLen;
+}
 void doBearToStick(World& w, float) {
   Critter* c = bearOf(w);
   if (!c) return;
   const Item& st = w.items[ITEM_STICK];
-  const int f = st.pos.x < c->feet.x ? -1 : 1;
   const Vec2 m = critterMouth(*c);
   const float reach = fabsf(m.x - c->feet.x);
-  // Its mouth over the stick's near half, a few px behind it (by the fire,
-  // that walks it behind the flames, never into them).
-  const float x = st.pos.x - (float)f * (12.f + reach);
+  // Its mouth over the grip point, facing the way it faces now; when that is
+  // behind it, a short step back (no turn), or round if it is far.
+  int f = c->facing;
+  float x = stickGripX(st, f) - (float)f * reach;
+  const bool behind = (x - c->feet.x) * (float)f < 0.f;
+  const bool back = behind && fabsf(x - c->feet.x) < 40.f;
+  if (behind && !back) {
+    f = -f;
+    x = stickGripX(st, f) - (float)f * reach;
+  }
+  // By the fire the stick lies in front of the stones: a few px behind it
+  // walks it behind the flames, never into them.
   const float y = st.pos.y < 380.f ? st.pos.y - 1.f : st.pos.y - 5.f;
-  bearWalk(w, Vec2{x, groundAt(w, x, y)}, fabsf(x - c->feet.x) > 200.f ? 30.f : kBearWalk);
+  bearWalk(w, Vec2{x, groundAt(w, x, y)}, back ? 12.f : (fabsf(x - c->feet.x) > 200.f ? 30.f : kBearWalk), back);
 }
 
+// Head down to the stick; it comes up from the ground into its mouth (eased:
+// the lying stick and the carried one are the same line at the start).
 void actBearPickStick(World& w, float u) {
   Critter* c = bearOf(w);
   if (!c) return;
   if (u <= 0.f) critterSetAction(*c, CA_SNIFF, 0.4f);
   Item& st = w.items[ITEM_STICK];
-  if (u >= 0.55f && !st.critter) {
-    st.critter = (uint8_t)(w.spine.bear + 1);
+  const uint8_t mine = (uint8_t)(w.spine.bear + 1);
+  constexpr float kGrab = 0.45f, kUp = 0.75f;
+  if (u >= kGrab && !st.critter) {
+    w.spine.v0 = Vec2{stickGripX(st, c->facing), st.pos.y - 1.75f};   // the grip point, on the ground
+    st.critter = mine;
     st.held = true;
     st.down = false;
+    st.placed = true;
     st.facing = (int8_t)c->facing;
-    st.angle = -0.2f;   // trailing back along its side
+    st.squeeze = 1.f;
+    st.grip = kItemMouthGrip;
+    st.angle = -0.25f;   // lying flat, back from the grip
+  }
+  if (st.critter == mine && st.placed) {
+    const float e = easeInOut(window(u, kGrab, kUp));
+    const Vec2 m = critterMouth(*c);
+    st.pos = Vec2{lerp(w.spine.v0.x, m.x, e), lerp(w.spine.v0.y, m.y, e)};
+    st.angle = lerp(-0.25f, -0.29f, e);   // the back end trailing a little low, along its side
+    if (u >= kUp) st.placed = false;     // the director carries it from here
   }
   if (u >= 1.f) critterSetAction(*c, CA_IDLE, 0.4f);
 }
@@ -1129,9 +1186,9 @@ void actBearRaiseStick(World& w, float u) {
     critterSetAction(*c, CA_REACH, 1.0f);
     w.spine.u0 = w.items[ITEM_STICK].angle;
   }
+  // The director moves it from mouth to paw as it rears, held by the end there.
   Item& st = w.items[ITEM_STICK];
-  st.facing = (int8_t)c->facing;
-  st.angle = lerp(w.spine.u0, -0.04f, easeInOut(window(u, 0.3f, 1.f)));
+  st.angle = lerp(w.spine.u0, -0.04f, easeInOut(window(u, 0.1f, 0.75f)));   // up as it rears
 }
 
 // Two swats: a wind-up back, a fast sweep through the bag, back up.
@@ -1154,15 +1211,30 @@ void actBearSwat(World& w, float u) {
   if (u >= 1.f) c->fore_add = 0.f;
 }
 
-void doBearDropStick(World& w, float) {
+// It lets go: the stick topples forward off its paw and lands flat on the
+// ground (the carried line and the lying stick meet at the end).
+void actBearDropStick(World& w, float u) {
   Critter* c = bearOf(w);
   Item& st = w.items[ITEM_STICK];
-  if (!c || !st.critter) return;
-  st.critter = 0;
-  st.held = false;
-  st.down = true;
-  st.pos = Vec2{c->feet.x - (float)c->facing * 8.f, c->feet.y + 3.f};
-  st.facing = 1;
+  if (!c || st.critter != (uint8_t)(w.spine.bear + 1)) return;
+  const float ground = c->feet.y + 3.f;
+  if (!st.placed) {
+    st.placed = true;
+    w.spine.v0 = st.pos;
+    w.spine.u0 = st.angle;
+  }
+  st.grip = 0.f;
+  st.pos = Vec2{w.spine.v0.x, lerp(w.spine.v0.y, ground - 1.75f, easeInCubic(u))};
+  st.angle = lerp(w.spine.u0, 0.25f, u * u);
+  if (u >= 1.f) {
+    const float sx = (st.facing < 0 ? -1.f : 1.f) * st.squeeze;
+    st.critter = 0;
+    st.held = false;
+    st.placed = false;
+    st.down = true;
+    st.squeeze = 1.f;
+    st.pos = Vec2{w.spine.v0.x + sx * 0.5f * kItemStickLen, ground};
+  }
 }
 
 // Stands looking up at the bag a long time, then down on all fours.
@@ -1185,7 +1257,9 @@ void layFallenBranch(World& w) {
   st.down = true;
   st.facing = -1;
   st.critter = 0;
-  st.pos = Vec2{trunkX(w) + 56.f, groundAt(w, trunkX(w) + 56.f, kBearTreeY + 6.f)};
+  // Well left of where it stops to sniff (trunk + 96), so it walks on to it
+  // and takes it facing the way it came.
+  st.pos = Vec2{trunkX(w) + 20.f, groundAt(w, trunkX(w) + 20.f, kBearTreeY + 6.f)};
 }
 
 // ---- the tent at night -------------------------------------------------------------------
@@ -1459,7 +1533,7 @@ const Step kArrivalC[] = {
   pose(POSE_STAND, 0.3f, 0.3f), act(actShrug, 1.1f),                    \
       pose(POSE_CROUCH, 0.7f, 1.4f), act(actPackLift, 0.6f),            \
       pose(POSE_CARRY, 0.6f, 0.2f), walk(AT_PACK, 30.f, 16.f, -3.f),    \
-      face(LEFT), pose(POSE_CROUCH, 0.6f, 0.4f), doit(doPackSetDown),   \
+      face(LEFT), pose(POSE_CROUCH, 0.6f, 0.4f), act(actPackSetDown, 0.3f), \
       pose(POSE_STAND, 0.6f, 0.2f), walk(AT_TENT_WORK, 30.f), face(LEFT), \
       pose(POSE_CROUCH, 0.6f, 0.f), act(actSpread, 1.6f), pose(POSE_STAND, 0.5f, 0.f)
 
@@ -1818,7 +1892,7 @@ const Step kBearC[] = {
     act(actBearRaiseStick, 1.4f),
     act(actBearSwat, kSwatS),
     still(0.3f),
-    doit(doBearDropStick),
+    act(actBearDropStick, 0.5f),
     act(actBearStandLook, 5.5f),
     still(0.6f),
     BEAR_OUT,
@@ -2278,7 +2352,8 @@ void bearUpdate(SceneCtx& ctx, float t, float) {
   if (w.fire.state == FIRE_LIT) w.fire.fuel = lerp(1.f, 0.45f, easeInOut(t));
   SpineState& sp = w.spine;
   Tent& tent = w.tent;
-  const bool here = sp.bear >= 0 && w.crit[sp.bear].in_use && w.critters[sp.bear].visible;
+  if (!bearHeld(w)) sp.bear = -1;   // released: the slot is no longer the bear's
+  const bool here = sp.bear >= 0 && w.critters[sp.bear].visible;
   float to = -4.f;   // where the shadow sits at rest (doLightOn)
   if (here) {
     const float bx = w.critters[sp.bear].feet.x;
@@ -2325,12 +2400,32 @@ void beatEnd(SceneCtx& ctx) {
   w.busy = false;
 }
 
+// A beat that owns critters: at its end, any of its critters still at work
+// (one that overran, a dinner guest he never stirred) walks out by the nearer
+// edge, so none outlives the beat. Scattered ones are already on their way.
+template <int B>
+void beatEndOwned(SceneCtx& ctx) {
+  beatEnd(ctx);
+  World& w = *ctx.w;
+  const uint8_t tag = B == SB_DINNER ? CT_DINNER : (B == SB_BEAR ? CT_BEAR : CT_THIEF);
+  for (int i = 0; i < CRITTER_MAX; ++i) {
+    if (!directorOwns(w, i, tag)) continue;
+    const Critter& c = w.critters[i];
+    const int side = c.feet.x < 0.5f * (float)SS_WIDTH ? -1 : 1;
+    const bool big = c.kind == CR_DEER || c.kind == CR_BEAR || c.kind == CR_RACCOON;
+    directorExit(w, i, side, big ? 45.f : 90.f, big ? CA_MOVE : CA_RUN);
+  }
+}
+
 typedef void (*BeginFn)(SceneCtx&);
 typedef void (*UpdateFn)(SceneCtx&, float, float);
 const BeginFn kBegin[SB_COUNT] = {beatBegin<0>, beatBegin<1>, beatBegin<2>, beatBegin<3>,
                                   beatBegin<4>, beatBegin<5>, beatBegin<6>, beatBegin<7>};
 const UpdateFn kUpdate[SB_COUNT] = {beatUpdate, beatUpdate, beatUpdate, beatUpdate,
                                     beatUpdate, beatUpdate, bearUpdate, closeUpdate};
+typedef void (*EndFn)(SceneCtx&);
+const EndFn kEnd[SB_COUNT] = {beatEnd, beatEnd, beatEnd, beatEnd, beatEndOwned<SB_DINNER>,
+                              beatEnd, beatEndOwned<SB_BEAR>, beatEndOwned<SB_CLOSE>};
 const BeginFn kFillerBegin[FILL_COUNT] = {fillerBegin<0>, fillerBegin<1>, fillerBegin<2>,
                                           fillerBegin<3>, fillerBegin<4>, fillerBegin<5>};
 static_assert(SB_COUNT == 8 && FILL_COUNT == 6, "extend kBegin, kUpdate and kFillerBegin");
@@ -2647,7 +2742,7 @@ void spineCritterScenes(World& w) {
 void spineBuildTimeline(Timeline& tl, const LoopPlan& p) {
   tl.add(kBuildBeat);
   for (int b = 0; b < SB_COUNT; ++b) {
-    tl.add(Beat{kBeatNames[b], (float)beatSeconds(p, b), kBegin[b], kUpdate[b], beatEnd});
+    tl.add(Beat{kBeatNames[b], (float)beatSeconds(p, b), kBegin[b], kUpdate[b], kEnd[b]});
     if (b == SB_CLOSE) break;   // the loop ends here
     tl.add(Beat{"pause", (float)p.pause_s[b], nullptr, nullptr, nullptr});
     for (int i = 0; i < p.n_fillers; ++i) {

@@ -15,7 +15,10 @@
 // not own the critters (dinner, bear, close, the build, or any beat this file
 // does not know, which covers majors placed as beats), no critter of anyone
 // else is in the scene, and the hiker is not walking. When a beat that owns the
-// critters starts while a minor runs, its critters leave the frame at once.
+// critters starts while a minor runs (the still beat before a major counts),
+// its critters leave the frame at once, quickly (even ones already walking
+// off), and the minor ends once they are out; leaves lying about (leaf_fall)
+// are blown off the nearest edge by a gust, so the beat starts on a clear stage.
 //
 // minorsSync (app.cpp, before worldTick) hands it the timeline's beat and the
 // mood; minorsStep runs from worldTick between the spine's critter scenes and
@@ -51,6 +54,7 @@ struct Minors {
   uint8_t cur;               // MinorId running, MN_NONE when idle
   uint8_t stage;             // its state; MINOR_ENDING once it has let go
   bool quit;                 // told to wrap up (a beat that owns the critters began)
+  bool owned_prev;           // last tick's worldBeatOwnsCritters (the wrap-up and the gust fire on its rise)
   float t;                   // seconds in the stage
   float age;                 // seconds since it started
   int8_t slot[2];            // critter slots held (-1 none)
@@ -67,6 +71,7 @@ struct Minors {
   uint8_t ring[MINOR_RING];  // last picks, oldest overwritten
   uint8_t ring_n, ring_i;
   uint16_t fired;            // minors started this loop
+  uint16_t forced;           // this loop: minors made to let go (kMaxAge) or whose critters were released in sight
   uint8_t fired_by[MN_COUNT];
   uint8_t chip_n;            // chipmunk_cross picks so far (what it carries escalates)
   // From the timeline and the inputs, each tick (minorsSync).
@@ -100,5 +105,8 @@ const char* minorsName(const World& w);
 const char* minorName(int id);
 // Critter slots in use with tag CT_MINOR.
 int minorsCritters(const World& w);
+// Minors this loop that had to be forced: past their age limit, or a critter
+// that never got out of sight and was released. Expected 0.
+int minorsForced(const World& w);
 
 }  // namespace ss

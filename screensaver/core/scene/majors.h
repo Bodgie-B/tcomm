@@ -72,7 +72,7 @@ struct Glyph {
   int16_t base_y;   // where it sorts among the ground actors
 };
 
-#define GLYPH_MAX 24
+#define GLYPH_MAX 28   // the counted stars a stargaze keeps, and a firefly_jar's 20 after it
 
 // The running major: its points (the AT_M0..AT_M3 anchors), critter slots,
 // stage machines, cues between the script and the tick, and its glyphs with

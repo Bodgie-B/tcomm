@@ -58,6 +58,7 @@ bool previewInit(PreviewState& st, uint64_t seed, const Inputs& in) {
   st.surface.stride = SS_WIDTH;
   st.surface.origin_y = 0;
   st.inputs = in;
+  st.minors_seen = 0;
   st.seed = seed;
   st.speed = 1;
   st.doorbell_at = -1;
@@ -75,12 +76,11 @@ void previewShutdown(PreviewState& st) {
 }
 
 static void logBeatChange(PreviewState& st) {
-  // A minor effect started: its own line (the count goes up, or restarts at 1 on a new loop).
-  static int minors_seen = 0;
+  // A minor effect started: its own line (the count goes up; it restarts at 0 each loop).
   const int mc = appMinorCount(st.app);
-  if (mc != minors_seen) {
-    if (mc > minors_seen || mc == 1) printf("tick=%u minor=%s\n", (unsigned)st.tick, appMinorName(st.app));
-    minors_seen = mc;
+  if (mc != st.minors_seen) {
+    if (mc > st.minors_seen) printf("tick=%u minor=%s\n", (unsigned)st.tick, appMinorName(st.app));
+    st.minors_seen = mc;
   }
   const char* name = appBeatName(st.app);
   if (strncmp(name, st.last_beat, sizeof st.last_beat - 1) == 0 &&
@@ -98,6 +98,7 @@ static void logLoopStart(PreviewState& st) {
   printf("loop=%d seed=%llu start tick=%u plan=%s\n", st.loop_index,
          (unsigned long long)appLoopSeed(st.app), (unsigned)st.tick, plan);
   st.last_beat[0] = 0;   // the new loop's first beat is logged even if the name repeats
+  st.minors_seen = 0;    // so is its first minor
 }
 
 void previewEnableBeatLog(PreviewState& st) {

@@ -6,8 +6,10 @@
 // | Field          | Effect next loop                                                     |
 // |----------------|----------------------------------------------------------------------|
 // | cairn_n        | the cairn stands from loop start, one stone shorter; the filler adds |
-// | shoe_taken     | the raccoon (raccoon_pack major) brings the shoe back first           |
-// | last_stolen    | what it took instead (mug or book), ItemId + 1                       |
+// | shoe_taken     | the raccoon (raccoon_pack major) brings the shoe back first; no shoe |
+// |                | is left at the tent door (the night thief takes the mug or book)     |
+// | shoe_back      | (this loop only) it came back: he keeps it in the tent tonight       |
+// | last_stolen    | the last thing a raccoon took (shoe, mug or book), ItemId + 1        |
 // | mouse_hole     | the tent has a bite out of its base until he patches it in setup     |
 // | ring, sets     | the last MEMORY_RING majors picked and the last loops' sets: avoided |
 // | brave, persona | which critter kinds are bold this loop; re-rolled every 2 loops      |
@@ -28,6 +30,7 @@ struct World;
 
 struct Memory {
   bool shoe_taken;       // the raccoon has the shoe
+  bool shoe_back;        // this loop: raccoon_pack brought it back (he keeps it in the tent tonight)
   uint8_t cairn_n;       // stones on the cairn at the end of the last loop
   bool mouse_hole;       // the mice got into the tent (until he patches it)
   uint32_t loop_count;   // loops started, this one included

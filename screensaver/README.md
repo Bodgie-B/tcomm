@@ -14,7 +14,7 @@ brief: `docs/screensaver/CAMPSITE_SCREENSAVER_BRIEF.md`.
   is the headless PPM renderer, `window_main.cpp` is the SDL2 window.
 - `port_esp32/` panel firmware glue (not started).
 - `tests/` `test_*.cpp`, plain executables run by `ctest`.
-- `tools/` `make_video.sh`, `clip.sh`; `review_clips.py` cuts one review clip per beat and variant (`python3 -I tools/review_clips.py --preview build/ss_preview --out DIR --seeds 1-12 [--loops-overview]`, writes `clips/*.mp4|png` and `manifest.json` with the variants still missing).
+- `tools/` `make_video.sh`, `clip.sh`; `review_clips.py` cuts one review clip per beat, variant, filler, major and minor effect (`python3 -I tools/review_clips.py --preview build/ss_preview --out DIR --seeds 1-12 [--mood 4] [--night] [--minor-seconds 22] [--gif] [--loops-overview]`; run it again with `--night` into the same DIR for the night-only majors and minors; `--list` prints the table; writes `clips/*.mp4|png` and `manifest.json` with `kind`, `mood`, `night` per clip, the plans and the variants still missing).
 
 ## Build
 

@@ -25,6 +25,7 @@ constexpr float kGapMin = 10.f, kGapMax = 30.f;   // start to start
 constexpr float kBeatHold = 6.f;                   // after a beat (not a pause) ends
 constexpr float kAfterMinor = 5.f;                 // quiet after a minor lets go
 constexpr float kMaxAge = 30.f;                    // a minor that has not let go by now is made to
+constexpr float kQuitSpeed = 120.f;                // px/s: our critters leaving for a beat that owns them
 constexpr float kLaneMaxY = 412.f;                 // feet y on the right stay out of the corner band (417)
 
 inline float minf(float a, float b) { return a < b ? a : b; }
@@ -125,19 +126,9 @@ Critter* own(World& w, int k) {
   return s >= 0 && directorOwns(w, s, CT_MINOR) ? &w.critters[s] : nullptr;
 }
 
-// A free bit slot, from the top (the bear beat writes 0..3 by index). With
-// none free, a leaf lying on the ground gives up its slot.
-int takeBit(World& w, uint8_t kind) {
-  int s = -1;
-  for (int i = BITS_MAX - 1; i >= 0 && s < 0; --i)
-    if (w.bits[i].kind == BIT_NONE) s = i;
-  for (int i = BITS_MAX - 1; i >= 0 && s < 0; --i)
-    if (w.bits[i].kind == BIT_LEAF && w.bits[i].resting) s = i;
-  if (s < 0) return -1;
-  w.bits[s] = Bit{};
-  w.bits[s].kind = kind;
-  return s;
-}
+// A bit slot from the World's one allocator (a free one, else the cone or
+// leaf that has lain longest).
+int takeBit(World& w, uint8_t kind) { return worldTakeBit(w, kind); }
 
 Bit* bitOf(World& w, int k) {
   const int s = w.minors.bit[k];
@@ -208,6 +199,42 @@ void exitAll(World& w, float speed) {
     int side = nearSide(c->feet.x);
     if (!clearOfHiker(w, c->feet.x, side < 0 ? 0.f : (float)SS_WIDTH, c->feet.y, 30.f)) side = -side;
     leave(w, k, side, speed, CA_RUN);
+  }
+}
+
+// A beat that owns the critters began: whatever of ours is still walking off
+// slowly (a deer strolling away, an exit already under way) goes quickly. The
+// bird and the owl are flown out by their own steps.
+void hurryOff(World& w) {
+  Minors& m = w.minors;
+  for (int k = 0; k < 2; ++k) {
+    const int s = m.slot[k];
+    if (s < 0 || !w.crit[s].in_use || w.crit[s].tag != CT_MINOR) continue;
+    const Critter& c = w.critters[s];
+    const CritterSlot& cs = w.crit[s];
+    if (c.kind == CR_BIRD || c.kind == CR_OWL || !c.moving) continue;
+    const float y = cs.path_on ? cs.path_y1 : c.feet.y;
+    if (cs.mode == CM_FREE && m.leave_side[k] != 0 && m.leave_speed[k] < kQuitSpeed)
+      leaveAt(w, k, m.leave_side[k], kQuitSpeed, CA_RUN, y);
+    else if (cs.mode == CM_FLEE)
+      directorWalk(w, s, Vec2{cs.flee_x, y}, kQuitSpeed, CA_RUN);
+  }
+}
+
+// Leaves the gust has taken (not resting, not the running leaf_fall's own):
+// up off the ground and away, quicker and quicker, wobbling; gone past the edge.
+void gustStep(World& w) {
+  const Minors& m = w.minors;
+  for (int i = 0; i < BITS_MAX; ++i) {
+    Bit& b = w.bits[i];
+    if (b.kind != BIT_LEAF || b.resting) continue;
+    if (m.cur == MN_LEAF_FALL && m.bit[0] == i) continue;
+    const float side = b.vel.x < 0.f ? -1.f : 1.f;
+    b.vel.x += side * 70.f * kDt;
+    b.pos.x += b.vel.x * kDt;
+    b.pos.y = b.ground_y - 16.f * easeOutCubic(minf(1.f, b.t / 1.2f)) - 3.f * sinT(b.t * 0.9f);
+    b.spin = 0.1f * sinT(b.t * 1.3f) + 0.15f * side;
+    if (b.pos.x < -12.f || b.pos.x > (float)SS_WIDTH + 12.f) b = Bit{};
   }
 }
 
@@ -798,6 +825,21 @@ bool startLeaf(World& w) {
   return true;
 }
 
+// A gust takes a leaf lying on the ground off the nearest edge (gustStep).
+void blowLeaf(Bit& b) {
+  b.resting = false;
+  b.t = 0.f;
+  b.vel = Vec2{nearSide(b.pos.x) < 0 ? -30.f : 30.f, 0.f};
+  b.ground_y = b.pos.y;
+}
+
+// A leaf down on the ground stays there, unless a beat that owns the scene
+// has begun meanwhile: then it goes with the gust.
+void settleLeaf(World& w, Bit& b) {
+  if (w.minors.quit) blowLeaf(b);
+  else b.resting = true;
+}
+
 // Where the leaf rests on his hat: the crown's top, over the head.
 Vec2 hatTop(const World& w) {
   float r;
@@ -810,13 +852,18 @@ void stepLeaf(World& w) {
   Minors& m = w.minors;
   Bit* b = bitOf(w, 0);
   if (!b || b->kind != BIT_LEAF) return letGo(m);
+  if (m.quit && m.stage == 0) {   // still in the air when a beat that owns the scene began: the gust takes it
+    blowLeaf(*b);
+    return letGo(m);
+  }
   constexpr float kFall = 30.f;   // px/s
   switch (m.stage) {
     case 0: {   // drifting down
       if (m.n && !hikerSitting(w)) {   // he got up: aim for the ground by him
         m.n = 0;
         const float gx = w.fx.on ? w.hiker.feet.x + 14.f : m.p1.x;
-        m.p1 = Vec2{gx, w.fx.on ? w.hiker.feet.y + 2.f : laneY(w, gx, 10.f)};
+        // By his feet, but never on the water (he may be on the bank).
+        m.p1 = Vec2{gx, w.fx.on ? minf(w.hiker.feet.y + 2.f, laneY(w, gx, 8.f)) : laneY(w, gx, 10.f)};
       }
       const Vec2 goal = m.n ? hatTop(w) : m.p1;
       const float y = m.p0.y + kFall * m.t;
@@ -832,7 +879,7 @@ void stepLeaf(World& w) {
         if (m.n) {
           next(m, 1);
         } else {
-          b->resting = true;
+          settleLeaf(w, *b);
           letGo(m);
         }
       }
@@ -845,7 +892,8 @@ void stepLeaf(World& w) {
         b->land_y = w.hiker.feet.y + 1.f;
       } else {
         m.p0 = b->pos;
-        m.p1 = Vec2{b->pos.x + 10.f, (w.fx.on ? w.hiker.feet.y : m.p0.y + 50.f) + 3.f};
+        const float x = b->pos.x + 10.f;
+        m.p1 = Vec2{x, minf((w.fx.on ? w.hiker.feet.y : m.p0.y + 50.f) + 3.f, laneY(w, x, 8.f))};   // not into the water
         next(m, 2);
       }
       break;
@@ -855,7 +903,7 @@ void stepLeaf(World& w) {
       b->spin = 0.25f * u;
       b->land_y = m.p1.y;
       if (u >= 1.f) {
-        b->resting = true;
+        settleLeaf(w, *b);
         letGo(m);
       }
       break;
@@ -899,7 +947,7 @@ void stepMoth(World& w) {
   if (!b || b->kind != BIT_MOTH) return letGo(m);
   constexpr float kInS = 1.6f, kLoopS = 15.f, kOutS = 3.f;
   const float t = m.age;
-  if (m.stage == 0 && (t >= kInS + kLoopS || !w.tent.lit)) {
+  if (m.stage == 0 && (t >= kInS + kLoopS || !w.tent.lit || m.quit)) {   // (a beat that owns the scene: away now)
     m.p1 = b->pos;
     m.p2 = Vec2{b->pos.x + 140.f, -12.f};
     next(m, 1);
@@ -1252,7 +1300,9 @@ void minorsInit(World& w, const Rng& rng) {
   memset(static_cast<void*>(&m), 0, sizeof m);
   Rng copy = rng;   // the loop RNG is not advanced
   const uint32_t a = copy.next();
-  m.rng.seed(((uint64_t)a << 32) ^ 0x6D696E6F72730000ull ^ (uint64_t)w.memory.loop_count, 0x4D494E4F52530001ull);
+  // From the loop RNG alone (not the loop count), so `--seed <a loop's seed>`
+  // replays that loop's minors too.
+  m.rng.seed(((uint64_t)a << 32) ^ 0x6D696E6F72730000ull, 0x4D494E4F52530001ull);
   for (int i = 0; i < MN_COUNT; ++i) {
     const float k = m.rng.range(0.6f, 1.4f);
     m.weight[i] = kBaseWeight[i] * k;
@@ -1306,16 +1356,25 @@ void minorsStep(World& w, Renderer& r) {
     m.fx_head = m.fx_arm = false;
   }
   const bool owned = worldBeatOwnsCritters(w);
+  // The beat that owns the critters has just begun: a gust clears the leaves.
+  if (owned && !m.owned_prev)
+    for (Bit& b : w.bits)
+      if (b.kind == BIT_LEAF && b.resting) blowLeaf(b);
+  m.owned_prev = owned;
+  gustStep(w);
 
   if (m.cur != MN_NONE) {
     m.t += kDt;
     m.age += kDt;
+    const bool wrap = owned && !m.quit;
     if (owned) m.quit = true;
+    if (m.stage != MINOR_ENDING) stepMinor(w, r);   // its own wrap-up (m.quit) first
+    if (wrap) hurryOff(w);
     if (m.stage != MINOR_ENDING) {
-      stepMinor(w, r);
       if (m.age > kMaxAge && m.stage != MINOR_ENDING) {   // never expected: let go of everything
         exitAll(w, 120.f);
         letGo(m);
+        if (m.forced < 0xFFFF) ++m.forced;
       }
     }
     if (m.cur != MN_NONE && m.stage == MINOR_ENDING) {
@@ -1329,9 +1388,17 @@ void minorsStep(World& w, Renderer& r) {
       if (heldCritters(w) == 0) {
         finish(w);
       } else if (m.t > 12.f) {   // an exit that never got out of sight
+        // One still on its way (scattered by him across the whole frame, say)
+        // is left to get out; only one that has stopped in sight is released.
+        bool moving = false;
         for (int k = 0; k < 2; ++k)
-          if (m.slot[k] >= 0 && w.crit[m.slot[k]].tag == CT_MINOR) directorRelease(w, m.slot[k]);
-        finish(w);
+          if (m.slot[k] >= 0 && w.crit[m.slot[k]].tag == CT_MINOR && w.critters[m.slot[k]].moving) moving = true;
+        if (!moving) {
+          for (int k = 0; k < 2; ++k)
+            if (m.slot[k] >= 0 && w.crit[m.slot[k]].tag == CT_MINOR) directorRelease(w, m.slot[k]);
+          finish(w);
+          if (m.forced < 0xFFFF) ++m.forced;
+        }
       }
     }
     return;
@@ -1349,6 +1416,8 @@ void minorsStep(World& w, Renderer& r) {
 const char* minorName(int id) { return id >= 0 && id < MN_COUNT ? kNames[id] : ""; }
 
 const char* minorsName(const World& w) { return w.minors.cur < MN_COUNT ? kNames[w.minors.cur] : ""; }
+
+int minorsForced(const World& w) { return w.minors.forced; }
 
 int minorsCritters(const World& w) {
   int n = 0;

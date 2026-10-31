@@ -104,8 +104,9 @@ bool critterSupports(CritterKind k, CritterAction a);
 // Walk to x with the kind's gait (CA_HOP for squirrel, frog and bird, CA_MOVE
 // for the rest), or with the current action if it is already CA_MOVE, CA_RUN
 // or CA_HOP (so CA_MOVE first makes the bird fly). Turns around first when x is
-// behind. Arrival -> CA_IDLE. The owl does not move.
-void critterMoveTo(Critter& c, float x, float px_per_s);
+// behind (unless `back`: a short step back, still facing the same way, legs
+// stepping backward). Arrival -> CA_IDLE. The owl does not move.
+void critterMoveTo(Critter& c, float x, float px_per_s, bool back = false);
 // Squirrel, raccoon, bear: climb along the trunk at feet.x to feet.y = y.
 // Holds CA_CLIMB on arrival.
 void critterClimbTo(Critter& c, float y, float px_per_s);
@@ -120,6 +121,9 @@ Vec2 critterPaw(const Critter& c);
 Vec2 critterHead(const Critter& c);
 // The mouth (bear and the small quadrupeds; critterHead for the others).
 Vec2 critterMouth(const Critter& c);
+// The drawn x scale of the figure: 1, or down to 0.15 mid turn-around (facing
+// flips at the narrowest point). What it holds squeezes with it.
+float critterTurnScale(const Critter& c);
 void critterDraw(const Critter& c, Surface& s, const Palette& pal, const Rect& clip);
 
 // The pose an action's blend lands on.

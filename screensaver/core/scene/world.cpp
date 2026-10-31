@@ -203,6 +203,29 @@ Rect itemTrackBounds(const World& w, int i) {
 
 }  // namespace
 
+int worldTakeBit(World& w, uint8_t kind) {
+  int s = -1;
+  for (int i = 0; i < BITS_MAX && s < 0; ++i)
+    if (w.bits[i].kind == BIT_NONE) s = i;
+  if (s < 0) {   // the one that has been about longest (Bit::t runs on while it rests)
+    float oldest = -1.f;
+    int best = -1;
+    for (int i = 0; i < BITS_MAX; ++i) {
+      const Bit& b = w.bits[i];
+      if (!b.resting || (b.kind != BIT_CONE && b.kind != BIT_LEAF)) continue;
+      if (b.t > oldest) {
+        oldest = b.t;
+        best = i;
+      }
+    }
+    s = best;
+  }
+  if (s < 0) return -1;
+  w.bits[s] = Bit{};
+  w.bits[s].kind = kind;
+  return s;
+}
+
 void worldBeginLoop(World& w, Rng& rng) {
   // A clean World each loop; only Memory carries over.
   const Memory keep = w.memory;
@@ -252,7 +275,7 @@ void worldBeginLoop(World& w, Rng& rng) {
   w.pack = PackProp{c.pack, 1, false, false};
   bagInit(w.bag, Vec2{(float)(w.land.camp_x - LS_BRANCH_LEN), (float)LS_BRANCH_TIP_Y});
   w.cairn = Cairn{c.cairn, 0, 1.f};
-  for (Item& it : w.items) it = Item{c.wood, false, false, 1, 1.f, c.wood.y, false, 0, 0.f};
+  for (Item& it : w.items) it = Item{c.wood, false, false, 1, 1.f, c.wood.y, false, 0, 0.f, 0.f, 1.f, false};
   w.items[ITEM_WOOD].pos = c.wood;
   w.steam = Steam{Vec2{0.f, 0.f}, -1.f, 0};
   w.skip.n = 0;

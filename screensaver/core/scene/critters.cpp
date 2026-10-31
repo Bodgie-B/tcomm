@@ -1192,7 +1192,7 @@ void critterSetAction(Critter& c, CritterAction a, float seconds) {
   if (a != CA_CLIMB) c.climbing = false;
 }
 
-void critterMoveTo(Critter& c, float x, float px_per_s) {
+void critterMoveTo(Critter& c, float x, float px_per_s, bool back) {
   if (!(px_per_s > 0.f) || c.kind == CR_OWL) return;
   CritterAction g = kKinds[c.kind].gait;
   if (isGait(c.action) && critterSupports(c.kind, c.action)) g = c.action;
@@ -1202,7 +1202,7 @@ void critterMoveTo(Critter& c, float x, float px_per_s) {
   if (x == c.feet.x) return;
   const int dir = x > c.feet.x ? 1 : -1;
   const int heading = c.turn_t >= 0.f && c.turn_t < 0.5f * kTurnDur ? -c.facing : c.facing;
-  if (dir != heading) {
+  if (dir != heading && !back) {
     if (c.turn_t >= 0.f) c.turn_t = kTurnDur - c.turn_t;   // reverse a turn in progress
     else startTurn(c);
   }
@@ -1289,7 +1289,9 @@ void critterTick(Critter& c, float dt) {
       c.phase = wrap1(c.phase + dt * 5.f);
     } else {
       const float stride = c.action == CA_RUN ? ki.run_stride : ki.stride;
-      if (stride > 0.f) c.phase = wrap1(c.phase + step / stride);
+      // Backing up (moving against its facing, not turning): the legs step backward.
+      const bool backing = c.turn_t < 0.f && remain * (float)c.facing < 0.f;
+      if (stride > 0.f) c.phase = wrap1(c.phase + (backing ? -step : step) / stride);
     }
     bool arrived = false;
     if (fabsf(remain) <= step) {
@@ -1354,6 +1356,8 @@ Vec2 critterMouth(const Critter& c) {
   if (ps.has_mouth) return ps.mouth;
   return critterHead(c);
 }
+
+float critterTurnScale(const Critter& c) { return turnScale(c.turn_t); }
 
 Vec2 critterHead(const Critter& c) {
   Prims ps;

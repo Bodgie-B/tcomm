@@ -233,3 +233,81 @@ Sheets were cut from `ss_preview --skip T --every N` at the logged major ticks
    leave when a major begins is the minors' call. Not investigated.
 9. Most loops now land 590 to 650 s with 2 or 3 majors; 4 majors are rare (1 loop in
    10 in the table), since the length policy trims them before the pauses go under 8 s.
+
+## Post-review fixes
+
+Applied 2026-10-30 (not committed): round 2 of the deferred fixes (1 to 8) and
+items 9 to 15 from the review of 9b8b1f7.
+
+1. **Held items follow the critter.** `directorStep` sets each critter-held
+   item's `facing` and `squeeze` (`critterTurnScale`, so a stick narrows with the
+   turn-around instead of flipping 118 px) every tick. `Item` gains `grip`,
+   `squeeze`, `placed`.
+2. **Bear c's stick.** The fallen branch lies at trunk + 20, ahead of the sniff
+   spot. `doBearToStick` puts the mouth over the stick's grip point (0.3 of it
+   ahead of the mouth) and backs up without turning (`critterMoveTo(..., back)`,
+   legs stepping backward) when that is under 40 px behind it. The pick-up eases
+   the stick from the lying line into the mouth (u 0.45 to 0.75). Carried in the
+   mouth on all fours, trailing low along its side (angle -0.29); the anchor
+   slides to the paw (held by the end) as `pose.rear` rises. The drop is now
+   `actBearDropStick` (0.5 s): it topples forward off the paw and lands as the
+   lying stick on the same line.
+3. **`sp.bear` after release.** `bearHeld` (slot in use and tagged `CT_BEAR`)
+   guards `bearArrived`, `bearGone`, `bearWalk`, `doBearLeave`, `doBearRunOff`;
+   `bearUpdate` sets `sp.bear = -1` once the slot is not the bear's.
+4. **Beat ends.** dinner, bear and close end with `beatEndOwned<B>`: any of their
+   critters still owned walks out by the nearer edge.
+5. **Hiker rule test.** `testHikerScatter` walks him at a chipmunk, a deer and a
+   raccoon on a bare World: each startles 77 to 79 px ahead and is never
+   overlapped; brave ones stay. The rule works; it rarely fires in loops because
+   the minors keep their paths clear of him.
+6. **The shoe.** `doShoeOff` leaves no shoe out while the raccoon has it, nor on
+   the night raccoon_pack brought it back (`Memory::shoe_back`, this loop only:
+   he keeps it in the tent). The night thief then takes the mug or the book,
+   whichever is out (in its mouth; `last_stolen` records it, and the shoe too),
+   or noses about the door and leaves; it walks quicker when the loot is far in,
+   so it is out before the fade. That alone left the tent variant impossible
+   (shoe = 0 only in the loop right after a return, where the last-loop rule
+   bars raccoon_pack), so the planner allows a **sequel**: with `shoe_back` set
+   at plan time, raccoon_pack may run again, tent side (S4) only, unpenalised by
+   the ring. Seed 1 day, 40 loops: 8 returns, 5 tent raids; night seeds 1 to 4:
+   2 tent raids each. `--loops 10`, seed 1, shoe / stolen as each loop leaves
+   it: 1 shoe, 1 mug, 0 mug (return), 1 shoe (tent raid, then theft), 1 mug,
+   0 mug (return), 1 shoe, 1 mug, 1 mug, 0 mug (return).
+7. **Pack set-down** tweens over 0.3 s (`actPackSetDown`).
+8. **Minors clear the stage.** The "stray shapes" at seed 8 tick 10590 were not
+   critters but two leaves leaf_fall had left lying, one slid off his hat onto
+   the water's edge; across 40 loops 95 of 108 majors began with a leaf about,
+   and one (night seed 12) with a minor's deer still strolling off. Now, when a
+   beat that owns the critters begins (the still before a major counts):
+   whatever of the minor's critters is already walking off goes at 120 px/s
+   (`hurryOff`); a gust lifts every leaf and carries it off the nearest edge
+   (`gustStep`, about 3 s); a leaf still falling, or landing after the wrap-up,
+   goes with the gust; a leaf never lands on the water. The moth leaves too
+   (item 11). `testMajorsStartClear` (20 seeds mood 4, 20 night): 108 majors, none
+   with a minor critter or a leaf.
+9. **One bit allocator.** `worldTakeBit`: a free slot, else the resting cone or
+   leaf about longest. The bear's dust and cones, deer_stick's dust, majorEnd's
+   resting cone and the minors all use it; no fixed indices remain (seed 11 mood
+   4: the pinecone's cone outlives the bear's slide).
+10. **Optional picks** (the third and fourth major) never take a penalised major
+    (`wt < 1e-3`). `--loops 60` for seed 1 day and night, 7 mood 4, 20 night,
+    3 dusk: no major repeats in consecutive loops except the raccoon sequel
+    (4 to 7 per 60 loops); `testVariety` asserts it.
+11. The moth leaves at once on the wrap-up (`m.quit`).
+12. The minors' RNG seed no longer includes `loop_count`: `--seed <loop seed>`
+    replays that loop's minors (they diverge later only where memory changes
+    the scene: the cairn, the mouse hole, the brave/shy split).
+13. `GLYPH_MAX` 28 (`WORLD_ACTOR_MAX` 88 to hold them).
+14. `--log-beats`: the minor count lives in `PreviewState` and resets each loop.
+15. Tests: `appMinorForced` counts minors forced to end; `testMinors` asserts 0
+    (it found one: a mouse scattered across the frame was released in sight by
+    the 12 s exit timeout; a critter still moving is now left to get out).
+    `testMemoryCarry` also checks the mouse hole (made after two mouse_tent runs,
+    patched in the next setup; 4 of 12 loops) and that the shoe comes back (3 in
+    12 loops).
+
+Viewed: bear c at seed 7 mood 4 (the branch) every 25 ticks and the pick-up,
+raise, swats and drop every 1 to 4 ticks; seed 18 (the fire-poking stick, with a
+turn while carrying). `sizeof(App)` 66,664.
+

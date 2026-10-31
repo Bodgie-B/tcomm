@@ -8,8 +8,10 @@
 // inspection images. Plain executable; returns non-zero on failure. Writes
 // landscape_*.ppm and props_sheet.ppm in the current directory (run from build/).
 #include "ss_app.h"
+#include "scene/director.h"
 #include "scene/hiker.h"
 #include "scene/props.h"
+#include "scene/world.h"
 
 #include <chrono>
 #include <stdio.h>
@@ -580,7 +582,7 @@ static void testMemory() {
   CHECK(taken, "the raccoon did not take the shoe in loop 1");
   CHECK(appCritterCount(a.app) == 0, "critters left at the end of the loop");
   CHECK(appTick(a.app), "no rollover");
-  CHECK(appMemoryShoeTaken(a.app) == taken, "the shoe came back with the new loop");
+  CHECK(appMemoryShoeTaken(a.app) == taken, "the new loop forgot the raccoon has the shoe (only raccoon_pack brings it back)");
   CHECK(appMemoryLoopCount(a.app) == 2, "second loop counts %u", (unsigned)appMemoryLoopCount(a.app));
   printf("memory: shoe_taken %d after loop 1, loop_count %u in loop 2\n", (int)appMemoryShoeTaken(a.app),
          (unsigned)appMemoryLoopCount(a.app));
@@ -814,7 +816,7 @@ static void testProps() {
   for (int id = 0; id < ITEM_COUNT; ++id) {
     for (int f = 0; f < 2; ++f) {
       Item it{Vec2{40.f + 105.f * (float)id + 45.f * (float)f, 300.f}, true, false, (int8_t)(f ? -1 : 1),
-              id == ITEM_WOOD && f ? 1.65f : 1.f, 300.f, false, 0, 0.f};
+              id == ITEM_WOOD && f ? 1.65f : 1.f, 300.f, false, 0, 0.f, 0.f, 1.f, false};
       if ((id == ITEM_STICK || id == ITEM_FORK) && f) {   // dragged stick; fork standing in a hand
         it.down = false;
         it.held = true;
@@ -848,11 +850,11 @@ static void testProps() {
       check("leaf", leafBounds(l), [&](Surface& d) { leafDraw(l, d, all, pal); });
     }
   }
-  // Row 3c: a stick held up by a critter at three angles, a falling and a
-  // resting pine cone, a dust puff.
+  // Row 3c: a stick held by a critter at three angles (held by the end, in the
+  // mouth, squeezed mid turn), a falling and a resting pine cone, a dust puff.
   for (int k = 0; k < 3; ++k) {
     Item it{Vec2{560.f + 40.f * (float)k, 470.f}, false, true, (int8_t)(k == 1 ? -1 : 1), 1.f, 470.f, false, 1,
-            -0.2f + 0.15f * (float)k};
+            -0.2f + 0.15f * (float)k, k == 1 ? kItemMouthGrip : 0.f, k == 2 ? 0.4f : 1.f, false};
     check("stick held by a critter", itemBounds(ITEM_STICK, it), [&](Surface& d) { itemDraw(ITEM_STICK, it, d, all, pal); });
   }
   for (int k = 0; k < 3; ++k) {
@@ -894,12 +896,12 @@ static const char* const kCalmBeats[12] = {"pause",      "arrival",     "setup",
 
 static void testMinors() {
   int fired_by[11] = {};
-  int bad_beat = 0, held_after = 0, total = 0, unknown = 0;
+  int bad_beat = 0, forced = 0, total = 0, unknown = 0;
   for (uint64_t seed = 1; seed <= 12; ++seed) {
     const float mood = seed % 3 == 1 ? 3.f : (seed % 3 == 2 ? 0.3f : 5.f);
     Rig a;
     CHECK(a.start(seed, makeInputs(mood)), "start");
-    int count = 0, ticks = 0;
+    int count = 0, ticks = 0, seed_forced = 0;
     char prev[32] = "";
     for (;; ++ticks) {
       if (appTick(a.app)) break;
@@ -915,11 +917,12 @@ static void testMinors() {
           ++bad_beat;
         }
       }
-      if (prev[0] && strcmp(prev, name) != 0) {   // the one running in prev just ended
-        if (appMinorCritters(a.app) != 0) {
-          if (held_after < 3) printf("seed %d tick %d: %s ended with %d critters\n", (int)seed, ticks, prev, appMinorCritters(a.app));
-          ++held_after;
-        }
+      // A minor that had to be forced to end (past its age limit, or a critter
+      // released in sight because its exit never got it out).
+      if (appMinorForced(a.app) > seed_forced) {
+        if (forced < 3) printf("seed %d tick %d: %s was forced to end\n", (int)seed, ticks, prev[0] ? prev : name);
+        forced += appMinorForced(a.app) - seed_forced;
+        seed_forced = appMinorForced(a.app);
       }
       snprintf(prev, sizeof prev, "%s", name);
     }
@@ -943,7 +946,7 @@ static void testMinors() {
   CHECK(missing == 0, "%d minors never fired", missing);
   CHECK(unknown == 0, "%d minors started with an unknown name", unknown);
   CHECK(bad_beat == 0, "%d minors started in a beat that owns the critters", bad_beat);
-  CHECK(held_after == 0, "%d minors ended holding critters", held_after);
+  CHECK(forced == 0, "%d minors were forced to end", forced);
 
   // Determinism through minors at dusk (owl, moth).
   Rig x, y;
@@ -983,6 +986,20 @@ static void planTuple(const App* a, char* out, size_t n) {
 }
 
 static int majorIndex(const char* name) { return beatIndex(name, kMajorNames, 12); }
+
+// The loop's majors as a bit set (bit = index in kMajorNames).
+static unsigned majorSet(const App* a) {
+  char buf[400];
+  appLoopPlan(a, buf, sizeof buf);
+  const char* m = strstr(buf, "majors=");
+  unsigned set = 0;
+  for (int k = 0; m && k < 12; ++k) {
+    const char* q = strstr(m, kMajorNames[k]);
+    if (q && (q[strlen(kMajorNames[k])] == ',' || q[strlen(kMajorNames[k])] == 0)) set |= 1u << k;
+  }
+  return set;
+}
+static int memField(const App* a, const char* key);
 static bool ownsCritters(const char* name) {
   return majorIndex(name) >= 0 || !strcmp(name, "dinner") || !strcmp(name, "bear") || !strcmp(name, "close");
 }
@@ -998,7 +1015,8 @@ static void testVariety() {
   CHECK(a.start(1, makeInputs(0.f, true)), "start");
   char tuples[10][400];
   int fired[12] = {};
-  int loops = 0, bad_busy = 0, bad_still = 0, bad_end = 0, majors_run = 0;
+  int loops = 0, bad_busy = 0, bad_still = 0, bad_end = 0, majors_run = 0, repeats = 0;
+  unsigned last_set = majorSet(a.app);
   char prev[32] = "build", before[32] = "";
   int still_ticks = 0;
   bool after_major = false;
@@ -1021,6 +1039,16 @@ static void testVariety() {
       ++loops;
       t = 0;
       len = appLoopTicks(a.app);
+      // No major two loops running; the one exception is the raccoon's sequel
+      // (its tent raid the night after it brought the shoe back: shoe=0 now).
+      const unsigned set = majorSet(a.app);
+      unsigned again = set & last_set;
+      if (memField(a.app, "shoe=") == 0) again &= ~(1u << 5);   // raccoon_pack
+      if (again) {
+        if (repeats < 3) printf("loop %d repeats a major of loop %d (sets %x, %x)\n", loops, loops - 1, last_set, set);
+        ++repeats;
+      }
+      last_set = set;
       if (loops < 10) {
         planTuple(a.app, tuples[loops], sizeof tuples[loops]);
         printf("variety loop %d: %s\n", loops, tuples[loops]);
@@ -1098,6 +1126,7 @@ static void testVariety() {
   CHECK(bad_still == 0, "%d majors without a 4 to 8 s still beat either side", bad_still);
   CHECK(bad_busy == 0, "%d ticks where busy disagreed with the beat", bad_busy);
   CHECK(bad_end == 0, "%d loops ended with an overrun or a critter left", bad_end);
+  CHECK(repeats == 0, "%d loops repeat a major of the loop before", repeats);
   a.stop();
 
   // By day, the night majors stay out (gating), and every loop has 2 to 4 majors.
@@ -1152,6 +1181,144 @@ static void testMemoryCarry() {
   printf("memory: the cairn carried over (one stone shorter) %d times\n", checked);
   CHECK(checked > 0, "no loop left a cairn in 10 loops");
   a.stop();
+
+  // The mouse hole and the shoe, 12 loops from seed 1: a loop where the
+  // mouse_tent minor ran twice leaves a hole, which the next setup patches;
+  // the raccoon brings back the shoe the night thief took (shoe 1 -> 0 within
+  // a loop).
+  Rig b;
+  CHECK(b.start(1, makeInputs(3.f)), "start");
+  int holes = 0, patched = 0, bad_hole = 0, returned = 0;
+  for (int loop = 0; loop < 12; ++loop) {
+    const int hole0 = memField(b.app, "hole="), shoe0 = memField(b.app, "shoe=");
+    int mice = 0, count = 0, after_setup = -1;
+    bool in_setup = false, came_back = false;
+    while (!appTick(b.app)) {
+      if (appMinorCount(b.app) != count) {
+        count = appMinorCount(b.app);
+        if (!strcmp(appMinorName(b.app), "mouse_tent")) ++mice;
+      }
+      const bool setup = beatIs(b.app, "setup");
+      if (in_setup && !setup && after_setup < 0) after_setup = memField(b.app, "hole=");
+      in_setup = setup;
+      if (shoe0 == 1 && !came_back && memField(b.app, "shoe=") == 0) came_back = true;
+    }
+    if (came_back) ++returned;
+    const int hole1 = memField(b.app, "hole=");   // the new loop has started: what the last one left
+    if (hole0 == 1) {
+      ++patched;
+      if (after_setup != 0) {
+        printf("loop %d: the mouse hole was still there after setup\n", loop);
+        ++bad_hole;
+      }
+    }
+    if (mice >= 2) {
+      ++holes;
+      if (hole1 != 1) {
+        printf("loop %d: the mouse ran %d times but left no hole\n", loop, mice);
+        ++bad_hole;
+      }
+    }
+  }
+  printf("memory: %d loops left a mouse hole, %d patched in setup, the shoe came back %d times\n", holes, patched,
+         returned);
+  CHECK(holes > 0 && patched > 0, "no mouse hole made (%d) or patched (%d) in 12 loops", holes, patched);
+  CHECK(bad_hole == 0, "%d mouse hole mistakes", bad_hole);
+  CHECK(returned > 0, "the raccoon never brought the shoe back in 12 loops");
+  b.stop();
+}
+
+// The director's hiker rule (review fix 5): he walks straight at a critter
+// that is neither shy nor brave; it startles and runs before his bounds and
+// its bounds meet. A brave one stands its ground. Driven on a bare World (no
+// timeline), so the rule is checked on its own.
+static void testHikerScatter() {
+  World* w = (World*)calloc(1, sizeof(World));
+  CHECK(w != nullptr, "alloc");
+  if (!w) return;
+  static const CritterKind kKinds[3] = {CR_CHIPMUNK, CR_DEER, CR_RACCOON};
+  for (int brave = 0; brave < 2; ++brave) {
+    for (int k = 0; k < 3; ++k) {
+      Rng rng;
+      rng.seed(11 + (uint64_t)k);
+      worldBeginLoop(*w, rng);
+      const float y = 360.f;
+      Hiker& h = w->hiker;
+      hikerInit(h, Vec2{100.f, y}, 1);
+      w->fx.on = true;
+      const int s = directorSpawn(*w, kKinds[k], Vec2{470.f, y}, -1);
+      CHECK(s >= 0, "spawn");
+      if (s < 0) continue;
+      w->crit[s].tag = CT_MINOR;
+      w->crit[s].flags = brave ? CF_BRAVE : 0;
+      hikerWalkTo(h, 700.f, 40.f);
+      int scattered_at = -1, overlap_at = -1, gap = 0;
+      for (int t = 0; t < 15 * SS_TICK_HZ && h.walking; ++t) {
+        hikerTick(h, SS_TICK_DT);
+        const Rect hr = hikerBounds(h);
+        h.visible = true;
+        w->hiker_rect = w->hiker_full = hr;
+        directorStep(*w);
+        if (!w->crit[s].in_use) break;
+        const Rect r = critterBounds(w->critters[s]);
+        if (scattered_at < 0 && w->crit[s].mode != CM_FREE) {
+          scattered_at = t;
+          gap = r.x0 - hr.x1;
+        }
+        if (overlap_at < 0 && r.x0 < hr.x1 && hr.x0 < r.x1 && r.y0 < hr.y1 && hr.y0 < r.y1) overlap_at = t;
+      }
+      if (brave) {
+        CHECK(scattered_at < 0, "a brave %s scattered at tick %d", critterName(kKinds[k]), scattered_at);
+      } else {
+        printf("hiker scatter: %s startles %d px ahead of him (tick %d)\n", critterName(kKinds[k]), gap, scattered_at);
+        CHECK(scattered_at >= 0, "the %s never scattered from the walking hiker", critterName(kKinds[k]));
+        CHECK(overlap_at < 0 || (scattered_at >= 0 && scattered_at < overlap_at),
+              "the %s was overlapped (tick %d) before it scattered (tick %d)", critterName(kKinds[k]), overlap_at,
+              scattered_at);
+        CHECK(overlap_at < 0, "the %s fled but he still walked over it (tick %d)", critterName(kKinds[k]), overlap_at);
+      }
+    }
+  }
+  free(w);
+}
+
+// Review fix 8: when a major begins, the minors have cleared the stage: none
+// of their critters is in the scene and no leaf of theirs is lying, falling
+// or blowing about. 20 seeds at mood 4 and 20 at night, a loop each.
+static void testMajorsStartClear() {
+  int majors = 0, critters = 0, leaves = 0;
+  for (int night = 0; night < 2; ++night) {
+    for (uint64_t seed = 1; seed <= 20; ++seed) {
+      Rig a;
+      CHECK(a.start(seed, night ? makeInputs(0.f, true) : makeInputs(4.f)), "start");
+      char prev[32] = "";
+      while (!appTick(a.app)) {
+        const char* b = appBeatName(a.app);
+        if (!strcmp(b, prev)) continue;
+        snprintf(prev, sizeof prev, "%s", b);
+        if (majorIndex(b) < 0) continue;
+        ++majors;
+        if (appMinorCritters(a.app) != 0) {
+          if (critters < 3)
+            printf("%s seed %d tick %u: %s begins with %d minor critters (%s)\n", night ? "night" : "mood 4", (int)seed,
+                   (unsigned)appTickCount(a.app), b, appMinorCritters(a.app), appMinorName(a.app));
+          ++critters;
+        }
+        if (appLeaves(a.app) != 0) {
+          if (leaves < 3)
+            printf("%s seed %d tick %u: %s begins with %d leaves about\n", night ? "night" : "mood 4", (int)seed,
+                   (unsigned)appTickCount(a.app), b, appLeaves(a.app));
+          ++leaves;
+        }
+      }
+      a.stop();
+    }
+  }
+  printf("majors start clear: %d majors over 40 loops, %d with minor critters, %d with leaves\n", majors, critters,
+         leaves);
+  CHECK(majors > 60, "only %d majors in 40 loops", majors);
+  CHECK(critters == 0, "%d majors began with a minor's critter in the scene", critters);
+  CHECK(leaves == 0, "%d majors began with a leaf about", leaves);
 }
 
 int main() {
@@ -1175,6 +1342,8 @@ int main() {
   testLoopFade();
   testSpineBudget();
   testMinors();
+  testHikerScatter();
+  testMajorsStartClear();
   writeImages();
   if (g_fail) {
     printf("%d failure(s)\n", g_fail);

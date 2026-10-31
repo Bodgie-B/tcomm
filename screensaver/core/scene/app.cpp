@@ -191,5 +191,11 @@ float appFade(const App* app) { return app->world.fade; }
 const char* appMinorName(const App* app) { return minorsName(app->world); }
 int appMinorCount(const App* app) { return app->world.minors.fired; }
 int appMinorCritters(const App* app) { return minorsCritters(app->world); }
+int appMinorForced(const App* app) { return minorsForced(app->world); }
+int appLeaves(const App* app) {
+  int n = 0;
+  for (const Bit& b : app->world.bits) n += b.kind == BIT_LEAF ? 1 : 0;
+  return n;
+}
 
 }  // namespace ss

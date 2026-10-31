@@ -110,6 +110,8 @@ void directorRelease(World& w, int slot) {
   for (Item& it : w.items) {
     if (it.critter != slot + 1) continue;
     it.critter = 0;
+    it.placed = false;
+    it.squeeze = 1.f;
     it.held = false;
     it.down = true;
     it.pos.y = w.critters[slot].feet.y + 1.f;
@@ -165,7 +167,7 @@ Vec2 directorClamp(const World& w, int slot, Vec2 to, bool exiting) {
   return to;
 }
 
-void directorWalk(World& w, int slot, Vec2 to, float px_per_s, CritterAction gait) {
+void directorWalk(World& w, int slot, Vec2 to, float px_per_s, CritterAction gait, bool back) {
   if (!valid(slot) || !w.crit[slot].in_use) return;
   Critter& c = w.critters[slot];
   CritterSlot& s = w.crit[slot];
@@ -178,7 +180,7 @@ void directorWalk(World& w, int slot, Vec2 to, float px_per_s, CritterAction gai
   if (to.x == c.feet.x) c.feet.y = to.y;
   if (gait != c.action && critterSupports(c.kind, gait) && (gait == CA_MOVE || gait == CA_RUN || gait == CA_HOP))
     critterSetAction(c, gait, 0.2f);
-  critterMoveTo(c, to.x, px_per_s);
+  critterMoveTo(c, to.x, px_per_s, back);
 }
 
 void directorExit(World& w, int slot, int side, float px_per_s, CritterAction gait) {
@@ -239,12 +241,19 @@ void directorStep(World& w) {
       continue;
     }
     w.critter_rect[i] = c.visible ? r : Rect{0, 0, 0, 0};
-    // Whatever it holds stays at its paw.
-    for (Item& it : w.items)
-      if (it.critter == i + 1) {
-        it.pos = critterPaw(c);
-        it.ground_y = c.feet.y;
-      }
+    // Whatever it holds: in its mouth on all fours, moving to its paw as it
+    // rears (a stick held by the end then); facing and squeezed with it.
+    for (Item& it : w.items) {
+      if (it.critter != i + 1) continue;
+      it.facing = (int8_t)c.facing;
+      it.squeeze = critterTurnScale(c);
+      it.ground_y = c.feet.y;
+      if (it.placed) continue;   // its owner moves it (a pick-up or a drop)
+      const float k = easeInOut(window(clamp01(c.pose.rear), 0.25f, 0.85f));
+      const Vec2 m = critterMouth(c), p = critterPaw(c);
+      it.pos = Vec2{lerp(m.x, p.x, k), lerp(m.y, p.y, k)};
+      it.grip = kItemMouthGrip * (1.f - k);
+    }
   }
 }
 

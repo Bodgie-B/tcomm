@@ -45,6 +45,7 @@ struct PreviewState {
   bool log_beats;           // see previewEnableBeatLog
   int loop_index;           // loops started so far (the first loop is 0)
   char last_beat[48];       // beat name last logged; empty after a loop start
+  int minors_seen;          // this loop's minor count last logged (0 after a loop start)
 };
 
 // Inputs from parsed options (mood, weather, night, status, dog, lookout).

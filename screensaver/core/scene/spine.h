@@ -135,6 +135,7 @@ struct SpineState {
   bool bite_up;        // the current bite's hand is up (edge detector)
   uint8_t deer_steps;  // bites the deer has answered with a step
   uint8_t chip_stage, thief_stage;
+  uint8_t thief_loot;  // ItemId + 1 the night thief goes for (shoe, else mug or book); 0: it only sniffs
   float deer_t, chip_t, thief_t;   // seconds in the current stage
   float shadow_v;      // the tent shadow's lagged x offset (the bear beat)
   float fear;          // what the shadow's jitter eases toward: 0 calm, ~0.05 frozen, 1 trembling

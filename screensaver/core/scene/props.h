@@ -110,6 +110,11 @@ enum ItemId : uint8_t {
   ITEM_MUG = 0, ITEM_BOOK, ITEM_POT, ITEM_STICK, ITEM_SHOE, ITEM_WOOD, ITEM_FORK, ITEM_COUNT
 };
 
+// A stick's length, and how much of it sticks out ahead of a critter's mouth
+// when carried (Item::grip).
+constexpr float kItemStickLen = 62.f;
+constexpr float kItemMouthGrip = 0.3f;
+
 struct Item {
   Vec2 pos;          // on the ground: base center; held: the hands (World sets it)
   bool down;         // lying on the ground, drawn
@@ -119,10 +124,15 @@ struct Item {
   float ground_y;    // held: ground under the hiker
   bool on_fire;      // sits on the fire (the pot): drawn just in front of the flames
   // Held by a critter instead (with `held`): 1 + its World slot, 0 for the
-  // hiker. World keeps pos at that critter's paw; a stick then points from pos
-  // at `angle` turns from straight up, + toward `facing`.
+  // hiker. The director keeps pos at that critter's mouth (on all fours) or
+  // paw (reared), `facing` and `squeeze` with the critter's; a stick then lies
+  // along `angle` turns from straight up (+ toward `facing`), `grip` of its
+  // length ahead of pos and the rest behind (0: held by the end).
   uint8_t critter;
   float angle;
+  float grip;
+  float squeeze;     // critter-held: the holder's turn-around squeeze (x scale, 0.15..1)
+  bool placed;       // critter-held, but its owner sets pos and grip (a pick-up or a drop under way)
 };
 
 Rect itemBounds(ItemId id, const Item& it);

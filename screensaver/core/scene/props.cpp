@@ -160,12 +160,16 @@ void cairnStone(const Cairn& c, int k, Vec2& ctr, float& rx, float& ry) {
 
 // ---- items ------------------------------------------------------------------------
 
-constexpr float kStickLen = 62.f;
+constexpr float kStickLen = kItemStickLen;
 
-// A stick a critter holds up: from its paw at `angle` turns from straight up.
-Vec2 stickEnd(const Item& it) {
-  const float sx = it.facing < 0 ? -1.f : 1.f;
-  return Vec2{it.pos.x + sx * kStickLen * sinT(it.angle), it.pos.y - kStickLen * cosT(it.angle)};
+// A stick a critter holds: along `angle` turns from straight up through pos,
+// `grip` of it ahead of pos (behind the line's direction), x squeezed with the
+// holder's turn.
+void stickEnds(const Item& it, Vec2& a, Vec2& b) {
+  const float sx = (it.facing < 0 ? -1.f : 1.f) * it.squeeze;
+  const Vec2 d{sx * kStickLen * sinT(it.angle), -kStickLen * cosT(it.angle)};
+  a = Vec2{it.pos.x - it.grip * d.x, it.pos.y - it.grip * d.y};
+  b = Vec2{a.x + d.x, a.y + d.y};
 }
 
 // Item outline points in local px (x mirrored by facing, scaled by size), so
@@ -373,8 +377,10 @@ Rect itemBounds(ItemId id, const Item& it) {
       break;
     case ITEM_STICK:
       if (it.held && it.critter) {
-        e.pt(it.pos, 2.f);
-        e.pt(stickEnd(it), 2.f);
+        Vec2 a, b;
+        stickEnds(it, a, b);
+        e.pt(a, 2.f);
+        e.pt(b, 2.f);
       } else if (it.held) {
         const float sx = it.facing < 0 ? -1.f : 1.f;
         e.pt(it.pos, 2.f);
@@ -423,8 +429,10 @@ void itemDraw(ItemId id, const Item& it, Surface& s, const Rect& clip, const Pal
       capL(it, 7.5f, -7.f, 12.f, -8.f, 1.6f, s, pal[ACTOR], clip);
       break;
     case ITEM_STICK:
-      if (it.held && it.critter) {   // held up by a critter
-        strokeCapsule(s, it.pos, stickEnd(it), 2.6f, pal[TRUNK], clip);
+      if (it.held && it.critter) {   // held by a critter
+        Vec2 a, b;
+        stickEnds(it, a, b);
+        strokeCapsule(s, a, b, 2.6f, pal[TRUNK], clip);
       } else if (it.held) {   // dragged: hands to the ground behind
         const float sx = it.facing < 0 ? -1.f : 1.f;
         strokeCapsule(s, it.pos, Vec2{it.pos.x - sx * kStickLen * it.size, it.ground_y - 1.f}, 2.6f, pal[TRUNK],
@@ -449,7 +457,8 @@ void itemDraw(ItemId id, const Item& it, Surface& s, const Rect& clip, const Pal
 
 bool itemSame(const Item& a, const Item& b) {
   return sameV(a.pos, b.pos) && a.down == b.down && a.held == b.held && a.facing == b.facing && a.size == b.size &&
-         a.ground_y == b.ground_y && a.on_fire == b.on_fire && a.critter == b.critter && a.angle == b.angle;
+         a.ground_y == b.ground_y && a.on_fire == b.on_fire && a.critter == b.critter && a.angle == b.angle && a.grip == b.grip &&
+         a.squeeze == b.squeeze;
 }
 
 const char* itemName(ItemId id) {

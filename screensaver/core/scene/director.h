@@ -11,7 +11,8 @@
 //
 // directorStep (from worldTick, after the spine) runs the hiker rule, the
 // scatter and flee modes, the rig ticks, the walk paths, visibility and
-// release. A scattered critter belongs to the director from then on: owners
+// release, and keeps what a critter holds (Item::critter) at its mouth, or its
+// paw as it rears, facing and squeezing with it. A scattered critter belongs to the director from then on: owners
 // check directorOwns before giving it orders.
 #pragma once
 
@@ -44,8 +45,9 @@ Vec2 directorClamp(const World& w, int slot, Vec2 to, bool exiting);
 // y 320); from.y when it already does, or when `from` is in the water.
 float directorDryY(const World& w, Vec2 from, float to_x);
 // Walk (or run, hop, fly: `gait`, falling back to the kind's own) to `to`
-// (clamped), feet.y following the straight line from where it is.
-void directorWalk(World& w, int slot, Vec2 to, float px_per_s, CritterAction gait);
+// (clamped), feet.y following the straight line from where it is. `back`: a
+// short step back without turning round (critterMoveTo).
+void directorWalk(World& w, int slot, Vec2 to, float px_per_s, CritterAction gait, bool back = false);
 // Off the frame toward `side` (-1 left, +1 right; the corner rule may flip it)
 // at `px_per_s`; released once out of sight.
 void directorExit(World& w, int slot, int side, float px_per_s, CritterAction gait);

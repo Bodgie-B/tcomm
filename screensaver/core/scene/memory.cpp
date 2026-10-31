@@ -17,6 +17,7 @@ void memoryBeginLoop(World& w, Rng& rng) {
   }
   ++m.persona_age;
   m.mouse_tent_runs = 0;
+  m.shoe_back = false;
   // Last loop's cairn, one stone shorter (the plan holds the count), stands
   // from the end of the build-up (the arrival beat sets it: during the build
   // the ground it stands on is not there yet).

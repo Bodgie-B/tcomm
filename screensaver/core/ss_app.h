@@ -99,5 +99,10 @@ float appFade(const App* app);
 const char* appMinorName(const App* app);
 int appMinorCount(const App* app);
 int appMinorCritters(const App* app);
+// Minors this loop that had to be forced to end (age limit, or a critter
+// released in sight); 0 expected.
+int appMinorForced(const App* app);
+// Leaves in the scene (leaf_fall's: falling, lying, on his hat, or blown off).
+int appLeaves(const App* app);
 
 }  // namespace ss

@@ -163,22 +163,6 @@ on the fire-facing edge), not a glow.
 All seven (from the review of afc5520) were applied with the stage 5 critter
 work; see "In the scene" in `reviews/stage5/notes.md`.
 
-## Deferred review fixes, round 2 (from the review of ff8bcbf; apply after stage 6 lands)
+## Deferred review fixes, round 2
 
-1. `director.cpp` held-item loop: set `it.facing = (int8_t)c.facing` every tick
-   (the bear's stick points forward for the whole walk, then flips 118 px).
-2. `spine.cpp` bear c: lay the fallen branch further from the sniff spot
-   (~trunk+20), step back without turning when the target is behind the bear,
-   ease the stick from the ground to the anchor over a few ticks, hold it at
-   `critterMouth` while on all fours and `critterPaw` only when reared.
-3. `spine.cpp`: `sp.bear` is never cleared after release; `bearArrived`,
-   `bearGone`, `bearWalk`, `doBearLeave`, `doBearRunOff`, `bearUpdate` must
-   check `tag == CT_BEAR` or `sp.bear` must be set to -1 on release.
-4. `spine.cpp` `beatEnd`: `directorExit` every slot whose tag belongs to the
-   ending beat, so an overrun never leaks a critter.
-5. `director.cpp` / test: the 80 px scatter-from-walking-hiker rule has never
-   fired in 300 seeds; add a unit test that walks him at a non-shy critter and
-   asserts it scatters before the bounds overlap.
-6. `spine.cpp` `doShoeOff`: skip laying the shoe when `memory.shoe_taken`
-   (stage 6's raccoon returns it); reword the test message.
-7. `spine.cpp` `doPackSetDown`: tween the 4.5 to 7 px snap like `actPackLift`.
+All eight applied (plus items 9 to 15 from the review of 9b8b1f7); see "Post-review fixes" in `reviews/stage6/notes.md`.

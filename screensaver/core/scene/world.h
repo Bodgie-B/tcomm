@@ -55,11 +55,12 @@ struct ActorRef {
   int16_t base_y;
 };
 // Fire 1, tufts 14, hiker 1 + 2 pines, props 4 + 7 items, leaf 1 = 30;
-// critters 8 (+ 2 pine redraws each near the left edge), bits 4. sortActors
+// critters 8 (+ 2 pine redraws each near the left edge), bits 6. sortActors
 // stops adding at the cap (tufts are added before the critters, so a full
 // list drops critters at the far left first, never the hiker or props).
-// A major's glyphs (up to 24, the fireflies) come last; 80 holds them all.
-#define WORLD_ACTOR_MAX 80
+// A major's glyphs (up to GLYPH_MAX 28: kept stars and fireflies) come last;
+// 88 holds them all.
+#define WORLD_ACTOR_MAX 88
 
 // Critters in the scene: slots the director (director.h) hands out.
 #define CRITTER_MAX 8
@@ -196,6 +197,11 @@ void worldBeginLoop(World& w, Rng& rng);
 // release), critter step, bits, actor sort, dirty marks, cache invalidation at
 // build phase boundaries.
 void worldTick(World& w, Rng& rng, Renderer& r);
+// The one way to get a World::bits slot (the bear, the majors and the minors
+// all use it, never a fixed index): a free one, else the one that has lain
+// longest (a resting cone or leaf). The slot is cleared and given `kind`.
+// -1 when every slot is busy (falling, flying, spreading).
+int worldTakeBit(World& w, uint8_t kind);
 
 void worldDrawStatic(const World& w, Surface& frame, const Palette& pal, float mood);
 void worldDrawDynamic(const World& w, Surface& strip, const Rect& clip, const Palette& pal, float mood);
