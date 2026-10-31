@@ -38,7 +38,7 @@ import sys
 TICKS_PER_SECOND = 25
 PROBE_EVERY = 50           # ticks per frame of the log-only probe run
 PROBE_TICKS = 20000        # > longest loop (16,500 ticks) so loop 1 always starts in it
-LETTERS = "abc"
+LETTERS = "abcd"   # dinner has a fourth variant (fish dinner, after fishing_good)
 SKIP_BEATS = {"pause"}
 
 BEAT_RE = re.compile(r"^tick=(\d+) loop=(\d+) seed=(-?\d+) beat=(\S+)\s*$")

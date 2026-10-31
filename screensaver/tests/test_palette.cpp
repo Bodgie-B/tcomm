@@ -73,6 +73,67 @@ static void testNightRule() {
   }
 }
 
+// --- Mike's review (stage 6): contrast and night limits ----------------------
+// Gaps are luminance differences on the 0..255 scale (Rec.709, 8-bit expansion).
+static float lum255(Pixel p) { return lum(p) * 255.f; }
+
+static const float kLightGapDay = 50.f;    // ACTOR_LIGHT over ACTOR, dawn..dusk
+static const float kLightGapNight = 30.f;  // ... at night and under night_dim
+static const float kTreeGap = 25.f;        // TRUNK/FOLIAGE/FOLIAGE_DARK over ACTOR, every mood
+// night_dim scales the whole scene by 0.55 (testWeather asks for >= 40% off
+// SKY2), so absolute gaps shrink with it; under night_dim the tree gap must keep
+// the same contrast ratio: 25 * 0.55.
+static const float kTreeGapDim = 25.f * 0.55f;
+
+static void testMikeReview() {
+  static const Slot kTrees[3] = {TRUNK, FOLIAGE, FOLIAGE_DARK};
+  const Palette& day = moodKey(MOOD_DAY);
+  printf("contrast (luminance 0..255)        ACTOR  LIGHT  gap  | TRUNK  gap  FOL  gap  FOLD  gap | TENT  LIT  MUSH\n");
+  for (int pass = 0; pass < 2; ++pass) {
+    const bool dim = pass == 1;
+    for (int m = 0; m < SS_MOOD_COUNT; ++m) {
+      Palette p;
+      computePalette((float)m, WeatherTint{0.f, 0.f, dim ? 1.f : 0.f}, p);
+      const float a = lum255(p[ACTOR]);
+      const float gl = lum255(p[ACTOR_LIGHT]) - a;
+      printf("  %-8s%-24s %5.1f  %5.1f  %4.1f |", kMoodName[m], dim ? " night_dim=1" : "", (double)a,
+             (double)lum255(p[ACTOR_LIGHT]), (double)gl);
+      for (Slot t : kTrees) printf(" %5.1f %4.1f", (double)lum255(p[t]), (double)(lum255(p[t]) - a));
+      printf(" | %5.1f %5.1f %5.1f\n", (double)lum255(p[TENT]), (double)lum255(p[TENT_LIT]), (double)lum255(p[MUSHROOM]));
+
+      const float needL = (dim || m == MOOD_NIGHT) ? kLightGapNight : kLightGapDay;
+      CHECK(gl >= needL, "%s%s: ACTOR_LIGHT only %.1f over ACTOR (need %.0f)", kMoodName[m], dim ? " dim" : "",
+            (double)gl, (double)needL);
+      const float needT = dim ? kTreeGapDim : kTreeGap;
+      for (Slot t : kTrees) {
+        const float g = lum255(p[t]) - a;
+        CHECK(g >= needT, "%s%s: near-tree slot %d only %.1f over ACTOR (need %.1f)", kMoodName[m],
+              dim ? " dim" : "", (int)t, (double)g, (double)needT);
+      }
+      if (dim) {
+        for (int s = 0; s < SLOT_COUNT; ++s) {
+          const float cap = isNightHighlight(s) ? NIGHT_HIGHLIGHT_MAX : NIGHT_LUM_MAX;
+          CHECK(lum(p.c[s]) <= cap + 1e-4f, "%s night_dim: slot %d luminance %.3f above %.2f", kMoodName[m], s,
+                (double)lum(p.c[s]), (double)cap);
+        }
+      }
+    }
+  }
+  // The tent is keyed per mood: off the day orange at golden, dusk and night,
+  // and darker than day when unlit at dusk and night.
+  static const Mood kTentMoods[3] = {MOOD_GOLDEN, MOOD_DUSK, MOOD_NIGHT};
+  for (Mood m : kTentMoods) {
+    const Palette& k = moodKey(m);
+    CHECK(k[TENT] != day[TENT], "%s: TENT still the day value", kMoodName[m]);
+  }
+  CHECK(lum(moodKey(MOOD_DUSK)[TENT]) < lum(day[TENT]) && lum(moodKey(MOOD_NIGHT)[TENT]) < lum(moodKey(MOOD_DUSK)[TENT]),
+        "TENT should darken day > dusk > night");
+  CHECK(lum(moodKey(MOOD_NIGHT)[TENT_LIT]) > 2.f * lum(moodKey(MOOD_NIGHT)[TENT]), "night lit tent should glow");
+  // The mushroom is dim at night (no fire-orange cap in the dark).
+  CHECK(lum(moodKey(MOOD_NIGHT)[MUSHROOM]) < 0.5f * lum(day[MUSHROOM]), "night MUSHROOM not dim");
+  CHECK(lum(moodKey(MOOD_NIGHT)[MUSHROOM]) < lum(moodKey(MOOD_NIGHT)[FIRE]) * 0.5f, "night MUSHROOM as bright as fire");
+}
+
 static void testIntegerMoodsEqualKeys() {
   for (int m = 0; m < SS_MOOD_COUNT; ++m) {
     Palette p;
@@ -240,6 +301,7 @@ static void writeSwatches(const char* path) {
 int main() {
   testAtmosphericRule();
   testNightRule();
+  testMikeReview();
   testIntegerMoodsEqualKeys();
   testInterpolation();
   testWeather();

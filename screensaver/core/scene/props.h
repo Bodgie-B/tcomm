@@ -106,9 +106,22 @@ bool cairnSame(const Cairn& a, const Cairn& b);
 // WOOD is the pile by the fire; `size` grows it (1 an armload, ~1.6 two).
 // STICK held is dragged: from the hiker's hands to the ground behind him.
 // FORK held stands upright in his near hand (the dinner c gag); down it lies flat.
+// ROD lies on the ground (thrown across the stream, or set down), `angle`
+// turns off flat; `alt` draws the stick that stood in for it (TRUNK).
+// HAT is the hiker's hat off his head: on the ground or a rock, or in his hands.
+// FISH is a fish on a roasting stick: the stick from `pos` along `angle`
+// turns from straight up (+ toward `facing`), the fish skewered at its far
+// end, `size` its scale (1 whole; it shrinks as he eats); size <= 0 is the
+// skeleton. `on_fire`: propped over the fire, sorted in front of the flames.
 enum ItemId : uint8_t {
-  ITEM_MUG = 0, ITEM_BOOK, ITEM_POT, ITEM_STICK, ITEM_SHOE, ITEM_WOOD, ITEM_FORK, ITEM_COUNT
+  ITEM_MUG = 0, ITEM_BOOK, ITEM_POT, ITEM_STICK, ITEM_SHOE, ITEM_WOOD, ITEM_FORK, ITEM_ROD, ITEM_HAT, ITEM_FISH,
+  ITEM_COUNT
 };
+
+// A rod lying down, end to end (about the hiker's rod at full length), and
+// the fish's roasting stick.
+constexpr float kItemRodLen = 64.f;
+constexpr float kItemFishStick = 26.f;
 
 // A stick's length, and how much of it sticks out ahead of a critter's mouth
 // when carried (Item::grip).
@@ -133,6 +146,7 @@ struct Item {
   float grip;
   float squeeze;     // critter-held: the holder's turn-around squeeze (x scale, 0.15..1)
   bool placed;       // critter-held, but its owner sets pos and grip (a pick-up or a drop under way)
+  bool alt = false;  // a variant look (ITEM_ROD: the stick that stood in for the rod)
 };
 
 Rect itemBounds(ItemId id, const Item& it);

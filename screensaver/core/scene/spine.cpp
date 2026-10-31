@@ -774,6 +774,67 @@ void actEatFork(World& w, float u) {
   if (u >= 1.f) fxRest(w);
 }
 
+// Dinner d: the fish he caught (fishing_good) has been roasting on its stick.
+void doFishOffFire(World& w, float) {
+  Item& f = w.items[ITEM_FISH];
+  f.on_fire = false;
+  f.down = false;
+  f.held = true;
+  f.critter = 0;
+  f.size = 1.f;
+  f.angle = 0.1f;
+}
+// Eats it off the stick: three bites, the fish shorter each time, down to the bones.
+constexpr float kEatFishS = 12.f;
+void actEatFish(World& w, float u) {
+  const float s = u * kEatFishS;
+  const float env = envelope(u, 0.05f, 0.06f);
+  const float ph = s / 4.f;   // a bite every 4 s: up, chew, down
+  const int k = (int)ph;
+  const float lift = plateau(ph - floorf(ph), 0.18f, 0.16f, 0.3f);
+  noteBite(w, lift * env);
+  setArm(w, 0, env, 0.45f + 0.5f * lift, 1.25f + 1.0f * lift);
+  w.fx.head = env * (0.1f - 0.16f * lift + 0.04f * sinT(s * 2.5f) * (1.f - lift));   // chewing
+  Item& f = w.items[ITEM_FISH];
+  f.angle = 0.1f + 0.08f * lift;
+  // Each bite takes a piece at the top of the lift.
+  int bites = k;
+  if (ph - floorf(ph) > 0.4f) ++bites;
+  static const float kLeft[4] = {1.f, 0.68f, 0.38f, 0.f};
+  f.size = kLeft[bites > 3 ? 3 : bites];
+  if (u >= 1.f) fxRest(w);
+}
+// The bones into the fire, underarm.
+void actTossBones(World& w, float u) {
+  Item& f = w.items[ITEM_FISH];
+  if (u <= 0.f) w.spine.v0 = hikerHandPos(w.hiker, 0);
+  const float sw = easeInOut(window(u, 0.1f, 0.4f));
+  setArm(w, 0, envelope(u, 0.15f, 0.3f), lerp(0.3f, 1.6f, sw), 0.3f);
+  if (u >= 0.35f && f.held) {
+    f.held = false;
+    f.down = true;
+    f.on_fire = true;   // sorted in front of the flames all the way
+  }
+  if (!f.held && f.down) {
+    const float k = clamp01((u - 0.35f) / 0.5f);
+    const Vec2 to{w.fire.pos.x - 2.f, w.fire.pos.y - 4.f};
+    const Vec2 a = w.spine.v0;
+    f.pos = Vec2{lerp(a.x, to.x, k), lerp(a.y, to.y, k) - 22.f * 4.f * k * (1.f - k)};
+    f.angle = 0.1f + 0.9f * k;
+    if (k >= 1.f) f.down = f.on_fire = false;   // gone in the flames
+  }
+  if (u >= 1.f) fxRest(w);
+}
+// Pats his stomach: full.
+void actPatStomach(World& w, float u) {
+  const float env = envelope(u, 0.15f, 0.15f);
+  const float pat = 0.5f + 0.5f * sinT(u * 5.f);
+  setArm(w, 0, env, 0.25f + 0.12f * pat, 1.75f + 0.2f * pat);
+  w.fx.lean = -0.1f * env;
+  w.fx.head = -0.12f * env;
+  if (u >= 1.f) fxRest(w);
+}
+
 // ---- food bag -----------------------------------------------------------------------------
 
 // Line length that rests the sack on the ground under the branch tip.
@@ -1771,6 +1832,25 @@ const Step kDinnerC[] = {
     still(1.0f),
 };
 
+// Dinner d (fish_dinner, only after fishing_good): the fish off the fire,
+// eaten off the stick in three bites, the bones into the fire, a pat on the stomach.
+const Step kDinnerD[] = {
+    FROM_REST,
+    go(AT_BLOW, kStroll),
+    face(LEFT),
+    pose(POSE_CROUCH, 0.6f, 0.4f),
+    doit(doFishOffFire),
+    pose(POSE_STAND, 0.6f, 0.1f),
+    TO_SIT,
+    doit(hookDinnerCritters),   // a deer edges in a step a bite; a chipmunk behind the fire
+    act(actEatFish, kEatFishS),
+    still(0.6f),
+    act(actTossBones, 1.2f),
+    still(0.8f),
+    act(actPatStomach, 2.4f),
+    still(1.0f),
+};
+
 // Food bag, shared: out of the pack, over to the bag branch. Shared end: to
 // the tent door, in, and the lantern comes on.
 #define BAG_FETCH FROM_REST, PACK_CROUCH, doit(doBagUp), pose(POSE_CARRY, 0.6f, 0.1f)
@@ -2067,19 +2147,21 @@ struct Script {
 #define NO_SCRIPT Script{nullptr, 0}
 
 // Variants per beat, in LoopPlan order. A null entry is a variant not built.
-const Script kScripts[SB_COUNT][3] = {
+const Script kScripts[SB_COUNT][4] = {
     {SCRIPT(kArrivalA), SCRIPT(kArrivalB), SCRIPT(kArrivalC)},
     {SCRIPT(kSetupA), SCRIPT(kSetupB), SCRIPT(kSetupC)},
     {SCRIPT(kFirewoodA), SCRIPT(kFirewoodB), SCRIPT(kFirewoodC)},
     {SCRIPT(kFireA), SCRIPT(kFireB), SCRIPT(kFireC)},
-    {SCRIPT(kDinnerA), SCRIPT(kDinnerB), SCRIPT(kDinnerC)},
+    {SCRIPT(kDinnerA), SCRIPT(kDinnerB), SCRIPT(kDinnerC), SCRIPT(kDinnerD)},
     {SCRIPT(kFoodbagA), SCRIPT(kFoodbagB), SCRIPT(kFoodbagC)},
     {SCRIPT(kBearA), SCRIPT(kBearB), SCRIPT(kBearC)},
     {SCRIPT(kCloseA), SCRIPT(kCloseB), SCRIPT(kCloseC)},
 };
 
-const Script kFillerScripts[FILL_COUNT] = {SCRIPT(kFillMugSunset), SCRIPT(kFillRead),      SCRIPT(kFillCairn),
-                                           SCRIPT(kFillSkipStone), SCRIPT(kFillCloudWatch), SCRIPT(kFillStreamListen)};
+// birds_on_water's script lives in majors.cpp with its birds (its own beat hooks).
+const Script kFillerScripts[FILL_COUNT] = {SCRIPT(kFillMugSunset),  SCRIPT(kFillRead),        SCRIPT(kFillCairn),
+                                           SCRIPT(kFillSkipStone),  SCRIPT(kFillCloudWatch),  SCRIPT(kFillStreamListen),
+                                           NO_SCRIPT};
 
 // Beat seconds per variant: the script plus room for slower walks on some
 // seeds (fire pit and rock positions vary). Whole seconds keep the loop whole ticks.
@@ -2087,15 +2169,15 @@ const Script kFillerScripts[FILL_COUNT] = {SCRIPT(kFillMugSunset), SCRIPT(kFillR
 #undef NO_SCRIPT
 #undef N
 
-const uint8_t kDurations[SB_COUNT][3] = {
-    {25, 29, 33},   // arrival
-    {39, 39, 35},   // setup
-    {34, 62, 35},   // firewood (b is two trips)
-    {31, 43, 37},   // fire
-    {38, 48, 33},   // dinner (b: the visitors come while the pot heats)
-    {38, 48, 47},   // foodbag (the walks: pack, bag pine, tent door)
-    {58, 42, 59},   // bear (c: with the branch by the pine; see beatSeconds)
-    {34, 50, 37},   // close (the theft; the last 2.5 s fade to black)
+const uint8_t kDurations[SB_COUNT][4] = {
+    {25, 29, 33, 0},    // arrival
+    {39, 39, 35, 0},    // setup
+    {34, 62, 35, 0},    // firewood (b is two trips)
+    {31, 43, 37, 0},    // fire
+    {38, 48, 33, 34},   // dinner (b: the visitors come while the pot heats; d: the fish)
+    {38, 48, 47, 0},    // foodbag (the walks: pack, bag pine, tent door)
+    {58, 42, 59, 0},    // bear (c: with the branch by the pine; see beatSeconds)
+    {34, 50, 37, 0},    // close (the theft; the last 2.5 s fade to black)
 };
 
 // Bear c fetching the firewood stick from beside the fire walks much further.
@@ -2116,13 +2198,13 @@ int beatSeconds(const LoopPlan& p, int b) {
 constexpr float kFadeS = 2.5f;
 
 // Filler seconds: the script plus a few. The cairn adds one stone cycle per stone.
-const uint8_t kFillerSeconds[FILL_COUNT] = {47, 50, 0, 36, 58, 46};
+const uint8_t kFillerSeconds[FILL_COUNT] = {47, 50, 0, 36, 58, 46, 0};   // birds: birdsFillerSeconds
 constexpr int kCairnBaseS = 20, kCairnPerStoneS = 7;
 
 const char* const kBeatNames[SB_COUNT] = {"arrival", "setup", "firewood", "fire",
                                           "dinner",  "foodbag", "bear",   "close"};
 const char* const kFillerNames[FILL_COUNT] = {"mug_sunset", "read", "cairn", "skip_stone", "cloud_watch",
-                                              "stream_listen"};
+                                              "stream_listen", "birds_on_water"};
 
 // ---- the interpreter ------------------------------------------------------------------
 
@@ -2426,9 +2508,9 @@ const UpdateFn kUpdate[SB_COUNT] = {beatUpdate, beatUpdate, beatUpdate, beatUpda
 typedef void (*EndFn)(SceneCtx&);
 const EndFn kEnd[SB_COUNT] = {beatEnd, beatEnd, beatEnd, beatEnd, beatEndOwned<SB_DINNER>,
                               beatEnd, beatEndOwned<SB_BEAR>, beatEndOwned<SB_CLOSE>};
-const BeginFn kFillerBegin[FILL_COUNT] = {fillerBegin<0>, fillerBegin<1>, fillerBegin<2>,
-                                          fillerBegin<3>, fillerBegin<4>, fillerBegin<5>};
-static_assert(SB_COUNT == 8 && FILL_COUNT == 6, "extend kBegin, kUpdate and kFillerBegin");
+const BeginFn kFillerBegin[FILL_COUNT] = {fillerBegin<0>, fillerBegin<1>, fillerBegin<2>, fillerBegin<3>,
+                                          fillerBegin<4>, fillerBegin<5>, birdsFillerBegin};
+static_assert(SB_COUNT == 8 && FILL_COUNT == 7, "extend kBegin, kUpdate and kFillerBegin");
 
 // Picks the far-bank rock nearest the crossing for arrival c; false if none fits.
 bool pickRock(const World& w, Vec2& sit) {
@@ -2476,7 +2558,7 @@ void scriptSetDown(World& w, ItemId id, Vec2 at) { setDown(w, id, at); }
 int spineVariantCount(int beat) {
   if (beat < 0 || beat >= SB_COUNT) return 0;
   int n = 0;
-  while (n < 3 && kScripts[beat][n].steps) ++n;
+  while (n < 3 && kScripts[beat][n].steps) ++n;   // (dinner's 4th is placed, not drawn)
   return n;
 }
 
@@ -2491,6 +2573,7 @@ const char* spineFillerName(int f) { return f >= 0 && f < FILL_COUNT ? kFillerNa
 int spineFillerSeconds(const LoopPlan& p, int f) {
   if (f < 0 || f >= FILL_COUNT) return 0;
   if (f == FILL_CAIRN) return kCairnBaseS + kCairnPerStoneS * (int)p.cairn_add;
+  if (f == FILL_BIRDS_ON_WATER) return birdsFillerSeconds();
   return kFillerSeconds[f];
 }
 
@@ -2546,7 +2629,7 @@ void spinePlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
 
   // Fillers: 2 to 4 drawn, weighted, no repeats (the length policy below may
   // drop some). The sunset mug is likelier from golden hour on (mood 3.5 and up).
-  float wt[FILL_COUNT] = {1.f, 1.f, 1.2f, 1.f, 1.f, 1.f};
+  float wt[FILL_COUNT] = {1.f, 1.f, 1.2f, 1.f, 1.f, 1.f, 1.f};
   if (in.mood >= 3.5f) wt[FILL_MUG_SUNSET] = 3.f;
   p.n_fillers = (uint8_t)rng.rangeInt(2, SPINE_FILLER_MAX);
   for (int i = 0; i < SPINE_FILLER_MAX; ++i) {
@@ -2554,7 +2637,7 @@ void spinePlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
     p.filler_after[i] = 0;
     p.filler_pause_s[i] = 0;
   }
-  for (int i = 0; i < p.n_fillers; ++i) {
+  for (int i = 0; i < p.n_fillers && i < SPINE_FILLER_MAX; ++i) {
     const int f = rng.weighted(wt, FILL_COUNT);
     p.filler[i] = (uint8_t)f;
     wt[f] = 0.f;
@@ -2573,6 +2656,13 @@ void spinePlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
   p.steam_n = (uint8_t)rng.rangeInt(3, 5);
 
   majorsPlan(p, rng, in, mem);
+  // fishing_good leaves a fish roasting over the fire: dinner is the fish.
+  auto hasMajor = [&p](int id) {
+    for (int i = 0; i < p.n_majors; ++i)
+      if (p.major[i] == id) return true;
+    return false;
+  };
+  if (hasMajor(MJ_FISHING_GOOD)) p.dinner = SPINE_DINNER_FISH;
 
   // Loop length policy. Squeeze the pauses (round robin, a second at a time,
   // down to 8 s); while still too long, drop fillers down to one, majors down
@@ -2605,9 +2695,10 @@ void spinePlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
     // one of the last loops played (memory) and another choice does not.
     uint16_t all = 0;
     for (int i = 0; i < p.n_majors; ++i) all = (uint16_t)(all | (1u << p.major[i]));
-    int drop = p.n_majors - 1;
+    // fishing_good stays (dinner is planned round it).
+    int drop = p.major[p.n_majors - 1] == MJ_FISHING_GOOD ? p.n_majors - 2 : p.n_majors - 1;
     for (int i = p.n_majors - 1; i >= 0; --i)
-      if (!memoryRecentSet(mem, (uint16_t)(all & ~(1u << p.major[i])))) {
+      if (p.major[i] != MJ_FISHING_GOOD && !memoryRecentSet(mem, (uint16_t)(all & ~(1u << p.major[i])))) {
         drop = i;
         break;
       }
@@ -2748,7 +2839,10 @@ void spineBuildTimeline(Timeline& tl, const LoopPlan& p) {
     for (int i = 0; i < p.n_fillers; ++i) {
       if (p.filler_after[i] != b) continue;
       const int f = p.filler[i];
-      tl.add(Beat{kFillerNames[f], (float)spineFillerSeconds(p, f), kFillerBegin[f], beatUpdate, beatEnd});
+      if (f == FILL_BIRDS_ON_WATER)
+        tl.add(Beat{kFillerNames[f], (float)spineFillerSeconds(p, f), birdsFillerBegin, birdsFillerUpdate, birdsFillerEnd});
+      else
+        tl.add(Beat{kFillerNames[f], (float)spineFillerSeconds(p, f), kFillerBegin[f], beatUpdate, beatEnd});
       tl.add(Beat{"pause", (float)p.filler_pause_s[i], nullptr, nullptr, nullptr});
     }
     for (int i = 0; i < p.n_majors; ++i) {

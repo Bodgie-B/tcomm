@@ -30,6 +30,7 @@ enum Slot : uint8_t {
   ACTOR, ACTOR_LIGHT,                   // hiker and animals: body, lit side
   STAR,
   CHIP_OUTLINE,                         // status chip outline in scene palette
+  MUSHROOM,                             // the foreground mushroom's cap (dim at night)
   SLOT_COUNT                            // must stay <= 32
 };
 
@@ -48,6 +49,15 @@ struct WeatherTint {
   float fog;        // lifts far layers toward the horizon color
   float night_dim;  // 1 = night rule in force: clamp bright slots, dim overall
 };
+
+// Night rule limits (brief section 11: no large bright areas, no pure white),
+// as Rec.709 luminance of the 8-bit expansion, 0..1, applied at night_dim = 1.
+// Every slot stays at or under NIGHT_LUM_MAX except the small-highlight slots
+// (ACTOR_LIGHT, FIRE_CORE, STAR, SUN), which stay under NIGHT_HIGHLIGHT_MAX.
+// Unverified on the panel.
+constexpr float NIGHT_LUM_MAX = 0.60f;
+constexpr float NIGHT_HIGHLIGHT_MAX = 0.82f;
+inline bool isNightHighlight(int s) { return s == ACTOR_LIGHT || s == FIRE_CORE || s == STAR || s == SUN; }
 
 // The key palette for an integer mood. These hold the brief's starting values
 // (section 2) and are tuned by eye later on the panel.

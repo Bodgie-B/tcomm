@@ -28,11 +28,17 @@ namespace ss {
 enum PoseId : uint8_t {
   POSE_STAND, POSE_LOOK_AROUND, POSE_CROUCH, POSE_SIT, POSE_REACH_UP, POSE_CARRY,
   POSE_BLOW, POSE_YELP, POSE_LIE, POSE_WAVE, POSE_HANDS_ON_HIPS, POSE_SCRATCH_HEAD,
-  POSE_HOLD_MUG, POSE_READ, POSE_COUNT
+  POSE_HOLD_MUG, POSE_READ,
+  POSE_FISH_STAND,   // rod out over the water, both hands on it, patient
+  POSE_FISH_SIT,     // sitting on the bank, rod out
+  POSE_CAST,         // the rod back over the shoulder (an action pose: it dips first); blend back
+                     // to POSE_FISH_STAND quickly to whip it forward
+  POSE_COUNT
 };
 
 enum CarryId : uint8_t {
   CARRY_NONE, CARRY_WOOD, CARRY_MUG, CARRY_BOOK, CARRY_BAG, CARRY_STICK, CARRY_ROCK, CARRY_JAR,
+  CARRY_ROD,   // a long thin rod in both hands, tip forward and up from the near hand (see Hiker::rod_*)
   CARRY_COUNT
 };
 
@@ -55,6 +61,17 @@ struct Hiker {
   bool visible;
   bool pack_on;        // false once the pack is set down (stage 4 draws it as a prop)
   int lit_from;        // -1 fire to the left, +1 to the right, 0 no rim
+  bool hat_on;         // false: bareheaded (the hat is then an item, props ITEM_HAT)
+
+  // CARRY_ROD. The rod leaves the near hand along the forearm plus a fixed
+  // angle plus `rod_tilt` (radians, + tip up), `rod_len` units of height long
+  // (about 0.3 telescoped, 0.75 out). `rod_bend` 0..1 bows the outer half
+  // down (a fish or a snag on the line). With `rod_line` a 1 px line runs from
+  // the tip to `rod_end` (frame space), with a float there when `rod_float`.
+  // `rod_stick`: a crooked stick (TRUNK) stands in for the rod.
+  float rod_len, rod_bend, rod_tilt;
+  bool rod_stick, rod_line, rod_float;
+  Vec2 rod_end;
 
   // ---- owned by hiker.cpp ----
   HikerPose pose;      // composed pose this tick (blend + walk + idle motion), no breathing
@@ -89,6 +106,8 @@ void hikerDraw(const Hiker& h, Surface& s, const Palette& pal, const Rect& clip)
 Vec2 hikerHandPos(const Hiker& h, int i);
 // Centre of the head in frame space and its radius (px), the same way.
 Vec2 hikerHeadPos(const Hiker& h, float* radius);
+// The rod's tip in frame space (CARRY_ROD; the near hand otherwise).
+Vec2 hikerRodTip(const Hiker& h);
 
 // The pose table entry for `p` (what a finished blend lands on exactly).
 const HikerPose& hikerPoseDef(PoseId p);

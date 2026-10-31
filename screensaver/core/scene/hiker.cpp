@@ -39,12 +39,18 @@ constexpr float kCrownBase = 0.068f, kCrownTop = 0.056f, kCrownH = 0.08f, kCrown
 // but well under the brim, so hat and pack stay two separate shapes.
 constexpr float kPack[8][2] = {{0.035f, 0.045f}, {0.13f, 0.035f}, {0.175f, 0.06f}, {0.19f, 0.10f},
                                {0.19f, 0.27f},   {0.17f, 0.30f},  {0.10f, 0.32f}, {0.04f, 0.31f}};
-constexpr float kPackBack = 0.19f, kPackRim0 = 0.11f, kPackRim1 = 0.26f;
+constexpr float kPackBack = 0.19f;
 // Bedroll strapped across the top, so seen end-on: a disc at the back corner,
 // clear of the brim.
 constexpr float kRollB = 0.15f, kRollU = 0.315f, kRollR = 0.05f;
 
 constexpr float kRimW = 0.018f, kRimMinPx = 1.2f;
+
+// The rod: off the near forearm by kRodRel (so a raised arm raises it), its
+// butt kRodButt behind the near hand; the outer kRodOuter of it bows with
+// rod_bend by up to kRodBow radians. The stick is thicker and kinked.
+constexpr float kRodRel = 0.55f, kRodButt = 0.13f, kRodOuter = 0.45f, kRodBow = 0.75f;
+constexpr float kRodW = 0.015f, kStickW = 0.03f, kLineW = 1.0f, kFloatR = 1.7f;
 
 // ---- motion ---------------------------------------------------------------
 constexpr float kBreathPeriod = 3.6f;    // seconds per breath
@@ -75,16 +81,19 @@ const HikerPose kPoses[POSE_COUNT] = {
     /* SCRATCH */{ 0.02f,  0.20f, 0.f,   0.f,   { 0.06f,-0.06f},{0.04f,0.04f}, { 2.40f,-0.10f},{2.43f,0.20f}},
     /* MUG */    { 0.00f,  0.05f, 0.f,   0.f,   { 0.06f,-0.06f},{0.04f,0.04f}, { 0.10f,-0.15f},{2.20f,0.50f}},
     /* READ */   {-0.05f,  0.45f, 0.f,   0.f,   { 2.00f, 1.85f},{2.95f,3.00f}, { 0.45f, 0.40f},{1.52f,1.55f}},
+    /* FISH_ST */{ 0.04f,  0.12f, 0.f,   0.f,   { 0.10f,-0.10f},{0.06f,0.06f}, { 0.75f, 0.35f},{0.90f,0.90f}},
+    /* FISH_SIT*/{-0.05f,  0.15f, 0.f,   0.f,   { 2.25f, 2.10f},{2.87f,2.90f}, { 0.90f, 0.55f},{0.75f,1.00f}},
+    /* CAST */   {-0.14f, -0.12f, 0.f,   0.f,   { 0.16f,-0.14f},{0.06f,0.08f}, { 2.70f, 2.40f},{0.35f,0.50f}},
 };
 
 const char* const kPoseNames[POSE_COUNT] = {
     "stand", "look_around", "crouch", "sit", "reach_up", "carry", "blow",
-    "yelp", "lie", "wave", "hands_on_hips", "scratch_head", "hold_mug", "read"};
+    "yelp", "lie", "wave", "hands_on_hips", "scratch_head", "hold_mug", "read", "fish_stand", "fish_sit", "cast"};
 
 BlendKind blendKindFor(PoseId p) {
   switch (p) {
-    case POSE_REACH_UP: case POSE_YELP: case POSE_WAVE: return BLEND_ACTION;
-    case POSE_SIT: case POSE_CROUCH: case POSE_LIE: return BLEND_LAND;
+    case POSE_REACH_UP: case POSE_YELP: case POSE_WAVE: case POSE_CAST: return BLEND_ACTION;
+    case POSE_SIT: case POSE_CROUCH: case POSE_LIE: case POSE_FISH_SIT: return BLEND_LAND;
     default: return BLEND_PLAIN;
   }
 }
@@ -116,7 +125,7 @@ HikerPose mix(const HikerPose& a, const HikerPose& b, float t) {
 }
 
 bool groundPose(PoseId p) {
-  return p == POSE_SIT || p == POSE_LIE || p == POSE_CROUCH || p == POSE_BLOW || p == POSE_READ;
+  return p == POSE_SIT || p == POSE_LIE || p == POSE_CROUCH || p == POSE_BLOW || p == POSE_READ || p == POSE_FISH_SIT;
 }
 
 // Small looping motion layered on a held pose; rate in Hz.
@@ -221,8 +230,8 @@ Prim* push(Prims& ps, PrimKind k, Slot slot) {
 void cap(Prims& ps, Vec2 a, Vec2 b, float w, Slot slot = ACTOR) {
   if (Prim* p = push(ps, PRIM_CAP, slot)) { p->p[0] = a; p->p[1] = b; p->n = 2; p->w = w; }
 }
-void circle(Prims& ps, Vec2 c, float r) {
-  if (Prim* p = push(ps, PRIM_CIRCLE, ACTOR)) { p->p[0] = c; p->n = 1; p->w = r; }
+void circle(Prims& ps, Vec2 c, float r, Slot slot = ACTOR) {
+  if (Prim* p = push(ps, PRIM_CIRCLE, slot)) { p->p[0] = c; p->n = 1; p->w = r; }
 }
 void poly(Prims& ps, const Vec2* pts, int n) {
   if (Prim* p = push(ps, PRIM_POLY, ACTOR)) {
@@ -290,8 +299,51 @@ void buildCarry(Prims& ps, CarryId c, Vec2 hand0, Vec2 hand1, float H, float rim
   }
 }
 
-// Build the figure for the current state into frame-space primitives.
-void build(const Hiker& h, Prims& ps) {
+// The rod in the local frame: from its butt behind the near hand, out along
+// the near forearm plus kRodRel, bowed down at the outer end by rod_bend; the
+// line from the tip to rod_end (given in the local frame) and its float.
+// Returns the tip.
+Vec2 buildRod(const Hiker& h, Prims& ps, Vec2 hand0, float forearm, Vec2 end_local) {
+  const float H = h.height;
+  const float a = forearm + kRodRel + h.rod_tilt;
+  const Vec2 d = dirA(a);
+  const float L = h.rod_len * H;
+  const Vec2 butt = sub(hand0, mul(d, kRodButt * H));
+  const Slot slot = h.rod_stick ? TRUNK : ACTOR;
+  const float w = maxf((h.rod_stick ? kStickW : kRodW) * H, h.rod_stick ? 2.f : 1.2f);
+  // Inner part straight to the knee of the bow; the outer part turned down.
+  const Vec2 knee = add(hand0, mul(d, (1.f - kRodOuter) * L));
+  // A stick has a kink a little way out whether or not anything pulls on it.
+  const float bow = kRodBow * h.rod_bend + (h.rod_stick ? 0.22f : 0.f);
+  const Vec2 tip = add(knee, mul(dirA(a - bow), kRodOuter * L));
+  // Straight, it is one capsule. Bowed (or a stick) it is two, and then no
+  // float is drawn: a bowed rod has something on the line that pulled the
+  // float under, and a stick has a bare string. That keeps the rig at 22
+  // primitives at most.
+  const bool bowed = bow > 0.f;
+  if (bowed) {
+    cap(ps, butt, knee, w, slot);
+    cap(ps, knee, tip, h.rod_stick ? w : maxf(0.8f * w, 1.f), slot);
+  } else {
+    cap(ps, butt, tip, w, slot);
+  }
+  if (h.rod_line) {
+    cap(ps, tip, end_local, kLineW, ACTOR);
+    if (h.rod_float && !bowed) circle(ps, end_local, kFloatR, FIRE);
+  }
+  return tip;
+}
+
+// Build the figure for the current state into frame-space primitives (and
+// the rod tip, frame space, if asked).
+// Where the fire-side rim looks for the silhouette's edge (frame space).
+struct RimAxis {
+  int side;            // screen direction toward the fire: -1 left, +1 right, 0 no fire
+  Vec2 hip, chest, head;
+  float head_r, reach, width;
+};
+
+void build(const Hiker& h, Prims& ps, Vec2* rod_tip = nullptr, RimAxis* rim_out = nullptr) {
   ps.n = 0;
   const float H = h.height;
   const HikerPose& P = h.pose;
@@ -304,7 +356,6 @@ void build(const Hiker& h, Prims& ps) {
   const float lt = P.lean * kInvTwoPi;
   const Vec2 up{sinT(lt), -cosT(lt)};
   const Vec2 bk{-cosT(lt), -sinT(lt)};   // behind the spine
-  const Vec2 fw{-bk.x, -bk.y};
   const Vec2 chest = add(hip, mul(up, kTorsoTop * H + breath));
   const Vec2 shoulder = add(hip, mul(up, kShoulder * H + breath));
   const Vec2 neck = add(hip, mul(up, kNeck * H + breath));
@@ -357,31 +408,13 @@ void build(const Hiker& h, Prims& ps) {
     circle(ps, add(hip, add(mul(bk, kRollB * H), mul(up, kRollU * H + breath + bob))), kRollR * H);
   }
   cap(ps, hip, chest, kTorsoW * H);
-  if (lit != 0) {
-    if (lit < 0 && h.pack_on) {   // the pack is the fire-facing edge when lit from behind
-      const float b = kPackBack * H - 0.5f * rim;
-      const Vec2 base = add(hip, mul(bk, b));
-      cap(ps, add(base, mul(up, kPackRim0 * H + breath + bob)), add(base, mul(up, kPackRim1 * H + breath + bob)), rim,
-          ACTOR_LIGHT);
-    } else {
-      const Vec2 side = mul(lit > 0 ? fw : bk, torsoR - 0.5f * rim);
-      cap(ps, add(add(hip, mul(up, 0.03f * H)), side), add(chest, side), rim, ACTOR_LIGHT);
-    }
-  }
   cap(ps, hip, knee[0], kThighW * H);
   cap(ps, knee[0], ankle[0], kShinW * H);
   cap(ps, heel[0], toe[0], kFootW * H);
   circle(ps, head, headR);
-  if (lit != 0) {   // chord on the lit side of the head; the brim covers its top
-    const Vec2 side = lit > 0 ? hf : Vec2{-hf.x, -hf.y};
-    const float rr = headR - 0.5f * rim - 0.15f;
-    const float ca = 0.9f, sa = 0.43f;   // +-25 degrees around the side
-    cap(ps, add(head, mul(add(mul(side, ca), mul(hu, sa)), rr)), add(head, mul(sub(mul(side, ca), mul(hu, sa)), rr)),
-        rim, ACTOR_LIGHT);
-  }
   const Vec2 brim = add(head, mul(hu, kBrimUp * H));
-  cap(ps, sub(brim, mul(hf, kBrimBack * H)), add(brim, mul(hf, kBrimFront * H)), kBrimW * H);
-  {
+  if (h.hat_on) cap(ps, sub(brim, mul(hf, kBrimBack * H)), add(brim, mul(hf, kBrimFront * H)), kBrimW * H);
+  if (h.hat_on) {
     const Vec2 b0 = add(brim, mul(hu, 0.01f * H));
     const Vec2 t0 = add(b0, mul(hu, kCrownH * H));
     const Vec2 crown[5] = {sub(b0, mul(hf, kCrownBase * H)), add(b0, mul(hf, kCrownBase * H)),
@@ -396,6 +429,24 @@ void build(const Hiker& h, Prims& ps) {
   // To frame space: ground, then mirror about feet.x for facing -1.
   const float sx = h.facing < 0 ? -1.f : 1.f;
   const float oy = h.feet.y + shift;
+  Vec2 tip = hand[0];
+  if (h.carry == CARRY_ROD) {
+    const Vec2 end_local{sx * (h.rod_end.x - h.feet.x), h.rod_end.y - oy};
+    tip = buildRod(h, ps, hand[0], P.shoulder[0] + P.elbow[0], end_local);
+  }
+  if (rod_tip) *rod_tip = Vec2{h.feet.x + sx * tip.x, oy + tip.y};
+  if (rim_out) {   // the fire-side rim's guide: the body's axis in frame space (see rimPass)
+    RimAxis& r = *rim_out;
+    r.side = h.lit_from < 0 ? -1 : (h.lit_from > 0 ? 1 : 0);
+    r.hip = Vec2{h.feet.x + sx * hip.x, oy + hip.y + 0.04f * H};
+    r.chest = Vec2{h.feet.x + sx * chest.x, oy + chest.y};
+    r.head = Vec2{h.feet.x + sx * head.x, oy + head.y};
+    r.head_r = headR;
+    // From the axis to the lit edge: the torso's half width, or through the
+    // pack when it is his back that faces the fire.
+    r.reach = (lit < 0 && h.pack_on ? kPackBack * H : torsoR) + 2.5f;
+    r.width = rim;
+  }
   for (int k = 0; k < ps.n; ++k) {
     Prim& p = ps.v[k];
     for (int i = 0; i < p.n; ++i) {
@@ -433,6 +484,11 @@ void hikerInit(Hiker& h, Vec2 feet, int facing) {
   h.visible = true;
   h.pack_on = true;
   h.lit_from = 0;
+  h.hat_on = true;
+  h.rod_len = 0.75f;
+  h.rod_bend = h.rod_tilt = 0.f;
+  h.rod_stick = h.rod_line = h.rod_float = false;
+  h.rod_end = feet;
   h.pose = kPoses[POSE_STAND];
   h.from = h.pose;
   h.target = POSE_STAND;
@@ -558,11 +614,72 @@ Rect hikerBounds(const Hiker& h) {
   return Rect{(int)floorf(bx0) - 2, (int)floorf(by0) - 2, (int)ceilf(bx1) + 2, (int)ceilf(by1) + 2};
 }
 
+// The fire-side rim (ACTOR_LIGHT), drawn on the pixels the figure has just
+// put down: on each row of the head (below the brim) and the torso, walk from
+// the body's axis toward the fire through the silhouette; where it ends
+// within reach, that is the edge facing the fire, and its last pixel (and
+// half the one inside it) lights up. Rows where an arm, a knee or the hat
+// brim stands out past the body are left dark: the lit edge there is not the
+// torso's. Row by row, so a strip draws exactly what a full frame does.
+// Solid figure: the ACTOR fill, or an edge pixel all but covered (so a
+// coverage step either way of the mirror does not move the edge).
+inline bool solid(Pixel p, Pixel a) {
+  const int dr = (int)(p >> 11) - (int)(a >> 11), dg = (int)((p >> 5) & 63) - (int)((a >> 5) & 63);
+  const int db = (int)(p & 31) - (int)(a & 31);
+  return dr * dr <= 1 && dg * dg <= 4 && db * db <= 1;
+}
+
+void rimPass(const RimAxis& r, Surface& s, const Palette& pal, const Rect& clip) {
+  if (r.side == 0) return;
+  const Pixel A = pal[ACTOR], L = pal[ACTOR_LIGHT];
+  if (A == L) return;
+  const Pixel half = lerp565(A, L, (uint8_t)(r.width >= 1.5f ? 200 : 120));
+  const int top = (int)ceilf(r.head.y - 0.15f * r.head_r);   // under the brim
+  const int bot = (int)floorf(r.hip.y);
+  const int y0 = top > clip.y0 ? top : clip.y0, y1 = bot < clip.y1 ? bot : clip.y1;
+  for (int y = y0; y < y1; ++y) {
+    const float fy = (float)y + 0.5f;
+    float ax, reach;
+    if (fy <= r.head.y + r.head_r) {
+      ax = r.head.x;
+      reach = r.head_r + 2.5f;
+    } else if (fy < r.chest.y) {   // the neck: from the head down to the chest
+      const float t = (fy - r.head.y) / maxf(1.f, r.chest.y - r.head.y);
+      ax = r.head.x + (r.chest.x - r.head.x) * t;
+      reach = r.reach;
+    } else {
+      const float t = (fy - r.chest.y) / maxf(1.f, r.hip.y - r.chest.y);
+      ax = r.chest.x + (r.hip.x - r.chest.x) * t;
+      reach = r.reach;
+    }
+    // The pixel at the axis on the far side from the fire (so it mirrors exactly).
+    const int x = r.side > 0 ? (int)ceilf(ax) - 1 : (int)floorf(ax);
+    if (x < clip.x0 || x >= clip.x1) continue;
+    Pixel* row = s.row(y);
+    if (!solid(row[x], A)) continue;
+    const int n = (int)ceilf(reach);
+    int edge = -1;
+    for (int d = 1; d <= n; ++d) {
+      const int xx = x + r.side * d;
+      if (xx < clip.x0 || xx >= clip.x1) break;
+      if (!solid(row[xx], A)) {
+        edge = xx - r.side;
+        break;
+      }
+    }
+    if (edge < 0 || edge == x) continue;
+    row[edge] = L;
+    const int in = edge - r.side;
+    if (in != x) row[in] = half;
+  }
+}
+
 void hikerDraw(const Hiker& h, Surface& s, const Palette& pal, const Rect& clip) {
   g_last_prims = 0;
   if (!h.visible) return;
   Prims ps;
-  build(h, ps);
+  RimAxis rim;
+  build(h, ps, nullptr, &rim);
   for (int k = 0; k < ps.n; ++k) {
     const Prim& p = ps.v[k];
     float x0, y0, x1, y1;
@@ -576,6 +693,7 @@ void hikerDraw(const Hiker& h, Surface& s, const Palette& pal, const Rect& clip)
     }
     ++g_last_prims;
   }
+  rimPass(rim, s, pal, clip);
 }
 
 // Same kinematics and grounding as build(), without the primitive list.
@@ -643,6 +761,14 @@ Vec2 hikerHeadPos(const Hiker& h, float* radius) {
   if (radius) *radius = kHeadR * H;
   const float sx = h.facing < 0 ? -1.f : 1.f;
   return Vec2{h.feet.x + sx * head.x, h.feet.y - low - P.lift * H + head.y};
+}
+
+Vec2 hikerRodTip(const Hiker& h) {
+  if (h.carry != CARRY_ROD) return hikerHandPos(h, 0);
+  Prims ps;
+  Vec2 tip;
+  build(h, ps, &tip);
+  return tip;
 }
 
 const HikerPose& hikerPoseDef(PoseId p) { return kPoses[p < POSE_COUNT ? p : POSE_STAND]; }

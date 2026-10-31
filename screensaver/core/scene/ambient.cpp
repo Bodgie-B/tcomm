@@ -288,8 +288,8 @@ Rect ambientBirdBounds(const World& w) {
 }
 
 Rect ambientSmokeBounds(const World& w, int i) {
-  Vec2 c;
-  float r;
+  Vec2 c{0.f, 0.f};
+  float r = 0.f;
   if (!smokeGeom(w, i, c, r)) return kEmpty;
   return boundsOf(c.x - r - 2.f, c.y - r - 2.f, c.x + r + 2.f, c.y + r + 2.f);
 }
@@ -340,8 +340,8 @@ void ambientDrawBird(const World& w, Surface& s, const Rect& clip, const Palette
 void ambientDrawSmoke(const World& w, Surface& s, const Rect& clip, const Palette& pal) {
   for (int i = 0; i < AMB_SMOKE_MAX; ++i) {
     if (!overlaps(ambientSmokeBounds(w, i), clip)) continue;
-    Vec2 c;
-    float r;
+    Vec2 c{0.f, 0.f};
+    float r = 0.f;
     smokeGeom(w, i, c, r);
     fillEllipse(s, c, r, r * 0.85f, pal[SMOKE], clip);
   }

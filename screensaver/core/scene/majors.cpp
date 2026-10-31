@@ -134,6 +134,9 @@ float shapeReach(uint8_t sh) {
     case SH_CONE: return 5.5f;
     case SH_RABBIT: case SH_BIRD: case SH_DOG: return 20.f;
     case SH_BEAR: return 21.f;
+    case SH_ROD: return 0.5f * kItemRodLen + 3.f;
+    case SH_LOG: return 23.f;
+    case SH_DEADFISH: return 11.f;
     default: return 12.f;
   }
 }
@@ -327,6 +330,34 @@ void drawShape(const Glyph& g, Surface& s, const Rect& clip, const Palette& pal)
       polyX(s, X, ear, 3, c, clip);
       break;
     }
+    case SH_ROD: {      // end over end: a thin line with its reel, or the stick
+      const float h = 0.5f * kItemRodLen;
+      if (g.k > 0.5f) {
+        capX(s, X, -h, 0.f, h, 0.f, 2.6f, pal[TRUNK], clip);
+      } else {
+        capX(s, X, -h, 0.f, h, 0.f, 1.6f, c, clip);
+        fillCircle(s, X(-0.72f * h, 0.f), 2.f * g.scale, c, clip);
+      }
+      break;
+    }
+    case SH_LOG: {      // afloat: the log, a stub of a branch, the cut end
+      capX(s, X, -20.f, 0.f, 20.f, 0.f, 7.f, pal[TRUNK], clip);
+      capX(s, X, 5.f, -2.f, 10.f, -8.f, 2.2f, pal[TRUNK], clip);
+      fillCircle(s, X(-19.f, 0.f), 2.3f * g.scale, pal[GROUND_DARK], clip);
+      break;
+    }
+    case SH_DEADFISH: { // belly up: the fish upside down, a pale belly line on top, an x for an eye
+      static const float body[8][2] = {{6.5f, 0.f},  {4.5f, 2.2f}, {0.f, 2.8f}, {-4.f, 1.8f},
+                                       {-5.5f, 0.f}, {-4.f, -1.6f}, {0.f, -2.5f}, {4.5f, -2.f}};
+      static const float tail[3][2] = {{-4.8f, 0.f}, {-9.5f, 3.6f}, {-9.f, -3.6f}};
+      polyX(s, X, body, 8, c, clip);
+      polyX(s, X, tail, 3, c, clip);
+      const Pixel lt = pal[ACTOR_LIGHT];
+      capX(s, X, -3.6f, -1.6f, 3.6f, -1.4f, 1.3f, lt, clip);
+      capX(s, X, 3.6f, -0.4f, 5.4f, 1.3f, 1.0f, lt, clip);
+      capX(s, X, 3.6f, 1.3f, 5.4f, -0.4f, 1.0f, lt, clip);
+      break;
+    }
     case SH_BEAR: {     // round head, two round ears, a snout; the jaw opens by k (a roar)
       drawForearm(s, X, c, clip);
       fillCircle(s, X(0.f, 0.f), 6.f * g.scale, c, clip);
@@ -482,6 +513,12 @@ bool notSeated(const World& w) {
 // ---- the hiker's actions ------------------------------------------------------------------
 
 float env(float u, float a, float b) { return scriptEnvelope(u, a, b); }
+// s: 0 -> 1 over [c, c + up], held for `hold`, back to 0 over `up`.
+float plateauM(float s, float c, float up, float hold) {
+  return easeInOut(window(s, c, c + up)) * (1.f - easeInOut(window(s, c + up + hold, c + 2.f * up + hold)));
+}
+// u passed `at` since `prev` (a one-shot inside an action or a tick).
+inline bool crossed(float u, float prev, float at) { return prev < at && u >= at; }
 
 // Laughing: three bounces of the shoulders, head thrown back, a hand slapping his knee.
 void actLaugh(World& w, float u) {
@@ -2038,6 +2075,1359 @@ const Step kStars7[] = {STARGAZE_STEPS(7)};
 const Step kStars8[] = {STARGAZE_STEPS(8)};
 
 #undef STARGAZE_STEPS
+
+// ---- 13 to 16. the stream vignettes (Mike's idea) -------------------------------------------
+// fishing_small, fishing_log, fishing_good and bathe (and the birds_on_water
+// filler, further down). Shared: the stream as a path (the log and the dead
+// fish drift along it as the ambient glints do), the fishing spot on the bank
+// below the camp, the rod and its line, rings, and drops.
+
+// The stream's centreline parameter (point index) where it crosses x.
+float streamParamAt(const World& w, float x) {
+  const Landscape& ls = w.land;
+  for (int i = 0; i + 1 < LS_STREAM_PTS; ++i) {
+    const LsStreamPt& a = ls.stream[i];
+    const LsStreamPt& b = ls.stream[i + 1];
+    if (x <= a.x && x >= b.x) return (float)i + (a.x > b.x ? (a.x - x) / (a.x - b.x) : 0.f);
+  }
+  return x > ls.stream[0].x ? 0.f : (float)(LS_STREAM_PTS - 1);
+}
+// A point on the stream at s, `lane` half widths toward the camp bank (+) or the near bank (-).
+Vec2 streamPoint(const World& w, float s, float lane) {
+  const LsStreamPt q = landscapeStreamAt(w.land, s);
+  return Vec2{q.x + q.nx * lane * q.hw, q.y + q.ny * lane * q.hw};
+}
+// The way the water runs at s (downstream, toward -x), as a unit vector.
+Vec2 streamDir(const World& w, float s) {
+  const LsStreamPt a = landscapeStreamAt(w.land, s - 0.05f), b = landscapeStreamAt(w.land, s + 0.05f);
+  const float l = maxf(1e-3f, dist(Vec2{a.x, a.y}, Vec2{b.x, b.y}));
+  return Vec2{(b.x - a.x) / l, (b.y - a.y) / l};
+}
+// s carried downstream at px_per_s for dt.
+float streamOn(const World& w, float s, float px_per_s, float dt) {
+  const LsStreamPt a = landscapeStreamAt(w.land, s), b = landscapeStreamAt(w.land, s + 0.05f);
+  const float seg = maxf(20.f, dist(Vec2{a.x, a.y}, Vec2{b.x, b.y}) / 0.05f);
+  return s + px_per_s * dt / seg;
+}
+// Turns for a shape whose nose (+x, `facing` mirrored) points along d.
+float turnsAlong(Vec2 d, int facing) {
+  return facing < 0 ? atan2f(-d.y, -d.x) / (2.f * kPi) : atan2f(d.y, d.x) / (2.f * kPi);
+}
+// The water's waterline y at x (the centreline, and its half width), or `fallback`.
+float waterMidY(const World& w, float x, float fallback) {
+  float cy, half;
+  return landscapeStreamSpan(w.land, x, cy, half) ? cy : fallback;
+}
+
+// Rings age out; drops (GL_DOT with k 1, velocity in q) fall and stop at base_y;
+// a flying bit (GL_DOT with k 2, from q to the mode's target) is moved by its owner.
+void ageGlyphs(World& w, float dt) {
+  for (Glyph& g : M(w).g) {
+    if (g.kind == GL_RING) {
+      g.t += dt;
+      if (g.t >= kRingLife) g.kind = GL_NONE;
+    } else if (g.kind == GL_DOT && g.k > 0.5f && g.k < 1.5f) {
+      g.q.y += 520.f * dt;
+      g.pos.x += g.q.x * dt;
+      g.pos.y += g.q.y * dt;
+      if (g.pos.y >= (float)g.base_y) g.kind = GL_NONE;
+    }
+  }
+}
+void dropAt(World& w, Vec2 p, Vec2 v, float ground) {
+  if (Glyph* g = glyphNew(w, GL_DOT, p, (int)ground)) {
+    g->slot = WATER_LIGHT;
+    g->scale = 0.95f;
+    g->q = v;
+    g->k = 1.f;
+  }
+}
+// A drip off him: from somewhere on his body (a repeatable spread), down to his feet.
+void dripFrom(World& w, uint32_t n) {
+  const Hiker& h = w.hiker;
+  if (!h.visible) return;
+  const float a = hash01(n, 7u), b = hash01(n, 11u);
+  const Vec2 p{h.feet.x + (a - 0.5f) * 16.f, h.feet.y - h.height * (0.25f + 0.4f * b)};
+  dropAt(w, p, Vec2{(a - 0.5f) * 14.f, 6.f}, h.feet.y + 2.f);
+}
+
+// The line's states (MajorState::mode, seconds in it: mt).
+enum LineMode : uint8_t {
+  LN_NONE = 0,   // reeled in (no line drawn)
+  LN_CAST,       // the float flying out (an action moves it)
+  LN_FLOAT,      // the float resting on the water, bobbing (u0: how far it is pulled under)
+  LN_FISH,       // a tiny fish dangling under the tip
+  LN_FLICK,      // the tiny fish thrown back, the line in
+  LN_THROWN,     // the rod itself flying across the stream
+  LN_LOG,        // snagged on the log
+  LN_HOOKED,     // a proper fish on, under the water at v0
+  LN_LANDED,     // the fish out on the bank, flopping (the line in, the rod down)
+  LN_HELD,       // the fish in his hands
+  LN_ROCK,       // the fish on the flat rock
+  LN_DRIP        // (fishing_log) he is back, dripping
+};
+
+void lineTo(World& w, uint8_t mode) {
+  MajorState& m = M(w);
+  m.mode = mode;
+  m.mt = 0.f;
+}
+
+// Where he fishes: on the bank below the camp, a little left of where he
+// cooled his hand, facing upstream (right). The float rests on the water
+// ahead of him in the camp-side half of the stream; a thrown rod lands on the
+// near bank beyond it.
+void fishingSpot(World& w) {
+  MajorState& m = M(w);
+  const Vec2 F = w.fire.pos;
+  const float x = F.x + 76.f;
+  float cy, half;
+  m.p[0] = landscapeStreamSpan(w.land, x, cy, half) ? Vec2{x, cy - half - 1.f} : Vec2{x, F.y + 12.f};
+  const float fx = x + 74.f;
+  m.p[1] = landscapeStreamSpan(w.land, fx, cy, half) ? Vec2{fx, cy - 0.3f * half} : Vec2{fx, m.p[0].y + 16.f};
+  const float tx = x + 160.f;
+  m.p[2] = landscapeStreamSpan(w.land, tx, cy, half) ? Vec2{tx, minf(470.f, cy + half + 13.f)} : Vec2{tx, 462.f};
+}
+
+bool rodIsStick(const World& w) { return M(w).stick; }
+bool rodIsRod(const World& w) { return !M(w).stick; }
+bool tentUp(const World& w) { return w.tent.state == TENT_UP; }
+bool tentNotUp(const World& w) { return w.tent.state != TENT_UP; }
+
+void beginFishing(World& w) {
+  MajorState& m = M(w);
+  fishingSpot(w);
+  // The rod went last loop (memory): a stick off the wood pile instead.
+  m.stick = w.memory.rod_lost;
+  w.memory.rod_lost = false;
+  lineTo(w, LN_NONE);
+  m.u0 = 0.f;
+}
+
+// The stick off the wood pile, string already on it.
+void doTakeStick(World& w, float) {
+  Hiker& h = w.hiker;
+  hikerCarry(h, CARRY_ROD);
+  h.rod_stick = true;
+  h.rod_len = 0.6f;
+  h.rod_bend = h.rod_tilt = 0.f;
+  h.rod_line = h.rod_float = false;
+}
+// Digs the rod out of the pack, telescoped short.
+void actRodOut(World& w, float u) {
+  const float e = env(u, 0.15f, 0.15f);
+  w.fx.lean = e * (0.12f + 0.06f * sinT(u * 3.f));
+  w.fx.reach_to = 0.9f;
+  w.fx.reach = e * (0.5f + 0.3f * sinT(u * 4.f + 0.25f));
+  if (u >= 0.7f && w.hiker.carry != CARRY_ROD) {
+    Hiker& h = w.hiker;
+    hikerCarry(h, CARRY_ROD);
+    h.rod_stick = false;
+    h.rod_len = 0.28f;
+    h.rod_bend = h.rod_tilt = 0.f;
+    h.rod_line = h.rod_float = false;
+  }
+  if (u >= 1.f) scriptFxRest(w);
+}
+// Two quick pulls and the rod is out to full length.
+void actExtend(World& w, float u) {
+  Hiker& h = w.hiker;
+  const float p1 = plateauM(u, 0.1f, 0.12f, 0.08f), p2 = plateauM(u, 0.5f, 0.12f, 0.08f);
+  scriptSetArm(w, 1, maxf(p1, p2), 0.1f, 0.4f);   // the far hand pulls the sections out
+  h.rod_tilt = 0.1f * (p1 + p2);
+  h.rod_len = u < 0.2f ? 0.28f : (u < 0.6f ? 0.52f : 0.75f);
+  if (u >= 1.f) {
+    h.rod_tilt = 0.f;
+    scriptFxRest(w);
+  }
+}
+
+// The cast: from POSE_CAST (rod back) he whips it forward; the float flies
+// out from the tip and lands with a ring.
+void actCastOut(World& w, float u) {
+  Hiker& h = w.hiker;
+  MajorState& m = M(w);
+  if (u <= 0.f) {
+    scriptSetPose(w, POSE_FISH_STAND, 0.22f);
+    h.rod_tilt = 0.f;
+    h.rod_bend = 0.f;
+    h.rod_line = true;
+    h.rod_float = true;
+    m.v0 = hikerRodTip(h);
+    lineTo(w, LN_CAST);
+    m.u0 = 0.f;
+  }
+  if (m.mode == LN_CAST) {
+    const float k = window(u, 0.08f, 0.7f);
+    h.rod_end = lob(m.v0, m.p[1], 34.f, easeOutCubic(k));
+    if (k >= 1.f) {
+      ringAt(w, m.p[1], 0.6f);
+      lineTo(w, LN_FLOAT);
+    }
+  }
+}
+#define CAST pose(POSE_CAST, 0.6f, 0.15f), act(actCastOut, 1.0f)
+
+// The float bobs twice and goes under (u0 how far down, px).
+void actNibble(World& w, float u) {
+  MajorState& m = M(w);
+  const float d1 = plateauM(u, 0.1f, 0.06f, 0.08f), d2 = plateauM(u, 0.42f, 0.06f, 0.08f);
+  const float under = easeInOut(window(u, 0.78f, 0.9f));
+  m.u0 = maxf(2.f * maxf(d1, d2), 4.5f * under);
+  if (crossed(u, m.u1, 0.12f) || crossed(u, m.u1, 0.44f)) ringAt(w, m.p[1], 0.35f);
+  if (crossed(u, m.u1, 0.8f)) ringAt(w, m.p[1], 0.5f);
+  m.u1 = u >= 1.f ? 0.f : u;
+}
+
+// A tiny fish (about 3 px tall) comes up on the line.
+Glyph* tinyFish(World& w) {
+  for (Glyph& g : M(w).g)
+    if (g.kind == GL_SHAPE && g.shape == SH_FISH) return &g;
+  return nullptr;
+}
+
+// The yank: the tip goes up hard (harder each time: p), he rocks back and
+// his shoulders come up; out comes the tiny fish.
+void yank(World& w, float u, float p) {
+  Hiker& h = w.hiker;
+  MajorState& m = M(w);
+  const float up = easeOutCubic(window(u, 0.f, 0.28f));
+  h.rod_tilt = (0.3f + 0.22f * p) * up;
+  const float jolt = sinT(0.5f * window(u, 0.f, 0.55f));
+  w.fx.lean = -0.07f * p * jolt;
+  w.fx.lift = 0.006f * p * p * jolt;
+  w.fx.head = -0.12f * p * jolt;
+  scriptSetArm(w, 1, 0.5f * jolt, 0.9f + 0.3f * p, 0.8f);   // the far hand comes up with it
+  if (u >= 0.12f && m.mode == LN_FLOAT) {
+    lineTo(w, LN_FISH);
+    m.v0 = h.rod_end;
+    ringAt(w, m.p[1], 0.7f);
+    if (Glyph* g = glyphNew(w, GL_SHAPE, m.p[1], (int)h.feet.y + 2)) {
+      g->shape = SH_FISH;
+      g->scale = 0.5f;
+      g->rot = 0.25f;
+    }
+  }
+  if (u >= 1.f) scriptFxRest(w);
+}
+void actYank1(World& w, float u) { yank(w, u, 1.f); }
+void actYank2(World& w, float u) { yank(w, u, 1.6f); }
+void actYank3(World& w, float u) { yank(w, u, 2.4f); }
+
+// He lowers the rod toward him and has a long look at what is on it.
+void actLookTiny(World& w, float u) {
+  Hiker& h = w.hiker;
+  const float e = env(u, 0.25f, 0.2f);
+  h.rod_tilt = lerp(h.rod_tilt, 0.15f, 0.08f);
+  w.fx.head = -0.3f * e;
+  w.fx.lean = 0.07f * e;
+  if (u >= 1.f) scriptFxRest(w);
+}
+// A flick of the tip and the tiny fish goes back in; the line comes in.
+void actFlick(World& w, float u) {
+  Hiker& h = w.hiker;
+  MajorState& m = M(w);
+  h.rod_tilt = lerp(0.15f, -0.2f, easeOutCubic(window(u, 0.15f, 0.35f))) * (1.f - easeInOut(window(u, 0.5f, 1.f)));
+  if (u >= 0.3f && m.mode == LN_FISH) {
+    lineTo(w, LN_FLICK);
+    h.rod_line = false;
+    if (Glyph* g = tinyFish(w)) m.v0 = g->pos;
+  }
+  if (u >= 1.f) h.rod_tilt = 0.f;
+}
+
+// The third one: the rod goes back over his shoulder (POSE_CAST), and he
+// hurls it, end over end, across the stream.
+void actHurl(World& w, float u) {
+  Hiker& h = w.hiker;
+  MajorState& m = M(w);
+  if (u <= 0.f) {
+    const Vec2 tip = hikerRodTip(h), hand = hikerHandPos(h, 0);
+    if (Glyph* g = glyphNew(w, GL_SHAPE, mixV(hand, tip, 0.45f), (int)h.feet.y + 1)) {
+      g->shape = SH_ROD;
+      g->k = m.stick ? 1.f : 0.f;
+      g->facing = 1;
+      g->rot = turnsAlong(Vec2{tip.x - hand.x, tip.y - hand.y}, 1);
+      m.v0 = g->pos;
+      m.u1 = g->rot;
+    }
+    // The third tiny fish drops off the line, back into the water.
+    if (Glyph* f = tinyFish(w)) {
+      f->k = 3.f;
+      f->q = f->pos;
+      f->t = 0.f;
+    }
+    hikerCarry(h, CARRY_NONE);
+    h.rod_line = h.rod_float = false;
+    h.rod_tilt = h.rod_bend = 0.f;
+    lineTo(w, LN_THROWN);
+    w.memory.rod_lost = true;   // next loop he fishes with a stick
+    scriptSetPose(w, POSE_STAND, 0.25f);
+  }
+  // Both arms flung forward and up, then down.
+  const float e = easeOutCubic(window(u, 0.f, 0.2f)) * (1.f - easeInOut(window(u, 0.55f, 1.f)));
+  scriptSetArm(w, 0, e, 2.0f, 0.15f);
+  scriptSetArm(w, 1, e, 1.8f, 0.25f);
+  w.fx.lean = 0.14f * e;
+  if (u >= 1.f) scriptFxRest(w);
+}
+constexpr float kRodFlightS = 1.4f;
+
+// Storming off, and the tent.
+void doStomp(World& w, float) { w.fx.stomp = 1.f; }
+void doStompOff(World& w, float) { w.fx.stomp = 0.f; }
+void doIntoTent(World& w, float) {
+  w.fx.on = false;
+  w.fx.path_on = false;
+  scriptSetPose(w, POSE_STAND, 0.f);
+}
+// Once, hard: the tent jolts, swings back and settles.
+void actTentShake(World& w, float u) {
+  const float t = u * 1.6f;
+  const float a = t < 0.15f ? 0.f : 5.f * expf(-3.2f * (t - 0.15f)) * sinT(1.8f * (t - 0.15f));
+  w.tent.wobble = floorf(a + 0.5f);
+  if (u >= 1.f) w.tent.wobble = 0.f;
+}
+void doOutOfTent(World& w, float) {
+  Hiker& h = w.hiker;
+  h.feet = w.spine.camp.door;
+  h.facing = 1;
+  scriptSetPose(w, POSE_CROUCH, 0.f);
+  w.fx.on = true;
+  w.fx.path_on = false;
+}
+// A long breath out: shoulders and head drop, and come back up.
+void actSighM(World& w, float u) {
+  const float s = sinT(0.5f * u);
+  w.fx.lean = 0.1f * s;
+  w.fx.head = 0.3f * s;
+  if (u >= 1.f) scriptFxRest(w);
+}
+
+// The tick the three fishing majors share: the float, the tiny fish, the rod in flight.
+void tickLine(World& w, float dt) {
+  MajorState& m = M(w);
+  Hiker& h = w.hiker;
+  m.mt += dt;
+  ageGlyphs(w, dt);
+  if (Glyph* f = tinyFish(w)) {   // let go of (k 3): falls back into the water
+    if (f->k > 2.5f) {
+      f->t += dt;
+      const float u = minf(1.f, f->t / 0.8f);
+      const Vec2 to{m.p[1].x - 6.f, m.p[1].y + 1.f};
+      f->pos = lob(f->q, to, 12.f, u);
+      f->rot = 0.25f + 0.8f * u;
+      if (u >= 1.f) {
+        ringAt(w, to, 0.45f);
+        f->kind = GL_NONE;
+      }
+    }
+  }
+  switch (m.mode) {
+    case LN_FLOAT: {
+      const float bob = 0.7f * sinT(m.t * 0.55f);
+      h.rod_end = Vec2{m.p[1].x, m.p[1].y + bob + m.u0};
+      h.rod_float = m.u0 < 4.f;   // pulled under
+      break;
+    }
+    case LN_FISH: {   // swinging under the tip
+      const Vec2 tip = hikerRodTip(h);
+      const float sw = 3.f * sinT(m.mt * 1.3f) * expf(-0.6f * m.mt);
+      const Vec2 hang{tip.x + sw, tip.y + 15.f};
+      h.rod_end = m.mt < 0.25f ? mixV(m.v0, hang, easeOutCubic(m.mt / 0.25f)) : hang;
+      h.rod_float = false;
+      if (Glyph* g = tinyFish(w)) {
+        g->pos = Vec2{h.rod_end.x, h.rod_end.y + 2.f};
+        g->rot = 0.25f + 0.03f * sinT(m.mt * 2.6f);
+        g->facing = 1;
+        g->base_y = (int16_t)(h.feet.y + 2.f);
+      }
+      break;
+    }
+    case LN_FLICK: {
+      Glyph* g = tinyFish(w);
+      if (!g) break;
+      const float u = minf(1.f, m.mt / 0.7f);
+      const Vec2 to{m.p[1].x + 10.f, m.p[1].y + 2.f};
+      g->pos = lob(m.v0, to, 16.f, u);
+      g->rot = 0.25f + 0.6f * u;
+      if (u >= 1.f) {
+        ringAt(w, to, 0.45f);
+        g->kind = GL_NONE;
+        lineTo(w, LN_NONE);
+      }
+      break;
+    }
+    case LN_THROWN: {
+      Glyph* g = nullptr;
+      for (Glyph& x : m.g)
+        if (x.kind == GL_SHAPE && x.shape == SH_ROD) g = &x;
+      if (!g) break;
+      const float u = minf(1.f, m.mt / kRodFlightS);
+      g->pos = lob(m.v0, m.p[2], 70.f, u);
+      g->rot = m.u1 - 2.25f * u;     // end over end
+      g->base_y = (int16_t)lerp(h.feet.y + 1.f, m.p[2].y, u);
+      if (u >= 1.f) {   // down on the near bank, where it stays
+        g->kind = GL_NONE;
+        Item& r = w.items[ITEM_ROD];
+        r = Item{m.p[2], true, false, 1, 1.f, m.p[2].y, false, 0, 0.02f, 0.f, 1.f, false};
+        r.alt = m.stick;
+        const int s = worldTakeBit(w, BIT_DUST);
+        if (s >= 0) {
+          Bit& b = w.bits[s];
+          b.pos = Vec2{m.p[2].x - 14.f, m.p[2].y - 2.f};
+          b.land_y = m.p[2].y;
+        }
+        lineTo(w, LN_NONE);
+      }
+      break;
+    }
+    default: break;
+  }
+}
+
+// ---- 13. fishing_small ----------------------------------------------------------------------
+// Three tiny fish, each yank bigger; he hurls the rod across the stream and
+// storms off to the tent (it shakes once). Memory: the rod is lost.
+
+void tickFishSmall(World& w, float dt) { tickLine(w, dt); }
+
+// Fetch the rod (or a stick), carry it up, out to the bank, rod out.
+#define GET_ROD                                                                                               \
+  skipUnless(rodIsStick, 5), go(AT_WOOD_WORK, kStroll), face(RIGHT), pose(POSE_CROUCH, 0.6f, 0.4f),          \
+      doit(doTakeStick), pose(POSE_CARRY, 0.5f, 0.1f), skipUnless(rodIsRod, 5), go(AT_PACK_WORK, kStroll),    \
+      face(LEFT), pose(POSE_CROUCH, 0.6f, 0.3f), act(actRodOut, 1.4f), pose(POSE_CARRY, 0.5f, 0.1f),          \
+      go(AT_M0, kStroll), face(RIGHT), pose(POSE_FISH_STAND, 0.6f, 0.3f), skipUnless(rodIsRod, 1),           \
+      act(actExtend, 1.1f)
+
+const Step kFishSmall[] = {
+    FROM_REST,
+    GET_ROD,
+    // One.
+    CAST, still(3.0f), act(actNibble, 1.1f), act(actYank1, 0.75f), act(actLookTiny, 1.8f), act(actFlick, 1.0f),
+    still(0.8f),
+    // Two: quicker, bigger, a shake of the head.
+    CAST, still(2.6f), act(actNibble, 1.0f), act(actYank2, 0.6f), act(actLookTiny, 1.4f), act(actHeadShake, 1.2f),
+    act(actFlick, 0.9f), still(0.8f),
+    // Three: that is it.
+    CAST, still(2.0f), act(actNibble, 0.9f), act(actYank3, 0.5f), act(actLookTiny, 1.1f), still(0.3f),
+    pose(POSE_CAST, 0.7f, 0.25f), act(actHurl, 0.8f), still(1.2f),
+    // Storms off: into the tent, which shakes; out again a while later.
+    doit(doStomp), skipUnless(tentUp, 10), go(AT_DOOR, 50.f), face(LEFT), doit(doStompOff),
+    pose(POSE_CROUCH, 0.35f, 0.1f), doit(doIntoTent), act(actTentShake, 1.6f), still(2.6f), doit(doOutOfTent),
+    pose(POSE_STAND, 0.8f, 0.6f), act(actSighM, 1.6f),
+    // (No tent to sulk in: to the pack, hands on hips.)
+    skipUnless(tentNotUp, 3), go(AT_PACK_WORK, 50.f), doit(doStompOff), pose(POSE_HANDS_ON_HIPS, 0.4f, 3.0f),
+    TO_SIT,
+};
+
+// ---- 14. fishing_log ------------------------------------------------------------------------
+// A log floats down; the line snags it; he digs in, is pulled into the water
+// and towed off downstream out of the frame. A while later he walks back in
+// from the left, dripping, wrings out his hat and sits by the fire.
+
+constexpr float kLogV = 52.f, kLogHold = 12.f, kTowV = 74.f, kTowBack = 44.f;
+
+void beginFishLog(World& w) {
+  beginFishing(w);
+  MajorState& m = M(w);
+  const Vec2 F = w.fire.pos;
+  m.p[2] = Vec2{F.x - 66.f, F.y - 12.f};   // where he wrings out his hat, left of the fire
+  const float x = m.p[0].x + 22.f;         // pulled in here, off the bank
+  float cy, half;
+  m.p[3] = landscapeStreamSpan(w.land, x, cy, half) ? Vec2{x, cy - 0.45f * half} : Vec2{x, m.p[0].y + 10.f};
+}
+
+Glyph* logGlyph(World& w) {
+  for (Glyph& g : M(w).g)
+    if (g.kind == GL_SHAPE && g.shape == SH_LOG) return &g;
+  return nullptr;
+}
+bool logSnagged(const World& w) { return (M(w).cue & kE1) != 0; }
+bool towedOff(const World& w) { return (M(w).cue & kE2) != 0; }
+bool emptyDone(const World& w) { return M(w).t - M(w).tc >= (float)M(w).var; }
+
+// He has no idea: looks about, up at the sky, back at the float.
+void actWhistle(World& w, float u) {
+  const float e = env(u, 0.12f, 0.15f);
+  w.fx.head = e * (-0.28f + 0.12f * sinT(u * 1.5f));
+  w.fx.lean = -0.04f * e;
+  if (u >= 1.f) scriptFxRest(w);
+}
+// Snagged: the rod bows, he is jerked forward a step.
+void actSnag(World& w, float u) {
+  Hiker& h = w.hiker;
+  h.rod_bend = 0.85f * easeOutCubic(window(u, 0.f, 0.3f));
+  h.rod_tilt = -0.25f * easeOutCubic(window(u, 0.f, 0.3f));
+  const float j = sinT(0.5f * window(u, 0.f, 0.6f));
+  w.fx.lean = 0.2f * j;
+  w.fx.head = 0.15f * j - 0.25f * window(u, 0.4f, 1.f);
+  if (u >= 1.f) scriptFxRest(w);
+}
+// He leans back and digs his heels in; it pulls him forward a step, then another (a stumble).
+void actHeave(World& w, float u) {
+  Hiker& h = w.hiker;
+  MajorState& m = M(w);
+  if (u <= 0.f) m.u1 = h.feet.x;
+  const float back = env(u, 0.12f, 0.1f);
+  const float st1 = plateauM(u, 0.35f, 0.08f, 0.05f), st2 = plateauM(u, 0.7f, 0.08f, 0.05f);
+  w.fx.lean = -0.32f * back + 0.3f * maxf(st1, st2);
+  w.fx.lift = 0.02f * maxf(st1, st2);
+  w.fx.head = -0.2f * back;
+  h.feet.x = m.u1 + 5.f * easeInOut(window(u, 0.35f, 0.45f)) + 6.f * easeInOut(window(u, 0.7f, 0.8f));
+  h.rod_bend = 0.85f + 0.15f * sinT(u * 5.f);
+  if (u >= 1.f) scriptFxRest(w);
+}
+// Pulled off the bank into the water, flailing.
+void actPulledIn(World& w, float u) {
+  Hiker& h = w.hiker;
+  MajorState& m = M(w);
+  if (u <= 0.f) {
+    m.v0 = h.feet;
+    w.fx.wade = true;
+  }
+  const float k = easeInCubic(window(u, 0.f, 0.75f));
+  h.feet = mixV(m.v0, m.p[3], k);
+  const float j = sinT(0.5f * window(u, 0.f, 0.7f));
+  w.fx.lean = 0.35f * j - 0.3f * window(u, 0.7f, 1.f);
+  w.fx.lift = 0.03f * j;
+  scriptSetArm(w, 1, j, 2.4f, 0.4f);   // the far arm flails up
+  if (u >= 1.f) {
+    w.fx.lift = 0.f;
+    w.fx.arm_w[1] = 0.f;
+    w.fx.lean = -0.3f;   // the tow keeps him leaning back
+  }
+}
+void doTow(World& w, float) {
+  cue2(w, 1.f);
+  M(w).u1 = 0.f;
+}
+// Out of the frame: gone (the rod with him), the clock for the empty stretch starts.
+void doGone(World& w, float) {
+  Hiker& h = w.hiker;
+  w.fx.on = false;
+  w.fx.wade = false;
+  w.fx.lean = 0.f;
+  hikerCarry(h, CARRY_NONE);
+  h.rod_line = h.rod_float = false;
+  h.rod_bend = h.rod_tilt = 0.f;
+  w.memory.rod_lost = true;   // it went down the river
+  M(w).tc = M(w).t;
+}
+// Back from the left, soaked.
+void doBackFromLeft(World& w, float) {
+  Hiker& h = w.hiker;
+  h.feet = w.spine.camp.edge_l;
+  h.facing = 1;
+  scriptSetPose(w, POSE_STAND, 0.f);
+  scriptFxRest(w);
+  w.fx.on = true;
+  w.fx.path_on = false;
+  lineTo(w, LN_DRIP);
+}
+// Hat off, wrung out (two drops), held a moment.
+void actWring(World& w, float u) {
+  Hiker& h = w.hiker;
+  Item& hat = w.items[ITEM_HAT];
+  const float up = plateauM(u, 0.f, 0.12f, 0.06f);
+  if (u >= 0.12f && h.hat_on) {
+    h.hat_on = false;
+    hat.held = true;
+    hat.down = false;
+    hat.facing = (int8_t)h.facing;
+    hat.size = 1.f;
+  }
+  const float tw = env(u, 0.3f, 0.12f) * (u > 0.22f ? 1.f : 0.f);
+  const float wr = sinT(u * 4.f);
+  if (u < 0.22f) {
+    scriptSetArm(w, 0, up, 2.75f, 2.0f);   // up to the hat
+  } else {
+    scriptSetArm(w, 0, tw, 0.95f + 0.3f * wr, 1.1f);
+    scriptSetArm(w, 1, tw, 0.95f - 0.3f * wr, 1.2f);
+  }
+  w.fx.head = 0.22f * tw;
+  if (crossed(u, M(w).u1, 0.5f) || crossed(u, M(w).u1, 0.7f)) {
+    const Vec2 p = hikerHandsMid(h);
+    dropAt(w, Vec2{p.x, p.y + 4.f}, Vec2{0.f, 10.f}, h.feet.y + 2.f);
+  }
+  M(w).u1 = u >= 1.f ? 0.f : u;
+  if (u >= 1.f) w.fx.head = 0.f;
+}
+// And back on his head.
+void actHatOnM(World& w, float u) {
+  Hiker& h = w.hiker;
+  Item& hat = w.items[ITEM_HAT];
+  const float e = env(u, 0.4f, 0.4f);
+  scriptSetArm(w, 0, e, 2.75f, 2.0f);
+  if (u >= 0.45f && !h.hat_on) {
+    h.hat_on = true;
+    hat.held = hat.down = false;
+  }
+  if (u >= 1.f) scriptFxRest(w);
+}
+
+void tickFishLog(World& w, float dt) {
+  MajorState& m = M(w);
+  Hiker& h = w.hiker;
+  tickLine(w, dt);
+  // The log: from upstream off the right edge, down the stream past him.
+  Glyph* lg = logGlyph(w);
+  if (has(m, kGo) && !has(m, kFired)) {
+    fire(m, kFired);
+    m.u0 = 0.f;
+    m.count = 0;
+    lg = glyphNew(w, GL_SHAPE, streamPoint(w, streamParamAt(w, 860.f), 0.3f), 0);
+    if (lg) {
+      lg->shape = SH_LOG;
+      lg->slot = TRUNK;
+      lg->q.x = streamParamAt(w, 860.f);   // q.x: its stream parameter
+    }
+  }
+  if (lg) {
+    float v = kLogV;
+    if (has(m, kE1) && !has(m, kC2)) v = kLogHold;   // he is holding it back
+    if (has(m, kC2)) v = kTowV;
+    lg->q.x = streamOn(w, lg->q.x, v, dt);
+    const Vec2 c = streamPoint(w, lg->q.x, 0.3f);
+    lg->pos = Vec2{c.x, c.y - 2.f + 0.6f * sinT(m.t * 0.7f)};
+    lg->rot = turnsAlong(streamDir(w, lg->q.x), 1) + 0.008f * sinT(m.t * 0.4f);
+    lg->base_y = (int16_t)(c.y + 3.f);
+    // The line snags its near end as it comes past the float.
+    if (!has(m, kE1) && lg->pos.x - 18.f <= m.p[1].x) {
+      fire(m, kE1);
+      lineTo(w, LN_LOG);
+      h.rod_float = false;
+    }
+    // (Near the bottom-left the stream leaves the frame: the line's end stays in it, as he does.)
+    if (m.mode == LN_LOG)
+      h.rod_end = Vec2{lg->pos.x + 14.f * cosT(lg->rot), minf(472.f, lg->pos.y + 14.f * sinT(lg->rot))};
+    if (lg->pos.x < -80.f || lg->pos.y > 520.f) {
+      lg->kind = GL_NONE;
+      lg = nullptr;
+    }
+  }
+  // The tow: once the log has gone past him he is dragged behind it, leaning
+  // back, heels in, splashes trailing; never below the frame's bottom.
+  if (has(m, kC2) && !has(m, kE2)) {
+    {
+      const float x = lg ? minf(h.feet.x, lg->pos.x + kTowBack) : h.feet.x - kTowV * dt;
+      if (x < h.feet.x - 0.01f) h.facing = -1;
+      h.feet.x = x;
+      float cy, half;
+      const float y = landscapeStreamSpan(w.land, x, cy, half) ? cy - 0.3f * half : h.feet.y;
+      h.feet.y = minf(474.f, y);
+    }
+    h.rod_bend = 0.9f + 0.1f * sinT(m.t * 3.f);
+    w.fx.lean = -0.42f + 0.06f * sinT(m.t * 2.2f);
+    m.u1 += dt;
+    if (m.u1 > 0.32f && h.visible) {
+      m.u1 = 0.f;
+      ringAt(w, Vec2{h.feet.x + 9.f, w.fx.wet_y > 0.f ? w.fx.wet_y + 2.f : h.feet.y - 4.f}, 0.75f);
+    }
+    if (!h.visible || h.feet.x < -60.f) fire(m, kE2);
+  }
+  // Back: dripping for a few seconds.
+  if (m.mode == LN_DRIP && m.mt < 5.f) {
+    const uint32_t n = (uint32_t)(m.mt / 0.2f);
+    if (n != m.count) {
+      m.count = (uint8_t)n;
+      dripFrom(w, n + 100u);
+    }
+  }
+}
+
+const Step kFishLog[] = {
+    FROM_REST,
+    GET_ROD,
+    CAST,
+    still(1.0f),
+    doit(cueGo),                 // a log comes down from the right; he has not seen it
+    act(actWhistle, 4.0f),
+    until(logSnagged),
+    act(actSnag, 0.8f),
+    act(actHeave, 2.4f),
+    act(actPulledIn, 1.3f),
+    doit(doTow),
+    until(towedOff),
+    doit(doGone),
+    until(emptyDone),            // the scene sits empty (var seconds)
+    doit(doBackFromLeft),
+    go(AT_M2, 32.f),
+    face(RIGHT),
+    still(0.4f),
+    act(actWring, 3.4f),
+    act(actHatOnM, 1.0f),
+    still(0.4f),
+    TO_SIT,
+};
+
+// ---- 15. fishing_good -----------------------------------------------------------------------
+// Sitting with the rod out, a proper bite: he pulls, the rod bows, a fish
+// arcs out onto the bank and flops; he pounces and holds it up. At the flat
+// rock by the fire he guts it (three strokes, a flick into the stream) and
+// props it on a stick over the fire. Dinner d (spine.cpp) follows.
+
+void beginFishGood(World& w) {
+  beginFishing(w);
+  MajorState& m = M(w);
+  const Vec2 F = w.fire.pos;
+  m.p[2] = Vec2{m.p[0].x + 30.f, m.p[0].y + 1.f};   // where the fish lands on the bank
+  m.p[3] = Vec2{F.x + 54.f, 351.f};                  // crouched right of the flat (reading) rock
+}
+
+Glyph* bigFish(World& w) {
+  for (Glyph& g : M(w).g)
+    if (g.kind == GL_SHAPE && g.shape == SH_FISH) return &g;
+  return nullptr;
+}
+Vec2 rockTop(const World& w) { return Vec2{w.fire.pos.x + 17.f, 333.f}; }
+
+// Up, the rod bows; he plays it in, leaning back (the fish comes toward the bank under water).
+void actPlay(World& w, float u) {
+  Hiker& h = w.hiker;
+  MajorState& m = M(w);
+  if (u <= 0.f) {
+    scriptSetPose(w, POSE_FISH_STAND, 0.35f);
+    lineTo(w, LN_HOOKED);
+    m.v0 = m.p[1];
+    h.rod_float = false;
+  }
+  const float k = easeInOut(window(u, 0.1f, 0.3f));
+  h.rod_bend = k * (0.8f + 0.2f * sinT(u * 4.5f));
+  h.rod_tilt = 0.3f * k;
+  w.fx.lean = -0.22f * k * (0.8f + 0.2f * sinT(u * 4.5f));
+  w.fx.head = 0.1f * k;
+  // The fish under the water, pulled in toward the bank.
+  const float x = lerp(m.p[1].x, m.p[2].x + 14.f, easeInOut(u));
+  float cy, half;
+  const float y = landscapeStreamSpan(w.land, x, cy, half) ? cy - 0.6f * half : m.p[1].y;
+  m.v0 = Vec2{x + 3.f * sinT(u * 6.f), y};
+  h.rod_end = m.v0;
+  if (u >= 1.f) {
+    w.fx.lean = -0.22f;
+    w.fx.head = 0.1f;
+  }
+}
+// Out it comes: a heave and the fish arcs out of the water onto the bank.
+void actLandFish(World& w, float u) {
+  Hiker& h = w.hiker;
+  MajorState& m = M(w);
+  if (u <= 0.f) {
+    ringAt(w, m.v0, 1.f);
+    if (Glyph* g = glyphNew(w, GL_SHAPE, m.v0, (int)m.p[2].y + 1)) {
+      g->shape = SH_FISH;
+      g->facing = -1;
+    }
+    lineTo(w, LN_LANDED);
+    m.u1 = 0.f;
+  }
+  h.rod_bend = 1.f - easeOutCubic(window(u, 0.f, 0.3f));
+  h.rod_tilt = lerp(0.3f, 0.7f, easeOutCubic(window(u, 0.f, 0.35f)));
+  w.fx.lean = lerp(-0.22f, -0.32f, window(u, 0.f, 0.3f)) * (1.f - window(u, 0.6f, 1.f));
+  w.fx.head = lerp(0.1f, -0.15f, window(u, 0.f, 0.5f)) * (1.f - window(u, 0.7f, 1.f));
+  if (Glyph* g = bigFish(w)) {
+    const float k = minf(1.f, u / 0.85f);
+    const Vec2 a = lob(m.v0, m.p[2], 46.f, k), b = lob(m.v0, m.p[2], 46.f, minf(1.f, k + 0.03f));
+    g->pos = Vec2{a.x, a.y - 3.f};
+    g->rot = turnsAlong(Vec2{b.x - a.x, b.y - a.y + 1e-4f}, g->facing);
+    h.rod_end = g->pos;
+    if (k >= 1.f) {
+      g->rot = 0.f;
+      g->pos = Vec2{m.p[2].x, m.p[2].y - 3.f};
+      h.rod_line = false;
+    }
+  }
+  if (u >= 1.f) {
+    h.rod_tilt = h.rod_bend = 0.f;
+    scriptFxRest(w);
+  }
+}
+// The rod down on the bank beside him.
+void doRodDown(World& w, float) {
+  Hiker& h = w.hiker;
+  MajorState& m = M(w);
+  hikerCarry(h, CARRY_NONE);
+  h.rod_line = h.rod_float = false;
+  h.rod_tilt = h.rod_bend = 0.f;
+  Item& r = w.items[ITEM_ROD];
+  r = Item{Vec2{m.p[0].x - 4.f, m.p[0].y + 1.f}, true, false, (int8_t)-1, 1.f, m.p[0].y, false, 0, 0.03f, 0.f, 1.f,
+           false};
+  r.alt = m.stick;
+}
+// He pounces on it.
+void actPounce(World& w, float u) {
+  Hiker& h = w.hiker;
+  MajorState& m = M(w);
+  if (u <= 0.f) {
+    m.u1 = h.feet.x;
+    scriptSetPose(w, POSE_CROUCH, 0.3f);
+  }
+  h.feet.x = m.u1 + 18.f * easeOutCubic(window(u, 0.05f, 0.4f));
+  w.fx.lean = 0.25f * env(u, 0.15f, 0.4f);
+  w.fx.reach_to = 0.9f;
+  w.fx.reach = env(u, 0.2f, 0.35f);
+  if (u >= 0.4f && m.mode == LN_LANDED) lineTo(w, LN_HELD);
+  if (u >= 1.f) scriptFxRest(w);
+}
+// Holds it up at arm's length, the near arm out ahead and up so the fish
+// hangs clear of him against the sky; looks at it and nods.
+void actHoldFish(World& w, float u) {
+  const float e = env(u, 0.15f, 0.12f);
+  scriptSetArm(w, 0, e, 2.35f, 0.05f);
+  w.fx.head = -0.2f * e + 0.24f * (0.5f - 0.5f * cosT(2.f * window(u, 0.45f, 0.95f)));
+  if (u >= 1.f) scriptFxRest(w);
+}
+// Fish to the flat rock; fish back in hand.
+void doFishOnRock(World& w, float) { lineTo(w, LN_ROCK); }
+void doFishInHand(World& w, float) { lineTo(w, LN_HELD); }
+// Three quick strokes of the knife (nothing drawn but the strokes).
+void actGut(World& w, float u) {
+  const float e = env(u, 0.12f, 0.12f);
+  const float s = maxf(0.f, sinT(u * 3.f));
+  w.fx.reach_to = 1.0f + 0.35f * s;
+  w.fx.reach = 0.85f * e;
+  w.fx.lean = 0.18f * e;
+  w.fx.head = 0.15f * e;
+  if (u >= 1.f) scriptFxRest(w);
+}
+// One flick toward the stream: a bit arcs into the water (a ring).
+void actFlickGuts(World& w, float u) {
+  MajorState& m = M(w);
+  const float e = env(u, 0.2f, 0.4f);
+  w.fx.reach_to = lerp(1.1f, 0.2f, easeOutCubic(window(u, 0.15f, 0.4f)));
+  w.fx.reach = e;
+  if (u >= 0.35f && !has(m, kC3)) {
+    fire(m, kC3);
+    const Vec2 from = rockTop(w);
+    if (Glyph* g = glyphNew(w, GL_DOT, from, (int)from.y + 30)) {
+      g->slot = ACTOR;
+      g->scale = 1.1f;
+      g->q = from;
+      g->k = 2.f;
+      g->t = 0.f;
+    }
+  }
+  if (u >= 1.f) scriptFxRest(w);
+}
+// Onto a stick, propped over the fire.
+void actPropFish(World& w, float u) {
+  MajorState& m = M(w);
+  w.fx.reach_to = 1.3f;
+  w.fx.reach = env(u, 0.25f, 0.3f);
+  if (u >= 0.5f && m.mode == LN_HELD) {
+    if (Glyph* g = bigFish(w)) g->kind = GL_NONE;
+    lineTo(w, LN_NONE);
+    Item& f = w.items[ITEM_FISH];
+    f = Item{Vec2{w.fire.pos.x + 15.f, w.fire.pos.y + 1.f}, true, false, (int8_t)-1, 1.f, w.fire.pos.y, true, 0,
+             0.17f, 0.f, 1.f, false};
+  }
+  if (u >= 1.f) scriptFxRest(w);
+}
+
+void tickFishGood(World& w, float dt) {
+  MajorState& m = M(w);
+  Hiker& h = w.hiker;
+  tickLine(w, dt);
+  Glyph* f = bigFish(w);
+  if (m.mode == LN_HOOKED) {   // rings where it fights
+    m.u1 += dt;
+    if (m.u1 > 0.55f) {
+      m.u1 = 0.f;
+      ringAt(w, m.v0, 0.45f);
+    }
+  }
+  if (!f) return;
+  if (m.mode == LN_LANDED && m.mt > 0.85f) {   // flopping on the bank
+    const float t = m.mt - 0.85f;
+    const float ph = t / 0.55f;
+    const float hop = sinT(0.5f * (ph - floorf(ph)));
+    f->pos = Vec2{m.p[2].x, m.p[2].y - 3.f - 6.f * hop};
+    f->rot = 0.07f * hop * ((int)ph & 1 ? 1.f : -1.f);
+    if ((int)ph != (int)(ph - dt / 0.55f)) f->facing = (int8_t)-f->facing;
+    f->base_y = (int16_t)(m.p[2].y + 1.f);
+  } else if (m.mode == LN_HELD) {   // in his hand: by the tail when he holds it up, along his hands when he carries it
+    const Vec2 hand = hikerHandPos(h, 0);
+    const bool up = h.target == POSE_REACH_UP;
+    f->facing = (int8_t)h.facing;
+    f->rot = up ? 0.25f : 0.02f;
+    // Held up by the tail, hanging clear of his arm; carried out in front of him.
+    f->pos = up ? Vec2{hand.x + 1.f * (float)h.facing, hand.y + 9.5f} : Vec2{hand.x + 7.f * (float)h.facing, hand.y + 1.f};
+    f->base_y = (int16_t)(h.feet.y + 1.f);
+  } else if (m.mode == LN_ROCK) {
+    f->pos = rockTop(w);
+    f->rot = 0.f;
+    f->facing = -1;
+    f->base_y = (int16_t)(rockTop(w).y + 18.f);
+  }
+  // The bit flicked into the stream.
+  for (Glyph& g : m.g) {
+    if (g.kind != GL_DOT || g.k < 1.5f) continue;
+    g.t += dt;
+    const float x = g.q.x + 52.f;
+    const Vec2 to{x, waterMidY(w, x, g.q.y + 90.f) - 6.f};
+    const float u = minf(1.f, g.t / 0.9f);
+    g.pos = lob(g.q, to, 30.f, u);
+    g.base_y = (int16_t)(to.y + 1.f);
+    if (u >= 1.f) {
+      ringAt(w, to, 0.5f);
+      g.kind = GL_NONE;
+    }
+  }
+}
+
+const Step kFishGood[] = {
+    FROM_REST,
+    GET_ROD,
+    CAST,
+    pose(POSE_FISH_SIT, 1.0f, 0.4f),
+    still(3.6f),
+    act(actNibble, 1.2f),
+    still(0.2f),
+    act(actPlay, 2.8f),
+    act(actLandFish, 1.0f),
+    doit(doRodDown),
+    act(actPounce, 0.9f),
+    pose(POSE_STAND, 0.5f, 0.1f),
+    pose(POSE_REACH_UP, 0.6f, 0.f),
+    act(actHoldFish, 2.6f),
+    still(0.5f),
+    pose(POSE_CARRY, 0.5f, 0.f),
+    go(AT_M3, kStroll),
+    face(LEFT),
+    pose(POSE_CROUCH, 0.6f, 0.2f),
+    doit(doFishOnRock),
+    still(0.3f),
+    act(actGut, 1.8f),
+    act(actFlickGuts, 0.8f),
+    still(0.6f),
+    doit(doFishInHand),
+    pose(POSE_CARRY, 0.5f, 0.f),
+    go(AT_BLOW, kStroll),
+    face(LEFT),
+    pose(POSE_CROUCH, 0.6f, 0.2f),
+    act(actPropFish, 1.2f),
+    still(0.5f),
+    pose(POSE_STAND, 0.6f, 0.2f),
+    TO_SIT,
+};
+
+// ---- 16. bathe ---------------------------------------------------------------------------------
+// Hat off on the rock, into the middle of the stream, sits down in it,
+// scrubs, splashes, leans back content. Downstream a few fish float past
+// belly up; he looks at them, sniffs his armpit, shrugs. Out, a shake, hat
+// on, back to the fire.
+
+void beginBathe(World& w) {
+  MajorState& m = M(w);
+  const Vec2 F = w.fire.pos;
+  float cy, half;
+  const float x = F.x + 66.f;
+  m.p[0] = landscapeStreamSpan(w.land, x, cy, half) ? Vec2{x, cy - half - 1.f} : Vec2{x, F.y + 12.f};
+  // The hat: on top of a rock close by, else on the bank beside him.
+  m.p[1] = Vec2{m.p[0].x - 18.f, m.p[0].y - 1.f};
+  float best = 70.f;
+  for (int i = 0; i < w.land.n_rocks; ++i) {
+    const LsRock& r = w.land.rocks[i];
+    float x0 = r.p[0].x, x1 = r.p[0].x, top = r.p[0].y, base = r.p[0].y;
+    for (const Vec2& p : r.p) {
+      x0 = minf(x0, p.x);
+      x1 = maxf(x1, p.x);
+      top = minf(top, p.y);
+      base = maxf(base, p.y);
+    }
+    const float cx = 0.5f * (x0 + x1);
+    const float d = absf(cx - m.p[0].x) + 0.5f * absf(base - m.p[0].y);
+    if (d < best && x1 - x0 > 12.f && cx < 640.f) {
+      best = d;
+      m.p[1] = Vec2{cx, top + 2.f};
+    }
+  }
+  // Where he sits: in the near half of the stream, so the water runs behind
+  // him as well as round him (he is taller than the stream is wide).
+  const float sx = m.p[0].x + 60.f;
+  m.p[2] = landscapeStreamSpan(w.land, sx, cy, half) ? Vec2{sx, cy + 0.4f * half} : Vec2{sx, m.p[0].y + 40.f};
+  // Where he crouches for the hat.
+  m.p[3] = Vec2{m.p[1].x + 12.f, maxf(m.p[1].y + 2.f, m.p[0].y - 6.f)};
+  if (m.p[3].y > m.p[0].y) m.p[3].y = m.p[0].y;
+  lineTo(w, LN_NONE);
+  m.count = 0;
+}
+
+void actHatOff(World& w, float u) {
+  Hiker& h = w.hiker;
+  Item& hat = w.items[ITEM_HAT];
+  const float e = env(u, 0.35f, 0.4f);
+  scriptSetArm(w, 0, e, 2.75f, 2.0f);
+  if (u >= 0.45f && h.hat_on) {
+    h.hat_on = false;
+    hat.held = true;
+    hat.down = false;
+    hat.facing = (int8_t)h.facing;
+    hat.size = 1.f;
+    hat.on_fire = false;
+    hat.critter = 0;
+  }
+  if (u >= 1.f) w.fx.arm_w[0] = 0.f;
+}
+void doHatDown(World& w, float) {
+  Item& hat = w.items[ITEM_HAT];
+  hat.held = false;
+  hat.down = true;
+  hat.pos = M(w).p[1];
+  hat.facing = 1;
+}
+void doHatUp(World& w, float) {
+  Item& hat = w.items[ITEM_HAT];
+  hat.down = false;
+  hat.held = true;
+}
+bool packOn(const World& w) { return w.hiker.pack_on; }
+void doPackOffB(World& w, float) {
+  w.hiker.pack_on = false;
+  w.pack.shown = true;
+  w.pack.held = false;
+  w.pack.pos = Vec2{w.hiker.feet.x - 14.f, w.hiker.feet.y + 1.f};
+  w.pack.facing = (int8_t)w.hiker.facing;
+}
+void doWadeOn(World& w, float) { w.fx.wade = true; }
+void doWadeOff(World& w, float) { w.fx.wade = false; }
+
+// Scrubbing: arm circles, one arm then the other, head bobbing along.
+void actScrub(World& w, float u) {
+  const float e = env(u, 0.1f, 0.12f);
+  const float a = u * 7.f;
+  scriptSetArm(w, 0, e, 1.6f + 0.55f * sinT(a), 1.4f + 0.5f * cosT(a));
+  scriptSetArm(w, 1, e, 1.4f + 0.55f * sinT(a + 0.5f), 1.6f + 0.5f * cosT(a + 0.5f));
+  w.fx.head = 0.12f * e * sinT(a * 0.5f);
+  w.fx.lean = 0.06f * e;
+  if (u >= 1.f) scriptFxRest(w);
+}
+// Splashing: both hands slap the water, three times (rings either side).
+void actSplash(World& w, float u) {
+  MajorState& m = M(w);
+  Hiker& h = w.hiker;
+  const float e = env(u, 0.08f, 0.15f);
+  const float ph = u * 3.f;
+  const float f = ph - floorf(ph);
+  const float up = f < 0.6f ? easeInOut(f / 0.6f) : 1.f - easeInCubic((f - 0.6f) / 0.4f);
+  scriptSetArm(w, 0, e, lerp(0.6f, 1.9f, up), 0.2f);
+  scriptSetArm(w, 1, e, lerp(0.5f, 1.8f, up), 0.3f);
+  w.fx.lean = -0.08f * e * up;
+  if (crossed(u, m.u1, 0.33f) || crossed(u, m.u1, 0.66f) || crossed(u, m.u1, 0.99f)) {
+    const float wl = w.fx.wet_y > 0.f ? w.fx.wet_y : h.feet.y - 14.f;
+    ringAt(w, Vec2{h.feet.x + 22.f, wl + 3.f}, 0.8f);
+    ringAt(w, Vec2{h.feet.x - 20.f, wl + 5.f}, 0.7f);
+    for (int k = 0; k < 3; ++k)
+      dropAt(w, Vec2{h.feet.x + (float)(k - 1) * 12.f, wl - 2.f}, Vec2{(float)(k - 1) * 30.f, -120.f - 20.f * (float)k},
+             wl + 2.f);
+  }
+  m.u1 = u >= 1.f ? 0.f : u;
+  if (u >= 1.f) scriptFxRest(w);
+}
+// Leans back, content, hands behind his head; a long, still moment.
+void actLeanBack(World& w, float u) {
+  const float e = env(u, 0.1f, 0.08f);
+  w.fx.lean = -0.3f * e;
+  w.fx.head = -0.18f * e;
+  scriptSetArm(w, 0, e, 2.9f, 2.3f);
+  scriptSetArm(w, 1, e, 2.8f, 2.4f);
+  if (u >= 1.f) scriptFxRest(w);
+}
+// He notices them: turns to look downstream and down at the water.
+void actNotice(World& w, float u) {
+  if (u >= 0.25f) w.hiker.facing = -1;
+  w.fx.head = 0.22f * easeInOut(window(u, 0.3f, 1.f));
+}
+void actLookFish(World& w, float u) {
+  w.fx.head = 0.22f + 0.05f * sinT(u * 1.5f);
+  if (u >= 1.f) w.fx.head = 0.22f;
+}
+// Lifts an arm, sniffs his armpit.
+void actSniff(World& w, float u) {
+  const float e = env(u, 0.25f, 0.2f);
+  scriptSetArm(w, 1, e, 2.55f, 1.2f);   // the far arm up
+  w.fx.head = lerp(0.22f, 0.45f, e) - 0.04f * e * sinT(u * 4.f);
+  w.fx.lean = 0.08f * e;
+  if (u >= 1.f) {
+    scriptFxRest(w);
+    w.fx.head = 0.f;
+  }
+}
+// Out of the water: a dog-shake, drops flying off him.
+void actShakeOff(World& w, float u) {
+  MajorState& m = M(w);
+  const float e = env(u, 0.1f, 0.2f);
+  const float s = sinT(u * 7.f);
+  w.fx.lean = 0.12f * e * s;
+  w.fx.head = 0.2f * e * sinT(u * 7.f + 0.25f);
+  scriptSetArm(w, 0, e, 0.9f + 0.6f * s, 0.6f);
+  scriptSetArm(w, 1, e, 0.9f - 0.6f * s, 0.6f);
+  const uint32_t n = (uint32_t)(u * 14.f);
+  if (n != m.count && u < 1.f) {
+    m.count = (uint8_t)n;
+    const Hiker& h = w.hiker;
+    const float a = hash01(n, 3u), b = hash01(n, 5u);
+    dropAt(w, Vec2{h.feet.x + (a - 0.5f) * 20.f, h.feet.y - h.height * (0.35f + 0.4f * b)},
+           Vec2{(a - 0.5f) * 110.f, -70.f - 60.f * b}, h.feet.y + 2.f);
+  }
+  if (u >= 1.f) scriptFxRest(w);
+}
+
+constexpr float kDeadFishV = 15.f;
+
+void tickBathe(World& w, float dt) {
+  MajorState& m = M(w);
+  m.mt += dt;
+  ageGlyphs(w, dt);
+  // Downstream of him the fish surface belly up, one after another, and drift off.
+  if (has(m, kC1) && !has(m, kFired)) {
+    fire(m, kFired);
+    m.u0 = streamParamAt(w, w.hiker.feet.x);
+  }
+  if (has(m, kFired)) {
+    const float since = m.t - m.tc;
+    for (int i = 0; i < (int)m.var; ++i) {
+      const float at = 1.3f * (float)i;
+      if (since < at || (m.count >> i) & 1u) continue;
+      m.count = (uint8_t)(m.count | (1u << i));
+      const float s = m.u0 + 0.32f + 0.12f * (float)i;
+      const float lane = (i == 1 ? -0.35f : 0.15f) + 0.05f * (float)i;
+      if (Glyph* g = glyphNew(w, GL_SHAPE, streamPoint(w, s, lane), 0)) {
+        g->shape = SH_DEADFISH;
+        g->facing = -1;
+        g->scale = 0.f;
+        g->q = Vec2{s, lane};
+        g->t = 0.f;
+        ringAt(w, g->pos, 0.55f);
+      }
+    }
+    for (Glyph& g : m.g) {
+      if (g.kind != GL_SHAPE || g.shape != SH_DEADFISH) continue;
+      g.t += dt;
+      g.scale = easeOutBack(minf(1.f, g.t / 0.6f));
+      g.q.x = streamOn(w, g.q.x, kDeadFishV, dt);
+      const Vec2 c = streamPoint(w, g.q.x, g.q.y);
+      g.pos = Vec2{c.x, c.y - 1.f + 0.5f * sinT(g.t * 0.6f + g.q.y)};
+      g.rot = turnsAlong(streamDir(w, g.q.x), -1) + 0.012f * sinT(g.t * 0.45f);
+      g.base_y = (int16_t)(c.y + 2.f);
+      if (g.pos.x < -16.f || g.pos.y > 486.f) g.kind = GL_NONE;
+    }
+  }
+}
+
+const Step kBathe[] = {
+    FROM_REST,
+    go(AT_M3, kStroll),
+    face(LEFT),
+    act(actHatOff, 1.1f),
+    pose(POSE_CROUCH, 0.5f, 0.2f),
+    doit(doHatDown),
+    pose(POSE_STAND, 0.5f, 0.2f),
+    skipUnless(packOn, 1),
+    doit(doPackOffB),
+    go(AT_M0, kStroll),
+    face(RIGHT),
+    doit(doWadeOn),
+    still(0.3f),
+    walk(AT_M2, kWade),
+    pose(POSE_SIT, 1.2f, 0.4f),
+    act(actScrub, 4.2f),
+    act(actSplash, 2.4f),
+    act(actLeanBack, 9.0f),
+    doit(cue1),            // the fish come up downstream; he does not see them yet
+    still(1.6f),
+    act(actNotice, 1.0f),
+    act(actLookFish, 1.8f),
+    act(actSniff, 2.2f),
+    act(actShrugSit, 2.0f),
+    still(0.8f),
+    pose(POSE_STAND, 1.0f, 0.2f),
+    walk(AT_M0, kWade),
+    doit(doWadeOff),
+    face(RIGHT),
+    act(actShakeOff, 1.6f),
+    still(0.3f),
+    go(AT_M3, kStroll),
+    face(LEFT),
+    pose(POSE_CROUCH, 0.5f, 0.2f),
+    doit(doHatUp),
+    pose(POSE_STAND, 0.5f, 0.1f),
+    act(actHatOnM, 1.0f),
+    still(0.4f),
+    TO_SIT,
+};
+
+#undef GET_ROD
+#undef CAST
+
+// ---- the birds_on_water filler -----------------------------------------------------------------
+// He sits on the bank; two or three birds come down on the water, bob along,
+// dip their heads, flick their wings, one chases another; he watches the
+// nearest; they fly off together.
+
+constexpr float kBirdLandS = 2.4f, kBirdChaseAt = 12.f, kBirdOffAt = 19.f, kBirdWatchS = 24.f;
+constexpr float kBirdSink = 3.f;   // px of the bird under the waterline
+
+void tickBirds(World& w, float dt);
+
+// The hiker's eyes on the nearest bird (head and facing).
+void actWatchBirds(World& w, float u) {
+  MajorState& m = M(w);
+  Hiker& h = w.hiker;
+  float hr = 4.f;
+  const Vec2 head = hikerHeadPos(h, &hr);
+  float best = 1e9f, want = 0.f;
+  int face = h.facing;
+  for (int k = 0; k < 3; ++k) {
+    if (!own(w, k)) continue;
+    const Critter& c = cr(w, k);
+    if (!c.visible) continue;
+    const float d = dist(c.feet, head);
+    if (d < best) {
+      best = d;
+      const float dx = absf(c.feet.x - head.x) + 20.f;
+      want = maxf(-0.45f, minf(0.35f, 0.5f * (c.feet.y - head.y) / dx));
+      if (absf(c.feet.x - head.x) > 12.f) face = c.feet.x < head.x ? -1 : 1;
+    }
+  }
+  if (best > 1e8f) want = 0.f;
+  m.u1 += (want - m.u1) * 0.06f;
+  w.fx.head = m.u1 * env(u, 0.05f, 0.08f);
+  if (face != h.facing && m.mt > 1.5f) {   // turns to follow, but not every flutter
+    h.facing = face;
+    m.mt = 0.f;
+  }
+  if (u >= 1.f) w.fx.head = 0.f;
+}
+
+const Step kBirds[] = {
+    FROM_REST,
+    go(AT_LISTEN, kStroll),
+    face(RIGHT),
+    pose(POSE_SIT, 0.9f, 0.8f),
+    doit(cueGo),
+    act(actWatchBirds, kBirdWatchS),
+    until(gone),
+    still(0.6f),
+    pose(POSE_STAND, 0.9f, 0.3f),
+    TO_SIT,
+};
+
+// Where bird k sits on the water (its stream parameter and lane in p[1 + k]).
+Vec2 birdWater(const World& w, int k, float bob) {
+  const Vec2 sl = M(w).p[1 + k];
+  const Vec2 c = streamPoint(w, sl.x, sl.y);
+  return Vec2{c.x, c.y + kBirdSink + bob};
+}
+Glyph* birdPatch(World& w, int k) {
+  for (Glyph& g : M(w).g)
+    if (g.kind == GL_WATER && g.n == k) return &g;
+  return nullptr;
+}
+Vec2 bez2(Vec2 a, Vec2 c, Vec2 b, float u) {
+  const float v = 1.f - u;
+  return Vec2{v * v * a.x + 2.f * v * u * c.x + u * u * b.x, v * v * a.y + 2.f * v * u * c.y + u * u * b.y};
+}
+
+void tickBirds(World& w, float dt) {
+  MajorState& m = M(w);
+  m.mt += dt;
+  ageGlyphs(w, dt);
+  if (!has(m, kGo)) return;
+  const float T = m.t - m.tc;   // since he sat down and they set off
+  const Vec2 L = w.spine.camp.listen;
+  static const float kLane[3] = {0.1f, -0.3f, 0.3f};
+  for (int k = 0; k < (int)m.var && k < 3; ++k) {
+    if (m.c[k] < 0 && m.stage[k] == 0) {   // not yet in: each a moment after the last
+      if (T < 0.8f * (float)k) continue;
+      m.p[1 + k] = Vec2{streamParamAt(w, L.x + 50.f + 38.f * (float)k), kLane[k]};
+      const Vec2 from{850.f + 25.f * (float)k, 140.f + 16.f * (float)k};
+      if (spawnC(w, k, CR_BIRD, from, -1, CF_BRAVE) < 0) {
+        m.stage[k] = 9;   // no slot: this one stays away
+        continue;
+      }
+      critterSetAction(cr(w, k), CA_MOVE, 0.1f);
+      m.v0 = from;
+      stageTo(w, k, 1);
+      continue;
+    }
+    if (!own(w, k)) continue;
+    Critter& c = cr(w, k);
+    const float st = m.st[k];
+    const float bob = 0.7f * sinT(T * 0.45f + 0.3f * (float)k);
+    switch (m.stage[k]) {
+      case 1: {   // the swoop down onto the water
+        const Vec2 from{850.f + 25.f * (float)k, 140.f + 16.f * (float)k};
+        const Vec2 to = birdWater(w, k, 0.f);
+        const float u = minf(1.f, st / kBirdLandS);
+        const Vec2 p = bez2(from, Vec2{to.x + 70.f, to.y - 40.f}, to, easeOutCubic(u));
+        c.facing = p.x < c.feet.x ? -1 : 1;
+        c.feet = p;
+        if (u >= 1.f) {
+          critterSetAction(c, CA_IDLE, 0.25f);
+          ringAt(w, Vec2{to.x, to.y - kBirdSink}, 0.7f);
+          if (Glyph* g = glyphNew(w, GL_WATER, to, (int)to.y + 1)) g->n = (uint8_t)k;
+          stageTo(w, k, 2);
+        }
+        break;
+      }
+      case 2: {   // afloat: drifting, dipping, a wing flick; the chase; then off together
+        Vec2& sl = m.p[1 + k];
+        sl.x = streamOn(w, sl.x, 2.2f, dt);
+        // The chase: the first goes for the second, which scoots off downstream.
+        if (T > kBirdChaseAt && T < kBirdChaseAt + 1.3f && (int)m.var >= 2 && k < 2) {
+          const float v = k == 0 ? -26.f : 20.f;   // the chaser paddles back up toward it
+          sl.x = streamOn(w, sl.x, v, dt);
+          c.facing = k == 0 ? 1 : -1;
+          if (crossed(T, T - dt, kBirdChaseAt + 0.1f) || crossed(T, T - dt, kBirdChaseAt + 0.8f))
+            ringAt(w, Vec2{c.feet.x, c.feet.y - kBirdSink}, 0.45f);
+        } else if (T >= kBirdChaseAt + 1.3f && k < 2) {
+          c.facing = -1;
+        }
+        c.feet = birdWater(w, k, bob);
+        // Head dips (pecks at the water) and a wing flick, each bird to its own clock.
+        const float d0 = 2.5f + 1.1f * (float)k, d1 = 8.5f + 0.9f * (float)k;
+        const bool dip = (st > d0 && st < d0 + 1.f) || (st > d1 && st < d1 + 1.f);
+        if (dip && c.action != CA_EAT) critterSetAction(c, CA_EAT, 0.25f);
+        if (!dip && c.action == CA_EAT) critterSetAction(c, CA_IDLE, 0.25f);
+        const float fl = 5.f + 1.7f * (float)k;
+        c.fore_add = 1.1f * plateauM(st, fl, 0.12f, 0.25f) + 0.9f * plateauM(st, fl + 0.7f, 0.1f, 0.15f);
+        if (crossed(st, st - dt, fl + 0.05f)) ringAt(w, Vec2{c.feet.x, c.feet.y - kBirdSink}, 0.4f);
+        if (Glyph* g = birdPatch(w, k)) {
+          const float wl = c.feet.y - kBirdSink;
+          g->pos = Vec2{floorf(c.feet.x - 9.f), floorf(wl)};
+          g->q = Vec2{ceilf(c.feet.x + 9.f), ceilf(wl + kBirdSink + 3.f)};
+          g->base_y = (int16_t)(c.feet.y + 1.f);
+        }
+        if (T > kBirdOffAt + 0.25f * (float)k) {   // off together, upstream and up
+          c.fore_add = 0.f;
+          critterSetAction(c, CA_MOVE, 0.15f);
+          ringAt(w, Vec2{c.feet.x, c.feet.y - kBirdSink}, 0.6f);
+          if (Glyph* g = birdPatch(w, k)) g->kind = GL_NONE;
+          m.p[1 + k] = c.feet;   // where it took off
+          stageTo(w, k, 3);
+        }
+        break;
+      }
+      case 3: {
+        const Vec2 from = m.p[1 + k];
+        const Vec2 to{870.f + 20.f * (float)k, 110.f + 14.f * (float)k};
+        const float u = minf(1.f, st / 2.4f);
+        const Vec2 p = bez2(from, Vec2{from.x + 40.f, from.y - 110.f}, to, easeInOut(u));
+        c.facing = p.x < c.feet.x ? -1 : 1;
+        c.feet = p;
+        if (u >= 1.f) {
+          directorRelease(w, m.c[k]);
+          m.c[k] = -1;
+          stageTo(w, k, 9);
+        }
+        break;
+      }
+      default: break;
+    }
+  }
+}
+
 #undef SIT_HERE
 #undef TO_SIT
 #undef FROM_REST
@@ -2079,7 +3469,15 @@ const MajorDef kMajors[MJ_COUNT] = {
     {"firefly_jar", {42, 42}, 1.5f, kOut, beginFireflies, tickFireflies, {kFireflies, kFireflies},
      {N(kFireflies), N(kFireflies)}},
     {"stargaze", {48, 48}, 1.5f, kOut, beginStars, tickStars, {kStars5, kStars5}, {N(kStars5), N(kStars5)}},
+    {"fishing_small", {60, 60}, 0.6f, kOut, beginFishing, tickFishSmall, {kFishSmall, kFishSmall},
+     {N(kFishSmall), N(kFishSmall)}},
+    // fishing_log: plus its variant's seconds of empty scene (8..12).
+    {"fishing_log", {56, 56}, 0.6f, kOut, beginFishLog, tickFishLog, {kFishLog, kFishLog}, {N(kFishLog), N(kFishLog)}},
+    {"fishing_good", {50, 50}, 0.6f, 2, beginFishGood, tickFishGood, {kFishGood, kFishGood},
+     {N(kFishGood), N(kFishGood)}},
+    {"bathe", {54, 54}, 0.6f, 2 | 4, beginBathe, tickBathe, {kBathe, kBathe}, {N(kBathe), N(kBathe)}},
 };
+static_assert(MJ_COUNT == 16, "a row per major");
 
 // The script for a major and variant (stargaze: one table per star count).
 void scriptOf(int id, int var, const Step*& s, uint8_t& n) {
@@ -2170,6 +3568,8 @@ void majorEnd(SceneCtx& ctx) {
   }
   clearGlyphs(m, true);
   w.tent.wobble = 0.f;
+  w.fx.stomp = 0.f;     // (the stream majors' walk and waterline; their scripts end with both off)
+  w.fx.wade = false;
   m.on = false;
   w.busy = false;
 }
@@ -2190,6 +3590,7 @@ int majorSeconds(int id, int var) {
     const int n = var < 5 ? 5 : (var > 8 ? 8 : var);
     return 30 + (int)(kStarGap * (float)n + kRecountGap * (float)n + 0.5f);
   }
+  if (id == MJ_FISHING_LOG) return kMajors[id].seconds[0] + var;
   return kMajors[id].seconds[var == 1 ? 1 : 0];
 }
 
@@ -2197,6 +3598,10 @@ Beat majorBeat(const LoopPlan& p, int i) {
   const int id = p.major[i];
   return Beat{majorName(id), (float)majorSeconds(id, p.major_var[i]), kMajorBegin[i], majorUpdate, majorEnd};
 }
+
+namespace {
+bool isFishing(int id) { return id == MJ_FISHING_SMALL || id == MJ_FISHING_LOG || id == MJ_FISHING_GOOD; }
+}  // namespace
 
 void majorsPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
   // Night: the stars are out (mood within half a step of 0 / 6) or night mode.
@@ -2241,8 +3646,10 @@ void majorsPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
       if (i == MJ_RACCOON_PACK && mem.shoe_taken) allowed &= kOut;
       if (i == MJ_RACCOON_PACK && sequel) allowed &= kTent;
       wt[i] = allowed ? base[i] : 0.f;
-      for (int j = 0; j < n; ++j)
+      for (int j = 0; j < n; ++j) {
         if (pick[j] == i) wt[i] = 0.f;
+        if (isFishing(pick[j]) && isFishing(i)) wt[i] = 0.f;   // one rod: at most one fishing major a loop
+      }
       // A set of majors one of the last loops played (so far, as a prefix) only if nothing else fits.
       if (n > 0 && memoryRecentSet(mem, (uint16_t)(have | (1u << i)))) wt[i] *= 1e-4f;
     }
@@ -2275,6 +3682,8 @@ void majorsPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
     if (id == MJ_RACCOON_PACK) v = s == 3 ? 1 : 0;           // in the tent: he is asleep
     if (id == MJ_FIREFLY_JAR) v = (uint8_t)(12u + r_var % 9u);
     if (id == MJ_STARGAZE) v = (uint8_t)(5u + r_var % 4u);
+    if (id == MJ_FISHING_LOG) v = (uint8_t)(8u + r_var % 5u);   // seconds the scene sits empty
+    if (id == MJ_BATHE) v = (uint8_t)(2u + r_var % 2u);         // dead fish that float past
     pick[n] = (uint8_t)id;
     have = (uint16_t)(have | (1u << id));
     slot[n] = (uint8_t)s;
@@ -2326,6 +3735,8 @@ Rect glyphBounds(const Glyph& g) {
       if (g.scale <= 0.5f || g.k <= 0.05f) return kNoRect;
       r = 0.6f * g.scale + 4.f + g.k;
       break;
+    case GL_WATER:
+      return Rect{(int)floorf(g.pos.x), (int)floorf(g.pos.y), (int)ceilf(g.q.x), (int)ceilf(g.q.y)};
     case GL_ANTS:
       a = Vec2{minf(g.pos.x, g.q.x), minf(g.pos.y, g.q.y)};
       b = Vec2{maxf(g.pos.x, g.q.x), maxf(g.pos.y, g.q.y)};
@@ -2337,7 +3748,7 @@ Rect glyphBounds(const Glyph& g) {
 }
 
 void glyphDraw(const Glyph& g, Surface& s, const Rect& clip, const Palette& pal) {
-  if (g.kind == GL_NONE || glyphBounds(g).clipped(clip).empty()) return;
+  if (g.kind == GL_NONE || g.kind == GL_WATER || glyphBounds(g).clipped(clip).empty()) return;   // water: World draws it
   switch (g.kind) {
     case GL_RING: drawRing(g, s, clip, pal); break;
     case GL_DOT:
@@ -2382,5 +3793,53 @@ void majorsReset(MajorState& m) {
   memset(static_cast<void*>(&m), 0, sizeof(MajorState));
   for (int8_t& c : m.c) c = -1;
 }
+
+// ---- the birds_on_water filler ---------------------------------------------------------------
+
+void birdsFillerBegin(SceneCtx& ctx) {
+  World& w = *ctx.w;
+  MajorState& m = w.major;
+  clearGlyphs(m, true);
+  m.on = true;
+  m.id = MJ_COUNT;   // not a major: majorUpdate's table is not used
+  m.var = ((int)w.fire.pos.x % 3) == 0 ? 2 : 3;   // how many birds (from the loop's layout: no rng in a beat)
+  for (Vec2& p : m.p) p = w.hiker.feet;
+  for (int k = 0; k < 3; ++k) {
+    m.c[k] = -1;
+    m.stage[k] = 0;
+    m.st[k] = 0.f;
+  }
+  m.cue = 0;
+  m.t = m.tc = m.u0 = m.u1 = m.mt = 0.f;
+  m.count = m.mode = 0;
+  m.stick = false;
+  scriptStart(w, kBirds, (uint8_t)(sizeof(kBirds) / sizeof(kBirds[0])));
+}
+
+void birdsFillerUpdate(SceneCtx& ctx, float, float) {
+  World& w = *ctx.w;
+  MajorState& m = w.major;
+  m.t += SS_TICK_DT;
+  for (float& s : m.st) s += SS_TICK_DT;
+  scriptRun(w);
+  tickBirds(w, SS_TICK_DT);
+}
+
+void birdsFillerEnd(SceneCtx& ctx) {
+  World& w = *ctx.w;
+  MajorState& m = w.major;
+  bool late = !scriptDone(w);
+  for (int i = 0; i < CRITTER_MAX; ++i) {
+    if (!w.crit[i].in_use || w.crit[i].tag != CT_MAJOR) continue;
+    late = true;
+    directorRelease(w, i);
+  }
+  if (late && w.spine.overruns < 255) ++w.spine.overruns;
+  w.spine.run.steps = nullptr;
+  clearGlyphs(m, true);
+  m.on = false;
+}
+
+int birdsFillerSeconds() { return 38; }
 
 }  // namespace ss

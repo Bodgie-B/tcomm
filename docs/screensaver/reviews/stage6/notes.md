@@ -311,3 +311,270 @@ Viewed: bear c at seed 7 mood 4 (the branch) every 25 ticks and the pick-up,
 raise, swats and drop every 1 to 4 ticks; seed 18 (the fire-poking stick, with a
 turn while carrying). `sizeof(App)` 66,664.
 
+
+## Palette fixes (Mike's review)
+
+Written 2026-10-30. Not committed. PC preview only: every value is unverified on
+the real panel (IPS + RGB565), final tuning is still to be done there.
+
+Files: `screensaver/core/palette.h`, `core/palette.cpp`, `tests/test_palette.cpp`,
+and the mushroom draw in `core/scene/landscape.cpp` (`drawMushroom`, the only
+draw site; the build-up reaches it through `drawLayer`). Review image:
+`screensaver/build/palette_review.png` (and `.ppm`): swatch strip, before/after
+crops, every mood after.
+
+### Plumbing
+
+- New slot `MUSHROOM` (slot 31, so `SLOT_COUNT` is now 32, the limit). The cap is
+  `MUSHROOM`; its two spots are `mixRGB(MUSHROOM, WATER_LIGHT, 0.65)` (toward the
+  pale stem), so they dim with the mood too (they were `FIRE_CORE`).
+- `night_dim` now does what its comment always said ("clamp bright slots"):
+  after the scale, every slot is capped at `NIGHT_LUM_MAX` = 0.60 luminance and
+  the small-highlight slots (`ACTOR_LIGHT`, `FIRE_CORE`, `STAR`, `SUN`;
+  `isNightHighlight`) at `NIGHT_HIGHLIGHT_MAX` = 0.82 (no pure white). The cap
+  scales the color down, hue kept. Both limits live in `palette.h`.
+- `ACTOR_LIGHT` joins the lights that `night_dim` scales by 0.85 instead of 0.55,
+  so the eyes, rings and rim keep reading under the night rule.
+
+### Changed keys (before -> after)
+
+| Mood | Slot | Before | After | Why |
+|---|---|---|---|---|
+| night | RIDGE_FAR, MID, NEAR | 1B2A40, 16253B, 132036 | 1E3046, 1C2C44, 1C2A40 | lifted ~6/255 so the near trees can sit 25+ over ACTOR and still under RIDGE_NEAR |
+| night | TREES_FAR, TREES_MID | 142138, 121D2E | 1C2A48, 182434 | follow the ridges (order rules) |
+| night | TRUNK, FOLIAGE, FOLIAGE_DARK | 0E1520, 0F1C2A, 0A131E | 262230, 1A2634, 1A2232 | bear on the pine |
+| night | TENT, TENT_LIT | 8A4A2A, F0C070 | 4E2C2E, D8964C | dim rust unlit; amber glow lit, 0.54 under night_dim |
+| night | ACTOR, ACTOR_LIGHT | 05080F, 0C121C | 020408, 6E4E34 | near-black body; small firelit amber highlight |
+| night | MUSHROOM | (FIRE E07B39) | 5A2E2C | dim brick red |
+| dawn | ACTOR, ACTOR_LIGHT | 1E2230, 303648 | 1A1E2C, 7E6E6C | trunk gap; highlight that reads |
+| dawn | MUSHROOM | (FIRE) | C46A4A | |
+| morning | TRUNK | 40322A | 4C3A2E | was 20/255 over ACTOR |
+| morning | ACTOR, ACTOR_LIGHT | 15251E, 24392E | 101C17, 7E7A60 | |
+| morning | MUSHROOM | (FIRE) | D06A3A | |
+| day | TRUNK | 3A2E26 | 4A3A2E | was 18/255 over ACTOR |
+| day | ACTOR, ACTOR_LIGHT | 14231C, 22382B | 0F1A15, 7E7C64 | |
+| day | MUSHROOM | (FIRE) | D2642E | |
+| golden | TRUNK, FOLIAGE, FOLIAGE_DARK | 3A2A2A, 4A3A3F, 2E2429 | 46282A, 5A3E44, 422838 | warm plum-brown, bear reads (was ~19 over ACTOR) |
+| golden | TENT | C8662F | B65A30 | deeper sun-warmed rust under the bright sky |
+| golden | ACTOR, ACTOR_LIGHT | 1A1318, 2C2024 | 120C10, A87A56 | |
+| golden | MUSHROOM | (FIRE) | D85A2A | |
+| dusk | TRUNK, FOLIAGE, FOLIAGE_DARK | 2A2038, 2A2E48, 1E2038 | 36243A, 3A2E48, 2C2440 | warm plum, bear reads (was ~20) |
+| dusk | TENT, TENT_LIT | C8683C, F6C070 | 9A5448, EAA45C | dusky rust; warm glow |
+| dusk | ACTOR, ACTOR_LIGHT | 0E0D1A, 1A1828 | 08070F, 8E6450 | |
+| dusk | MUSHROOM | (FIRE) | 9C4A48 | |
+
+Unchanged: dawn/morning/day TENT and TENT_LIT, golden TENT_LIT, all skies,
+grounds, water, fire, stars.
+
+### Contrast (test_palette prints this; luminance 0..255, Rec.709 on the 8-bit expansion)
+
+Asserted: ACTOR_LIGHT over ACTOR >= 50 at dawn..dusk, >= 30 at night and under
+night_dim at every mood; TRUNK/FOLIAGE/FOLIAGE_DARK over ACTOR >= 25 at every
+integer mood; under night_dim >= 13.75 (25 x 0.55: night_dim is a uniform 0.55
+scale, and `testWeather` requires SKY2 to drop >= 40%, so absolute gaps shrink
+with it while the ratio holds); under night_dim every slot <= 0.60 except the
+highlight slots <= 0.82; TENT off the day value at golden, dusk, night, and
+day > dusk > night when unlit; night lit tent > 2x unlit; night MUSHROOM < half
+of day and < half of FIRE.
+
+```
+                         ACTOR  LIGHT  gap  | TRUNK  gap  FOL  gap  FOLD  gap | TENT  LIT  MUSH
+night                      3.4   81.4  77.9 |  33.4 30.0  34.4 30.9  31.5 28.1 |  50.2 159.8  53.6
+dawn                      28.1  111.8  83.7 |  57.5 29.4  87.7 59.6  65.1 37.0 | 137.4 213.5 122.5
+morning                   24.6  119.8  95.3 |  58.7 34.2  79.4 54.8  65.0 40.5 | 132.2 212.9 124.7
+day                       20.0  122.7 102.7 |  58.7 38.7  74.3 54.3  56.5 36.4 | 125.9 209.4 120.7
+golden                    13.1  129.2 116.1 |  45.6 32.5  66.8 53.7  46.8 33.6 | 105.7 202.0 113.8
+dusk                       5.1  107.9 102.8 |  40.3 35.1  48.9 43.8  39.2 34.1 |  99.3 176.0  90.7
+night   night_dim=1        0.0   68.6  68.6 |  16.6 16.6  17.7 17.7  14.9 14.9 |  27.0 137.3  28.7
+dawn    night_dim=1       11.4   95.8  84.3 |  28.1 16.6  47.2 35.7  34.4 22.9 |  75.1 152.9  65.8
+morning night_dim=1       10.9  100.9  90.0 |  29.9 19.0  42.4 31.5  33.7 22.9 |  73.3 152.9  66.2
+day     night_dim=1        9.2  103.8  94.6 |  29.9 20.7  37.3 28.1  30.3 21.1 |  69.1 152.3  65.7
+golden  night_dim=1        5.1  108.5 103.3 |  22.5 17.3  35.7 30.5  23.1 17.9 |  57.1 152.8  61.6
+dusk    night_dim=1        0.0   90.0  90.0 |  21.1 21.1  25.2 25.2  20.1 20.1 |  51.9 150.7  49.0
+```
+
+Before, for comparison: ACTOR_LIGHT gaps were 9 (night), 21, 19, 22, 16, 13; the
+near-tree minimum gaps 9 (night), 26, 20, 18, 19, 20.
+
+### What I looked at and changed after looking
+
+Stills from `ss_preview` seed 42: bear on the camp pine at mood 4 t13625, mood 5
+t13825, `--night` t13175; owl_watch `--night` t4700; hiker by the fire at moods
+4, 5 and `--night` (dinner); raccoon_pack at mood 4 t12360 and the raccoon at
+the close `--night` t14925; the lit tent `--night` t12500 and mood 5 t12000;
+the mushroom at moods 3, 4, 5 and `--night`; every mood at t7625.
+
+- First pass lifted the night ridges to 22344A/1E3048: `testWeather`'s fog check
+  failed (RIDGE_FAR too close to SKY4 for fog to move it measurably in 565), so
+  RIDGE_FAR/MID came down to 1E3046/1C2C44 and TREES_FAR got a blue step to stay
+  between MID and NEAR. Night FOLIAGE came down to 1A2634 so the camp pine sits
+  under RIDGE_NEAR rather than level with it.
+- Golden and dusk: the bear now reads clearly as a black shape on a plum pine;
+  the pines still read as dark warm silhouettes against the sky. Kept.
+- Owl eyes read as two amber discs under `--night`; raccoon rings read at golden
+  (tan) and faintly at night (amber, 1.5 px marks). Kept.
+- Tent: dusk unlit is a dusky rust that belongs to the violet scene; night unlit
+  is a dim rust; the lit tent at night is an amber glow (0.54 under night_dim,
+  was 0.67, over the limit). Kept.
+
+### Still weak / outside the allowed files
+
+- **Bear on the pine under `--night`.** The trees sit 15 to 18 over ACTOR (ACTOR
+  is 0 after the dim). It reads, but only just. The night ridge stack (SKY4 54,
+  RIDGE_NEAR 38) caps how light the near trees can be without breaking the
+  atmospheric order; a bigger gap would need the night key lighter overall or a
+  non-uniform night_dim, both bigger calls than this pass. Check on the panel.
+- **Hiker rim (`hiker.cpp`, not touched).** The rim now has the contrast, but it
+  draws as a broken, sub-pixel line inside the silhouette (partly overdrawn by the
+  arms) and is easy to miss. Suggest for the scene agent: draw the rim after the
+  arms, at the silhouette edge on the fire side, with a minimum width of about
+  1.2 px (`rim` in the `lit_from` block, around line 346). Unverified which side
+  it lands on in every pose: in the golden dinner frame the fire is left of him
+  and the marks sit right of his centre line.
+- Night unlit tent and mushroom are deliberately dark; if they vanish on the
+  panel's night backlight, raise them there.
+
+## Stream vignettes (Mike's idea)
+
+Written 2026-10-30. Not committed. Mike watched the loop and wrote that the
+stream, so big in the foreground, invites play with the water. These are his
+five: three ways a fishing trip goes, a bath, and birds on the water. Tone: a
+Pixar short; the gutting and the dead fish are implied and cartoonish.
+
+### What was built
+
+| Scene | Kind | Seconds | Gating | What happens |
+|---|---|---|---|---|
+| fishing_small | major | 60 | S1 to S3 | Rod out of the pack (a stick off the wood pile if the rod was lost last loop), down to the bank left of the clearing (fire.x + 76, by where he cools his hand), two pulls extend it, casts (POSE_CAST: rod back over the shoulder with the action wind-up, then whipped to POSE_FISH_STAND; the float lobs out from the tip and rings). Waits, the float bobs; it dips twice and goes under; he yanks: a tiny fish dangles under the tip; he lowers the rod and looks; flicks it back (ring). Three times, each yank bigger and quicker (tip higher, rock back, shoulders and a hop), a head shake after the second. The third: rod back over the shoulder and hurled across the stream; it tumbles end over end (2.25 turns, 1.4 s) and lands on the near-viewer bank with a dust puff, where it lies for the rest of the loop (ITEM_ROD). He storms off (fx.stomp: stiff arms swung high, head down, 50 px/s) into the tent; the tent shakes once; 2.6 s; out again, a sigh, sits by the fire. Without a tent up: to the pack, hands on hips. Memory: rod_lost. |
+| fishing_log | major | 56 + 8..12 | S1 to S3 | Rod, bank, cast as above; he looks about at the sky. A log (SH_LOG, TRUNK, 40 px) comes down the stream from off the right edge along the same path the glints use (52 px/s); the audience sees it first. The line snags its near end; the rod bows; he is jerked forward, leans back and digs in (two stumbles), is pulled off the bank into the water (wading, the waterline on him), and towed off downstream behind the log, leaning back, heels in, splash rings trailing, out of the left edge (his feet kept at y <= 474 and the line's end at <= 472 so he stays in frame while visible). The scene sits empty for the variant's 8..12 s. He walks back in from the left, dripping (drops off him for 5 s), wrings out his hat (two drops), puts it on, sits by the fire. Memory: rod_lost (it went down the river). |
+| fishing_good | major | 50 | S2 only | Rod, bank, cast, then POSE_FISH_SIT, patient. A bite; he jumps up and plays it (the rod bows, two capsules; the fish under the water comes in toward the bank with rings); a heave and the fish (the 14 px fish_leap glyph) arcs out onto the bank and flops; he drops the rod (left lying on the bank), pounces, holds it up at arm's length (REACH_UP, the near arm forward and up so the fish hangs clear of him against the sky), nods. Carries it to the flat reading rock by the fire: crouched, three quick strokes, one flick toward the stream (a 2 px bit arcs into the water, a ring). Onto a stick propped over the fire (ITEM_FISH on_fire). Sits. |
+| fish_dinner | dinner variant 3 | 34 | only with fishing_good | Takes the stick off the fire, sits, eats in three bites (the fish shrinks 1, 0.68, 0.38, then the bones), tosses the skeleton into the fire (an underarm lob), pats his stomach. The dinner critter hook runs before the eating as in a to c (the deer edges in a step a bite). |
+| bathe | major | 54 | S2 or S3 (tent up) | To the bank, hat off onto the nearest rock (or the bank), pack off if he wears it, wades in, sits down in the near half of the stream (he is taller than the stream is wide: in the middle, his torso stood against the bank and read as "sitting on the edge"). Scrubs (arm circles), splashes (rings either side, drops), leans back, hands behind his head, 9 s. Downstream two or three fish surface belly up one after another and drift off along the stream. He turns, looks at them, lifts an arm and sniffs his armpit, shrugs. Out, a dog-shake with drops flying, hat back on, sits by the fire. |
+| birds_on_water | filler (pool of 7) | 38 | after fire or dinner, as the other fillers | He sits on the bank (camp.listen). Two or three birds swoop down onto the water to his right (rings), sit low (a GL_WATER patch redraws the water over their bottom 3 px), drift with the flow, dip their heads (CA_EAT), flick a wing (fore_add, a small ring); at 12 s the first chases the second a few px (rings); at 19 s they fly off together, upstream and up. His head and facing follow the nearest. |
+
+### What it uses
+
+- **Rig** (`hiker.h/.cpp`): `CARRY_ROD` (one capsule from the butt behind the near
+  hand out along the near forearm + 0.55 rad + `rod_tilt`, `rod_len` units of
+  height; bowed by `rod_bend` it is two capsules; a 1 px line from the tip to
+  `rod_end` and a FIRE float when `rod_float`; `rod_stick` draws a kinked TRUNK
+  stick with a bare string). The figure stays at 22 primitives at most: a bowed
+  rod or a stick draws no float. `hikerRodTip`. Poses `POSE_FISH_STAND`,
+  `POSE_FISH_SIT` (a landing pose), `POSE_CAST` (an action pose, so it dips before
+  it goes back). `hat_on` (false: no brim or crown). The sheets in `test_hiker`
+  have rows for the new poses with the rod and line out, one bareheaded.
+- **Props**: `ITEM_ROD` (lying, `alt` the stick), `ITEM_HAT`, `ITEM_FISH` (on a
+  roasting stick; `size` shrinks it; size 0 is the skeleton; `on_fire` sorts it
+  in front of the flames). `Item::alt` added (default member initializer, so the
+  existing brace inits stand). Held fish and fork go to the near hand.
+- **World**: `HikerFx::stomp`, `wade`, `wet_y`. With `wade` on, World works out
+  his waterline every tick from how far into the stream his feet are and, after
+  drawing him, redraws the water body (`worldDrawWater`, the same polygon the
+  landscape caches) over his rect below it. The same function draws the birds'
+  GL_WATER patches. `WORLD_ACTOR_MAX` 88 to 91 for the three items.
+- **Majors** (`majors.*`): ids 12..15 (the memory's 16-bit sets are now full:
+  a static_assert guards it), glyph kinds `GL_WATER`, shapes `SH_ROD`, `SH_LOG`,
+  `SH_DEADFISH`, the line's mode in `MajorState::mode/mt`, `v0`, `stick`. The
+  log and the dead fish move along the stream by its point index, as the glints
+  do (`streamOn`). Drops are glyph dots with a velocity that stop at the ground
+  (not the minors' DROP bits, which turn into rings on the water).
+- **Planner**: weight 1 each; fishing_good S2 only, bathe S2/S3, the other two
+  S1..S3; at most one fishing major a loop (they share the rod). `spinePlan`
+  sets `dinner = 3` when fishing_good is placed, and the length trim never drops
+  fishing_good. `spineVariantCount` still draws dinner from 0..2.
+- **Memory**: `rod_lost` (printed `rod=0|1`), set when the rod is thrown or
+  towed away; the next fishing major reads it at its start (`MajorState::stick`)
+  and clears it. fishing_log setting it as well is my call (the spec only said
+  "the rod is gone this loop").
+- **Filler**: `FILL_BIRDS_ON_WATER` with its own beat hooks
+  (`birdsFillerBegin/Update/End` in majors.cpp; it borrows MajorState for the
+  birds and glyphs). It does not set `busy`; its name is not a calm one, so the
+  minors stay away while it runs (as they do for majors).
+- `appWorld` (test hook in `ss_app.h`).
+
+### Numbers
+
+- `sizeof(App)` = 67,024 bytes (was 66,664; budget 98,304).
+- Strips per frame (test_scene, rendering every tick): fishing_small 7.75 (max
+  13), fishing_log 7.39 (11), fishing_good 7.39 (13), bathe 6.85 (10),
+  birds_on_water 6.55 (12). All majors per seed 7.55..7.80.
+- Script finish over 450 loops (`-DSS_SPINE_TRACE`, seeds 1..10, moods 4, 0, 2):
+  fishing_small 52.2..57.2 s of 60, fishing_log 48.2..53.2 s plus its empty
+  seconds of 56 plus them, fishing_good 43.4..46.8 of 50, bathe 46.0..50.9 of 54.
+- `--loops 20`, seed 1, mood 4: a stream major in 14 loops; dinner=3 in loops
+  1, 8, 12, 16 (each with fishing_good); birds_on_water in 2.
+- testVariety (30 night loops, 83 majors): every major 3..9 times; the four new
+  ones 6, 4, 5, 3.
+- Builds clean with GCC 16 (`-Werror`) and clang; all 6 suites pass under both.
+
+### Tests added
+
+`testStreamVignettes`: seeds until all five and fish_dinner have run (4
+seeds), rendering every tick: the hiker in frame and out of the corner while
+visible; at the end of each of those beats in frame, dry (no waterline, wade
+off, feet not in the stream) and with his hat; rod, hat and fish items, the
+log, the dead fish and the thrown rod never in the quiet corner; dinner=3
+exactly when fishing_good is planned; no overruns; strips per frame printed
+and <= 10; determinism at 3 ticks inside fishing_log; 25 loops: the rod lost 8
+times, the stick used 7 times, no flag mistakes. The existing tests take the
+larger pools (16 majors, 7 fillers, a 4th dinner column).
+
+### What I changed after looking at the frames
+
+Contact sheets cut from `ss_preview --skip --every` at the logged ticks (mood
+4, seeds 1027777925, 892470523, 2791936963, 1517378683), cropped and zoomed.
+
+1. The fish never showed over the fire: an `on_fire` item still has to be
+   `down` to have bounds. Fixed; the fish on its stick reads against the flames.
+2. Held up by the tail with REACH_UP, the fish hung over his own arm (ACTOR on
+   ACTOR) and vanished. The near arm now goes forward and up to arm's length
+   and the fish hangs clear against the ridges; carried, it is held out ahead.
+3. The bath: sat on the centreline, his torso stood against the bank and he
+   looked perched on the edge. He sits in the near half of the stream now, so
+   water shows behind him too; his knees break the surface (left in: it reads).
+4. The third tiny fish stayed hanging in the air after he threw the rod. It
+   now drops back into the water as the rod leaves his hands.
+5. The towed hiker crossed the frame's bottom edge where the stream leaves it:
+   his feet and the line's end are kept inside; lean back increased to read as
+   heels-in water-skiing.
+6. The tow never ended once the log left the frame (he stopped following it):
+   he is towed on at the log's speed.
+7. The rod's bow was an L-shaped hook: 1.05 to 0.75 rad.
+8. The tiny fish at 0.38 scale was a speck: 0.5 (still tiny: that is the joke).
+9. Durations set from the trace (fishing_small trimmed by 1.6 s of stills).
+
+### Coordinator additions (same pass)
+
+- **Rim light** (`hiker.cpp`): the rim was two capsules a sub-pixel inside the
+  torso and head edge, drawn before the arms; in most poses the near arm, the
+  knees or the brim form the fire-side edge, so it showed as a broken line
+  inside the silhouette. It is now a pass after the whole figure (`rimPass`): on
+  each row of the head (below the brim) and the torso, it walks from the body's
+  axis toward the fire through the silhouette's pixels and lights the last one
+  (and half the one inside it), only where that edge is within the torso's
+  half width (or the pack's depth when his back is to the fire). Rows where an
+  arm or knee stands out past the body stay dark. Mirror-exact and strip-exact
+  (test_hiker passes: 0 pixels differ from the flip). Checked in stills by the
+  fire at mood 4 (dinner, the fire on his left: the rim on his left edge) and
+  at `--night` (it showed nothing at first: the night ground was within the
+  "solid figure" tolerance of ACTOR; the tolerance is now one step a channel).
+- **GCC 16**: `ambient.cpp` smoke out-params initialised, `critters.cpp` carry
+  conditional cast to `uint8_t`, `spine.cpp` filler loop bounded by
+  `SPINE_FILLER_MAX`. GCC 16 Release `-Werror` builds clean, ctest 6/6.
+
+### Open items
+
+1. Frequency: with four new majors of weight 1, a stream major plays in about
+   two loops of three. If that is too much water, lower their weights.
+2. "A bird may swoop for the gut bit" (fishing_good) is not built.
+3. The dead fish's x eye is under a pixel at 1x; it reads as a belly-up fish
+   by its pale belly line on top, not by the eye.
+4. The waterline redraw duplicates the landscape's water polygon
+   (`worldDrawWater` vs `landscape.cpp drawStream`); keep them in step. I did
+   not touch landscape.cpp (the palette agent was editing it).
+5. Not checked by eye: the stick variant's cast (no float, by design), the
+   bath and the log at night, the tent-less storm-off branch (never runs: the
+   tent is always up after setup), fish_dinner's skeleton toss at full frame rate.
+6. The rod thrown across the stream lies on the near bank (toward the viewer)
+   for the rest of the loop, and the one set down in fishing_good on the camp
+   bank; nothing picks them up. With rod_lost the next loop has no rod lying.

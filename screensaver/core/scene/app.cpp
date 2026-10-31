@@ -197,5 +197,6 @@ int appLeaves(const App* app) {
   for (const Bit& b : app->world.bits) n += b.kind == BIT_LEAF ? 1 : 0;
   return n;
 }
+const World* appWorld(const App* app) { return &app->world; }
 
 }  // namespace ss

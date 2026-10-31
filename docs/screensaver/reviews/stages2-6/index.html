@@ -315,7 +315,8 @@ python3 -I ../tools/review_clips.py --preview ./ss_preview --out ../../docs/scre
       { id: 'dinner', title: 'Dinner', v: {
         a: 'Fetches the mug, sits by the fire, sips every six seconds. A deer edges in one step per bite; a chipmunk eats a crumb by the wood pile. They scatter when he moves.',
         b: 'The pot goes on the fire. It boils over in a burst of steam; he jumps back, hooks it off with the stick, eats from it. The visitors bolt at the boil-over.',
-        c: 'Rummages in the pack, holds up a tiny fork at arm\'s length, shrugs, eats in quick small bites.' } },
+        c: 'Rummages in the pack, holds up a tiny fork at arm\'s length, shrugs, eats in quick small bites.',
+        d: 'Fish dinner, only after he lands the good fish: sits, takes the stick from over the fire, eats the fish in three bites, tosses the skeleton into the fire, pats his stomach.' } },
       { id: 'foodbag', title: 'Food bag', v: {
         a: 'Takes the bag to the pine, hangs it from the branch with one pull. Walks to the tent, takes off a shoe at the door, goes in. The tent lights and his shadow breathes.',
         b: 'Two wind-up tosses fall back into his hand; the third goes over the branch and the bag swings three times before it settles.',
@@ -335,7 +336,8 @@ python3 -I ../tools/review_clips.py --preview ./ss_preview --out ../../docs/scre
       { id: 'cairn', title: 'The cairn', blurb: 'Picks flat stones one at a time and balances each. Steps back, hands on hips. Next loop it\'s still there, one stone shorter.' },
       { id: 'skip_stone', title: 'Skipping a stone', blurb: 'Crouches at the stream and throws: three ripple rings, sometimes a fourth. He nods.' },
       { id: 'cloud_watch', title: 'Watching clouds', blurb: 'Lies in the grass with the pack off. One small shift. Sometimes a cloud grows an ear and he looks up.' },
-      { id: 'stream_listen', title: 'Listening to the stream', blurb: 'Sits by the water. A single leaf drifts down and lands on his knee. He leaves it there.' }
+      { id: 'stream_listen', title: 'Listening to the stream', blurb: 'Sits by the water. A single leaf drifts down and lands on his knee. He leaves it there.' },
+      { id: 'birds_on_water', title: 'Birds on the water', blurb: 'Mike\'s idea. He sits by the stream; two or three birds land on the water, bob with the flow, dip their heads, flick their wings, one chases another; he watches; they fly off together.' }
     ],
     minors: [
       { id: 'chipmunk_cross', title: 'Chipmunk crossing', blurb: 'Runs along the bank in front of the fire, sits up halfway to look, runs on. Carries a crumb, then a nut, then a granola bar on later crossings.' },
@@ -362,7 +364,11 @@ python3 -I ../tools/review_clips.py --preview ./ss_preview --out ../../docs/scre
       { id: 'ranger_ridge', title: 'Ranger on the ridge', blurb: 'A tiny figure on the far skyline blinks a lantern three times. He does a double take and waves; it blinks back twice and walks on.' },
       { id: 'echo', title: 'Echo', blurb: 'He cups his hands and shouts at the valley: three arcs go out, a smaller set comes back, then a tinier one, then a tiny one from the squirrel on the rock.' },
       { id: 'firefly_jar', title: 'Firefly jar', blurb: 'Dusk or night. Fireflies blink on over the grass; he sweeps three times with the jar and they gather in it. A long look, he opens the lid, they spread back out.' },
-      { id: 'stargaze', title: 'Stargazing', blurb: 'Night. He lies back; stars come out one at a time and he points at each, loses count, shakes his head, starts again faster.' }
+      { id: 'stargaze', title: 'Stargazing', blurb: 'Night. He lies back; stars come out one at a time and he points at each, loses count, shakes his head, starts again faster.' },
+      { id: 'fishing_small', title: 'Fishing: too small', blurb: 'Mike\'s idea. Rod out of the pack, cast, wait, a tiny fish; back it goes. Three times, each yank angrier, until he hurls the rod across the stream and storms off to the tent. Next loop he fishes with a stick.' },
+      { id: 'fishing_log', title: 'Fishing: the log', blurb: 'Mike\'s idea. A log floats down, the line snags it, the rod bends, he digs in his heels and is towed into the water and off the edge. The camp sits empty. He walks back in dripping, wrings out his hat, sits by the fire.' },
+      { id: 'fishing_good', title: 'Fishing: a good one', blurb: 'Mike\'s idea. The float dips, a proper fish arcs out and flops on the bank; he pounces and holds it up. At a rock by the fire: three quick strokes, a flick into the stream, and the fish goes on a stick over the flames. Dinner that loop is the fish.' },
+      { id: 'bathe', title: 'A bath', blurb: 'Mike\'s idea. Hat on a rock, pack off, wades to the middle and sits in the water: scrubs, splashes, leans back. Downstream, dead fish float past belly-up. He looks at them, sniffs his armpit, shrugs, gets out and shakes off.' }
     ]
   };
 
@@ -415,7 +421,7 @@ python3 -I ../tools/review_clips.py --preview ./ss_preview --out ../../docs/scre
     var tg = document.createElement('span'); tg.className = 'tag beat'; tg.textContent = 'spine';
     h.appendChild(tg); head.appendChild(h); g.appendChild(head);
     var cards = document.createElement('div'); cards.className = 'cards';
-    ['a', 'b', 'c'].forEach(function (L) { cards.appendChild(card(beat.id, 'beat', beat.title, beat.v[L], L)); });
+    Object.keys(beat.v).forEach(function (L) { cards.appendChild(card(beat.id, 'beat', beat.title, beat.v[L], L)); });
     g.appendChild(cards); sg.appendChild(g);
   });
 

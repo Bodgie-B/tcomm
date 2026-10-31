@@ -104,5 +104,8 @@ int appMinorCritters(const App* app);
 int appMinorForced(const App* app);
 // Leaves in the scene (leaf_fall's: falling, lying, on his hat, or blown off).
 int appLeaves(const App* app);
+// Test hook: the scene's World (core/scene/world.h; core-internal). Tests only.
+struct World;
+const World* appWorld(const App* app);
 
 }  // namespace ss

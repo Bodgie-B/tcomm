@@ -11,6 +11,8 @@
 // | shoe_back      | (this loop only) it came back: he keeps it in the tent tonight       |
 // | last_stolen    | the last thing a raccoon took (shoe, mug or book), ItemId + 1        |
 // | mouse_hole     | the tent has a bite out of its base until he patches it in setup     |
+// | rod_lost       | the rod went across (or down) the stream: the next fishing major     |
+// |                | uses a stick off the wood pile, and clears the flag                  |
 // | ring, sets     | the last MEMORY_RING majors picked and the last loops' sets: avoided |
 // | brave, persona | which critter kinds are bold this loop; re-rolled every 2 loops      |
 // | loop_count     | loops started, this one included                                    |
@@ -33,6 +35,7 @@ struct Memory {
   bool shoe_back;        // this loop: raccoon_pack brought it back (he keeps it in the tent tonight)
   uint8_t cairn_n;       // stones on the cairn at the end of the last loop
   bool mouse_hole;       // the mice got into the tent (until he patches it)
+  bool rod_lost;         // the fishing rod was thrown or towed away (fishing_small, fishing_log)
   uint32_t loop_count;   // loops started, this one included
   uint8_t last_stolen;   // ItemId + 1 of the last thing stolen, 0 none
   uint8_t ring[MEMORY_RING];   // majors picked, oldest first
@@ -70,7 +73,7 @@ int memoryMajorAge(const Memory& m, uint8_t id);
 bool memoryBrave(const Memory& m, CritterKind k);
 void memoryApplyPersona(const Memory& m, Critter& c);
 
-// "loop=3 cairn=4 shoe=0 stolen=mug hole=0 brave=deer,squirrel ring=echo,pinecone"
+// "loop=3 cairn=4 shoe=0 stolen=mug hole=0 rod=0 brave=deer,squirrel ring=echo,pinecone"
 int memoryFormat(const Memory& m, char* buf, size_t n);
 
 }  // namespace ss

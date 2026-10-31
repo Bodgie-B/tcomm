@@ -87,9 +87,9 @@ int memoryFormat(const Memory& m, char* buf, size_t n) {
     if (r > 0) k += r;
   };
   char head[96];
-  snprintf(head, sizeof head, "loop=%u cairn=%u shoe=%d stolen=%s hole=%d brave=", (unsigned)m.loop_count,
+  snprintf(head, sizeof head, "loop=%u cairn=%u shoe=%d stolen=%s hole=%d rod=%d brave=", (unsigned)m.loop_count,
            (unsigned)m.cairn_n, m.shoe_taken ? 1 : 0,
-           m.last_stolen ? itemName((ItemId)(m.last_stolen - 1)) : "none", m.mouse_hole ? 1 : 0);
+           m.last_stolen ? itemName((ItemId)(m.last_stolen - 1)) : "none", m.mouse_hole ? 1 : 0, m.rod_lost ? 1 : 0);
   put(head);
   bool any = false;
   for (int kind = 0; kind < CR_COUNT; ++kind) {

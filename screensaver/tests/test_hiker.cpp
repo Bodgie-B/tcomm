@@ -5,6 +5,7 @@
 // hiker_walk.ppm, hiker_carry.ppm.
 #include "scene/hiker.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -69,6 +70,16 @@ static void walking(Hiker& h, float phase) {
 
 static bool samePose(const HikerPose& a, const HikerPose& b) { return memcmp(&a, &b, sizeof a) == 0; }
 
+// The rod's line out to a float on the water ahead and below the hands.
+static void rodOut(Hiker& h, float bend, bool stick) {
+  hikerCarry(h, CARRY_ROD);
+  h.rod_line = true;
+  h.rod_float = true;
+  h.rod_bend = bend;
+  h.rod_stick = stick;
+  h.rod_end = Vec2{h.feet.x + (float)h.facing * 70.f, h.feet.y + 12.f};
+}
+
 // ---------------------------------------------------------------------------
 
 struct Coverage {
@@ -132,6 +143,23 @@ static void testBoundsAndBudget() {
           snprintf(what, sizeof what, "walk phase %d/12 carry %d facing %d lit %d", k, c, facing, lit);
           coverOne(cv, h, pal, what);
         }
+      }
+  // The rod: line and float out, bowed, a stick in its place; the hat off.
+  for (int facing = -1; facing <= 1; facing += 2)
+    for (int p = 0; p < POSE_COUNT; ++p)
+      for (int v = 0; v < 4; ++v) {
+        Hiker h;
+        hikerInit(h, Vec2{200.f, 220.f}, facing);
+        h.lit_from = facing;
+        rodOut(h, v == 1 ? 1.f : (v == 3 ? 0.4f : 0.f), v == 2);
+        h.hat_on = v != 3;
+        h.rod_tilt = v == 3 ? 0.4f : 0.f;
+        posed(h, (PoseId)p);
+        snprintf(what, sizeof what, "pose %s rod variant %d facing %d", hikerPoseName((PoseId)p), v, facing);
+        coverOne(cv, h, pal, what);
+        const Vec2 tip = hikerRodTip(h);
+        CHECK(tip.x == tip.x && fabsf(tip.x - h.feet.x) < 120.f, "rod tip at %.1f for feet %.1f", (double)tip.x,
+              (double)h.feet.x);
       }
   // Mid-blend frames (anticipation and overshoot reach past both ends) and idle motion.
   for (int p = 0; p < POSE_COUNT; ++p) {
@@ -336,7 +364,7 @@ static void testWalk() {
 
 static void sheetPoses(const char* path, Mood mood, int lit) {
   const Palette& pal = moodKey(mood);
-  const int cw = 150, ch = 135, cols = 5, rows = 3;
+  const int cw = 150, ch = 135, cols = 5, rows = 4;
   Frame f(cw * cols, ch * rows * 2, pal[GROUND]);
   for (int side = 0; side < 2; ++side)
     for (int p = 0; p < POSE_COUNT; ++p) {
@@ -347,6 +375,12 @@ static void sheetPoses(const char* path, Mood mood, int lit) {
       if (p == POSE_CARRY) hikerCarry(h, CARRY_WOOD);
       if (p == POSE_HOLD_MUG) hikerCarry(h, CARRY_MUG);
       if (p == POSE_READ) hikerCarry(h, CARRY_BOOK);
+      if (p == POSE_FISH_STAND || p == POSE_FISH_SIT || p == POSE_CAST) {
+        rodOut(h, 0.f, false);
+        h.rod_end = Vec2{h.feet.x + (float)h.facing * 66.f, h.feet.y - 4.f};
+        h.rod_line = p != POSE_CAST;
+        h.hat_on = p != POSE_FISH_SIT;   // bareheaded, once
+      }
       posed(h, (PoseId)p);
       hikerDraw(h, f.s, pal, Rect{cx, cy, cx + cw, cy + ch});
     }
@@ -373,7 +407,7 @@ static void sheetCarry(const char* path) {
   // Row 1: POSE_CARRY with each item. Row 2: the item in the pose it is for.
   // Row 3: the same as row 1 at 60 px.
   static const PoseId kUse[CARRY_COUNT] = {POSE_STAND, POSE_CARRY, POSE_HOLD_MUG, POSE_READ,
-                                           POSE_STAND, POSE_CARRY, POSE_CROUCH, POSE_HOLD_MUG};
+                                           POSE_STAND, POSE_CARRY, POSE_CROUCH, POSE_HOLD_MUG, POSE_FISH_STAND};
   const Palette& pal = moodKey(MOOD_GOLDEN);
   const int cw = 100, ch = 130;
   Frame f(cw * CARRY_COUNT, ch * 2 + 95, pal[GROUND]);

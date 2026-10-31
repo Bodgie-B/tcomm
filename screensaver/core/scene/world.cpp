@@ -155,6 +155,24 @@ void stepHiker(World& w) {
       P.lift += 0.045f * s * s;
     }
     if (fx.armload > 0.f) P.lean += fx.armload * (0.05f + 0.07f * sinT(h.walk_phase));   // staggering
+    if (fx.stomp > 0.f) {   // storming off: arms swung high and stiff, head down, leaning into it
+      const float s = sinT(h.walk_phase);
+      P.shoulder[0] = lerp(P.shoulder[0], 1.15f * s, fx.stomp);
+      P.shoulder[1] = lerp(P.shoulder[1], -1.15f * s, fx.stomp);
+      P.elbow[0] = lerp(P.elbow[0], 0.35f + (s > 0.f ? 0.9f * s : 0.f), fx.stomp);
+      P.elbow[1] = lerp(P.elbow[1], 0.35f + (s < 0.f ? -0.9f * s : 0.f), fx.stomp);
+      P.lean += 0.12f * fx.stomp;
+      P.head += 0.16f * fx.stomp;
+    }
+  }
+  // The waterline on him: none on the bank; deeper the further in he is.
+  fx.wet_y = 0.f;
+  if (fx.wade) {
+    float cy, half;
+    if (landscapeStreamSpan(w.land, h.feet.x, cy, half) && fabsf(h.feet.y - cy) < half) {
+      const float in = 1.f - fabsf(h.feet.y - cy) / half;
+      fx.wet_y = h.feet.y - 2.f - 0.2f * h.height * in;
+    }
   }
 
   h.lit_from = 0;
@@ -168,7 +186,7 @@ void stepHiker(World& w) {
   for (int i = 0; i < ITEM_COUNT; ++i) {
     Item& it = w.items[i];
     if (!it.held || it.critter) continue;   // a critter's paw holds it (directorStep)
-    it.pos = i == ITEM_FORK ? hikerHandPos(h, 0) : m;   // the fork stands in his near hand
+    it.pos = i == ITEM_FORK || i == ITEM_FISH ? hikerHandPos(h, 0) : m;   // fork, fish stick: in his near hand
     it.facing = (int8_t)h.facing;
     it.ground_y = h.feet.y;
   }
@@ -270,6 +288,8 @@ void worldBeginLoop(World& w, Rng& rng) {
   fx.lean = fx.head = fx.lift = fx.reach = fx.armload = 0.f;
   fx.reach_to = 1.3f;
   for (int i = 0; i < 2; ++i) fx.arm_w[i] = fx.arm_sh[i] = fx.arm_el[i] = 0.f;
+  fx.stomp = fx.wet_y = 0.f;
+  fx.wade = false;
   w.hiker_rect = kEmpty;
   tentInit(w.tent, c.tent);
   w.pack = PackProp{c.pack, 1, false, false};
@@ -433,6 +453,24 @@ void worldTick(World& w, Rng& rng, Renderer& r) {
   majorsTrack(w.major, r);
 }
 
+void worldDrawWater(const World& w, Surface& s, const Rect& clip, const Palette& pal) {
+  if (clip.empty()) return;
+  // The same polygon as the landscape's water body (landscape.cpp drawStream;
+  // keep the two in step).
+  const Landscape& ls = w.land;
+  Vec2 p[2 * LS_STREAM_PTS];
+  int n = 0;
+  for (int i = 0; i < LS_STREAM_PTS; ++i) {
+    const LsStreamPt& q = ls.stream[i];
+    p[n++] = Vec2{q.x + q.nx * q.hw, q.y + q.ny * q.hw};
+  }
+  for (int i = LS_STREAM_PTS - 1; i >= 0; --i) {
+    const LsStreamPt& q = ls.stream[i];
+    p[n++] = Vec2{q.x - q.nx * q.hw, q.y - q.ny * q.hw};
+  }
+  fillPolygon(s, p, n, pal[WATER], clip);
+}
+
 void worldDrawStatic(const World& w, Surface& frame, const Palette& pal, float mood) {
   landscapeDrawStatic(w.land, frame, pal, mood, w.build);
 }
@@ -473,6 +511,10 @@ void worldDrawDynamic(const World& w, Surface& strip, const Rect& clip, const Pa
       case ACT_HIKER:
         hikerDraw(w.hiker, strip, pal, clip);
         armloadDraw(w.hiker, w.fx.armload, strip, clip, pal);
+        if (w.fx.wet_y > 0.f) {   // in the stream: the water over him below his waterline
+          const Rect& hr = w.hiker_rect;
+          worldDrawWater(w, strip, clip.clipped(Rect{hr.x0, (int)ceilf(w.fx.wet_y), hr.x1, hr.y1}), pal);
+        }
         break;
       case ACT_TENT: tentDraw(w.tent, strip, clip, pal); break;
       case ACT_PACK: packDraw(w.pack, strip, clip, pal); break;
@@ -482,7 +524,10 @@ void worldDrawDynamic(const World& w, Surface& strip, const Rect& clip, const Pa
       case ACT_LEAF: leafDraw(w.leaf, strip, clip, pal); break;
       case ACT_CRITTER: critterDraw(w.critters[a.idx], strip, pal, clip); break;
       case ACT_BIT: bitDraw(w.bits[a.idx], strip, clip, pal); break;
-      case ACT_MAJOR: glyphDraw(w.major.g[a.idx], strip, clip, pal); break;
+      case ACT_MAJOR:
+        if (w.major.g[a.idx].kind == GL_WATER) worldDrawWater(w, strip, clip.clipped(glyphBounds(w.major.g[a.idx])), pal);
+        else glyphDraw(w.major.g[a.idx], strip, clip, pal);
+        break;
       case ACT_FGPINE: {   // only over its actor: elsewhere the cached pine is already right
         const int owner = a.idx >> 1;
         const Rect& over = owner == 0 ? w.hiker_rect : w.critter_rect[owner - 1];

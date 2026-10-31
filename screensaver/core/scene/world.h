@@ -54,13 +54,13 @@ struct ActorRef {
   uint8_t idx;
   int16_t base_y;
 };
-// Fire 1, tufts 14, hiker 1 + 2 pines, props 4 + 7 items, leaf 1 = 30;
+// Fire 1, tufts 14, hiker 1 + 2 pines, props 4 + 10 items, leaf 1 = 33;
 // critters 8 (+ 2 pine redraws each near the left edge), bits 6. sortActors
 // stops adding at the cap (tufts are added before the critters, so a full
 // list drops critters at the far left first, never the hiker or props).
 // A major's glyphs (up to GLYPH_MAX 28: kept stars and fireflies) come last;
 // 88 holds them all.
-#define WORLD_ACTOR_MAX 88
+#define WORLD_ACTOR_MAX 91
 
 // Critters in the scene: slots the director (director.h) hands out.
 #define CRITTER_MAX 8
@@ -106,6 +106,13 @@ struct HikerFx {
   // Arm i (0 near) blended by arm_w[i] toward absolute shoulder and elbow
   // angles (sips, bites, a shrug, a throw), before `reach` is applied.
   float arm_w[2], arm_sh[2], arm_el[2];
+  float stomp;                     // 0..1 a cross, stamping walk: arms swung high, head down (fishing_small)
+  // In the stream: with `wade` on, World works out the waterline on him each
+  // tick from how far into the water his feet are (shin deep standing in the
+  // middle, belly deep sitting there) and redraws the water over him below
+  // it (wet_y; 0 when he is dry or `wade` is off).
+  bool wade;
+  float wet_y;
 };
 
 // Previous bounds per element, so a move dirties both where it was and where it is.
@@ -202,6 +209,11 @@ void worldTick(World& w, Rng& rng, Renderer& r);
 // longest (a resting cone or leaf). The slot is cleared and given `kind`.
 // -1 when every slot is busy (falling, flying, spreading).
 int worldTakeBit(World& w, uint8_t kind);
+
+// The stream's water body (as the landscape draws it into the cache) over
+// whatever is inside `clip`: the hiker below his waterline, a bird sitting
+// low on the water (a major's GL_WATER glyph).
+void worldDrawWater(const World& w, Surface& s, const Rect& clip, const Palette& pal);
 
 void worldDrawStatic(const World& w, Surface& frame, const Palette& pal, float mood);
 void worldDrawDynamic(const World& w, Surface& strip, const Rect& clip, const Palette& pal, float mood);

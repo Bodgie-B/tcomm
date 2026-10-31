@@ -676,9 +676,11 @@ void drawMushroom(const Landscape& ls, Surface& s, const Palette& pal, const Rec
   }
   cap[9] = Vec2{sx - rx * 0.7f, cy + 1.2f * cs};
   cap[10] = Vec2{sx + rx * 0.7f, cy + 1.2f * cs};
-  fillPolygon(s, cap, 11, pal[FIRE], clip);
-  fillCircle(s, Vec2{sx - 2.5f * cs, cy - 2.4f * cs}, 1.1f * cs, pal[FIRE_CORE], clip);
-  fillCircle(s, Vec2{sx + 2.2f * cs, cy - 3.6f * cs}, 1.0f * cs, pal[FIRE_CORE], clip);
+  fillPolygon(s, cap, 11, pal[MUSHROOM], clip);
+  // Spots: the cap toward the pale stem, so they dim with the mood too.
+  const Pixel spot = mixRGB(pal[MUSHROOM], pal[WATER_LIGHT], 0.65f);
+  fillCircle(s, Vec2{sx - 2.5f * cs, cy - 2.4f * cs}, 1.1f * cs, spot, clip);
+  fillCircle(s, Vec2{sx + 2.2f * cs, cy - 3.6f * cs}, 1.0f * cs, spot, clip);
 }
 
 void drawLayer(const Landscape& ls, int layer, Surface& s, const Palette& pal, float mood,

@@ -200,6 +200,38 @@ void capL(const Item& it, float x0, float y0, float x1, float y1, float w, Surfa
   strokeCapsule(s, itemPt(it, x0, y0), itemPt(it, x1, y1), w * it.size, c, clip);
 }
 
+// The hat off his head, standing on its brim (local px, base at y 0): the
+// brim, and the crown with its dent, as on the rig at 90 px.
+constexpr float kHatBrim[4] = {-9.f, -1.5f, 12.f, -1.5f};
+constexpr float kHatBrimW = 3.1f;
+const Shape kHatCrown = {5, {{-6.f, -2.f}, {6.f, -2.f}, {5.f, -9.2f}, {0.f, -8.2f}, {-5.f, -9.2f}}};
+
+// The fish on its stick, in the stick's frame (x out along it from the far
+// end, y across), at size 1: about 14 px, nose outward.
+const float kFishBody[8][2] = {{7.f, 0.f}, {4.8f, -2.4f}, {0.f, -3.f}, {-4.3f, -1.9f},
+                               {-5.8f, 0.f}, {-4.3f, 1.7f}, {0.f, 2.7f}, {4.8f, 2.1f}};
+const float kFishTail[3][2] = {{-5.f, 0.f}, {-9.6f, -3.6f}, {-9.1f, 3.6f}};
+
+// Stick end points: from pos along `angle` turns from up, + toward facing.
+void fishStick(const Item& it, Vec2& a, Vec2& b, Vec2& d) {
+  const float sx = it.facing < 0 ? -1.f : 1.f;
+  d = Vec2{sx * sinT(it.angle), -cosT(it.angle)};
+  a = it.pos;
+  b = Vec2{a.x + d.x * kItemFishStick, a.y + d.y * kItemFishStick};
+}
+// A point of the fish (fx along the stick from its tip, fy across), scaled.
+inline Vec2 fishPt(Vec2 tip, Vec2 d, float k, float fx, float fy) {
+  return Vec2{tip.x + d.x * fx * k - d.y * fy * k, tip.y + d.y * fx * k + d.x * fy * k};
+}
+// The rod lying: centred on pos, turned `angle` turns off flat.
+void rodEnds(const Item& it, Vec2& a, Vec2& b) {
+  const float sx = it.facing < 0 ? -1.f : 1.f;
+  const float h = 0.5f * kItemRodLen * it.size;
+  const Vec2 d{sx * cosT(it.angle), -sinT(it.angle)};
+  a = Vec2{it.pos.x - d.x * h, it.pos.y - 1.5f - d.y * h};
+  b = Vec2{it.pos.x + d.x * h, it.pos.y - 1.5f + d.y * h};
+}
+
 // Wood pile logs: (x0, y0, x1, y1) at size 1, width 5.
 const float kLogs[3][4] = {{-11.f, -2.6f, 11.f, -3.4f}, {-9.f, -7.2f, 12.f, -6.6f}, {-6.f, -11.6f, 8.f, -11.8f}};
 constexpr float kLogW = 5.f;
@@ -406,6 +438,25 @@ Rect itemBounds(ItemId id, const Item& it) {
         e.pt(itemPt(it, l[2], l[3]), 0.5f * l[4] * it.size);
       }
       break;
+    case ITEM_ROD: {
+      Vec2 a, b;
+      rodEnds(it, a, b);
+      e.pt(a, 2.5f);
+      e.pt(b, 2.5f);
+      break;
+    }
+    case ITEM_HAT:
+      e.pt(itemPt(it, kHatBrim[0], -9.2f), 0.5f * kHatBrimW);
+      e.pt(itemPt(it, kHatBrim[2], 0.f), 0.5f * kHatBrimW);
+      break;
+    case ITEM_FISH: {
+      Vec2 a, b, d;
+      fishStick(it, a, b, d);
+      e.pt(a, 1.5f);
+      e.pt(b, 1.5f);
+      e.pt(b, 10.f * (it.size > 0.05f ? it.size : 0.75f) + 1.f);
+      break;
+    }
     default:
       break;
   }
@@ -450,6 +501,47 @@ void itemDraw(ItemId id, const Item& it, Surface& s, const Rect& clip, const Pal
     case ITEM_FORK:
       for (const auto& l : (it.held ? kForkUp : kForkFlat)) capL(it, l[0], l[1], l[2], l[3], l[4], s, pal[ACTOR], clip);
       break;
+    case ITEM_ROD: {   // a thin line with the reel near its butt; the stick is thicker, TRUNK
+      Vec2 a, b;
+      rodEnds(it, a, b);
+      if (it.alt) {
+        strokeCapsule(s, a, b, 2.6f, pal[TRUNK], clip);
+      } else {
+        strokeCapsule(s, a, b, 1.6f, pal[ACTOR], clip);
+        fillCircle(s, mixV(a, b, 0.14f), 2.f, pal[ACTOR], clip);
+      }
+      break;
+    }
+    case ITEM_HAT:
+      capL(it, kHatBrim[0], kHatBrim[1], kHatBrim[2], kHatBrim[3], kHatBrimW, s, pal[ACTOR], clip);
+      fillShape(it, kHatCrown, s, pal[ACTOR], clip);
+      break;
+    case ITEM_FISH: {   // the stick, and the fish skewered on its far end (or what is left of it)
+      Vec2 a, b, d;
+      fishStick(it, a, b, d);
+      strokeCapsule(s, a, b, 1.8f, pal[TRUNK], clip);
+      const Pixel c = pal[ACTOR];
+      if (it.size > 0.05f) {
+        const float k = it.size;
+        // Skewered lengthwise: the body centred a little in from the tip.
+        const Vec2 m = fishPt(b, d, 1.f, -2.f, 0.f);
+        Vec2 p[8];
+        for (int i = 0; i < 8; ++i) p[i] = fishPt(m, d, k, kFishBody[i][0], kFishBody[i][1]);
+        fillPolygon(s, p, 8, c, clip);
+        for (int i = 0; i < 3; ++i) p[i] = fishPt(m, d, k, kFishTail[i][0], kFishTail[i][1]);
+        fillPolygon(s, p, 3, c, clip);
+      } else {   // the skeleton: head, spine, two ribs and the tail
+        const Vec2 m = fishPt(b, d, 1.f, -2.f, 0.f);
+        const float k = 0.75f;
+        fillCircle(s, fishPt(m, d, k, 5.5f, 0.f), 2.2f, c, clip);
+        strokeCapsule(s, fishPt(m, d, k, 4.f, 0.f), fishPt(m, d, k, -6.f, 0.f), 1.1f, c, clip);
+        strokeCapsule(s, fishPt(m, d, k, 1.5f, -3.f), fishPt(m, d, k, 1.5f, 3.f), 1.f, c, clip);
+        strokeCapsule(s, fishPt(m, d, k, -2.f, -2.6f), fishPt(m, d, k, -2.f, 2.6f), 1.f, c, clip);
+        strokeCapsule(s, fishPt(m, d, k, -6.f, 0.f), fishPt(m, d, k, -9.f, -2.8f), 1.f, c, clip);
+        strokeCapsule(s, fishPt(m, d, k, -6.f, 0.f), fishPt(m, d, k, -9.f, 2.8f), 1.f, c, clip);
+      }
+      break;
+    }
     default:
       break;
   }
@@ -458,11 +550,12 @@ void itemDraw(ItemId id, const Item& it, Surface& s, const Rect& clip, const Pal
 bool itemSame(const Item& a, const Item& b) {
   return sameV(a.pos, b.pos) && a.down == b.down && a.held == b.held && a.facing == b.facing && a.size == b.size &&
          a.ground_y == b.ground_y && a.on_fire == b.on_fire && a.critter == b.critter && a.angle == b.angle && a.grip == b.grip &&
-         a.squeeze == b.squeeze;
+         a.squeeze == b.squeeze && a.alt == b.alt;
 }
 
 const char* itemName(ItemId id) {
-  static const char* const kNames[ITEM_COUNT] = {"mug", "book", "pot", "stick", "shoe", "wood", "fork"};
+  static const char* const kNames[ITEM_COUNT] = {"mug", "book", "pot", "stick", "shoe", "wood", "fork",
+                                                  "rod", "hat", "fish"};
   return id < ITEM_COUNT ? kNames[id] : "?";
 }
 

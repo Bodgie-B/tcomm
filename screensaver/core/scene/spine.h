@@ -38,14 +38,19 @@ enum SpineBeatId : uint8_t {
 // Calm fillers for the long gaps (brief section 8): the hiker alone, 30 to 60 s
 // each, with real stillness in them.
 enum FillerId : uint8_t {
-  FILL_MUG_SUNSET = 0, FILL_READ, FILL_CAIRN, FILL_SKIP_STONE, FILL_CLOUD_WATCH, FILL_STREAM_LISTEN, FILL_COUNT
+  FILL_MUG_SUNSET = 0, FILL_READ, FILL_CAIRN, FILL_SKIP_STONE, FILL_CLOUD_WATCH, FILL_STREAM_LISTEN,
+  FILL_BIRDS_ON_WATER,   // birds come down on the stream while he watches (majors.cpp drives them)
+  FILL_COUNT
 };
 
 #define SPINE_FILLER_MAX 4
 #define SPINE_MAJOR_MAX 4
 
 struct LoopPlan {
-  uint8_t arrival, setup, firewood, fire, dinner, foodbag, bear, close;   // variant index per beat
+  // Variant index per beat. Dinner 3 (fish_dinner) is never drawn at random:
+  // the plan sets it whenever fishing_good (majors.h) is placed, since that
+  // major leaves a fish on a stick over the fire for it.
+  uint8_t arrival, setup, firewood, fire, dinner, foodbag, bear, close;
   uint8_t n_fillers;
   uint8_t filler[SPINE_FILLER_MAX];          // FillerId, in play order
   uint8_t filler_after[SPINE_FILLER_MAX];    // SpineBeatId each one follows
@@ -69,8 +74,10 @@ struct LoopPlan {
   bool patch;
 };
 
-// Variants built for a beat (1 for the placeholders), and a plan's pick.
+// Variants a beat draws from at random, and a plan's pick. (Dinner also has
+// variant 3, fish_dinner, which only fishing_good brings: SPINE_DINNER_FISH.)
 int spineVariantCount(int beat);
+#define SPINE_DINNER_FISH 3
 uint8_t spineVariant(const LoopPlan& p, int beat);
 const char* spineBeatName(int beat);
 const char* spineFillerName(int filler);

@@ -12,6 +12,8 @@
 #include "scene/hiker.h"
 #include "scene/props.h"
 #include "scene/world.h"
+#include "scene/landscape.h"
+#include <math.h>
 
 #include <chrono>
 #include <stdio.h>
@@ -412,7 +414,8 @@ static void testSpineQuietCorner() {
 }
 
 static const char* const kBeats[8] = {"arrival", "setup", "firewood", "fire", "dinner", "foodbag", "bear", "close"};
-static const char* const kFillers[6] = {"mug_sunset", "read", "cairn", "skip_stone", "cloud_watch", "stream_listen"};
+static const char* const kFillers[7] = {"mug_sunset", "read",          "cairn",         "skip_stone",
+                                        "cloud_watch", "stream_listen", "birds_on_water"};
 
 static bool parsePlan(const App* a, int v[8]) {
   char buf[200];
@@ -468,8 +471,8 @@ static void testSpineVariants() {
   CritterWatch cw;
   bool bear_far = false;       // bear c fetching the firewood stick from the fire
   int dinner_runs = 0, dinner_with = 0, thefts = 0, closes = 0;
-  bool seen[8][3] = {};
-  bool fseen[6] = {};
+  bool seen[8][4] = {};   // dinner 3 (fish_dinner) comes only with fishing_good: testStreamVignettes
+  bool fseen[7] = {};
   int seeds_run = 0;
   for (uint64_t seed = 1; seed <= 60; ++seed) {
     Rig a;
@@ -481,7 +484,7 @@ static void testSpineVariants() {
     bool fresh = false;
     for (int b = 0; b < 8; ++b) fresh = fresh || !seen[b][v[b]];
     fresh = fresh || (v[6] == 2 && v[2] == 2 && !bear_far);   // also run the far-stick bear
-    for (int f = 0; f < 6; ++f) fresh = fresh || (!fseen[f] && strstr(plan, kFillers[f]));
+    for (int f = 0; f < 7; ++f) fresh = fresh || (!fseen[f] && strstr(plan, kFillers[f]));
     if (!fresh) {
       a.stop();
       continue;
@@ -514,7 +517,7 @@ static void testSpineVariants() {
       if (rolled) break;   // the new loop's world: the close was checked by the last tick
       if (!beatIs(a.app, prev)) {   // a beat just ended
         const int b = beatIndex(prev, kBeats, 8);
-        const int f = beatIndex(prev, kFillers, 6);
+        const int f = beatIndex(prev, kFillers, 7);
         if (b >= 0 && b <= 4) {
           CHECK(vis && r.x0 >= 0 && r.x1 <= SS_WIDTH, "seed %d: %s variant %d ends with the hiker out of frame",
                 (int)seed, kBeats[b], v[b]);
@@ -558,12 +561,12 @@ static void testSpineVariants() {
         ++missing;
         printf("variant %s %d never ran in 60 seeds\n", kBeats[b], k);
       }
-  for (int f = 0; f < 6; ++f)
+  for (int f = 0; f < 7; ++f)
     if (!fseen[f]) {
       ++missing;
       printf("filler %s never ran in 60 seeds\n", kFillers[f]);
     }
-  printf("spine variants: all 24 variants and 6 fillers run in %d seeds\n", seeds_run);
+  printf("spine variants: all 24 variants and 7 fillers run in %d seeds\n", seeds_run);
   CHECK(missing == 0, "%d variants or fillers unseen", missing);
 }
 
@@ -970,9 +973,11 @@ static void testMinors() {
 
 // ---- stage 6: surprise majors, variety, memory ---------------------------------------
 
-static const char* const kMajorNames[12] = {"squirrel_splash", "deer_stick",     "pinecone",     "map_chase",
-                                             "fish_leap",       "raccoon_pack",   "ants_cookie",  "shadow_theater",
-                                             "ranger_ridge",    "echo",           "firefly_jar",  "stargaze"};
+#define N_MAJORS 16
+static const char* const kMajorNames[N_MAJORS] = {
+    "squirrel_splash", "deer_stick", "pinecone",    "map_chase",     "fish_leap",     "raccoon_pack",
+    "ants_cookie",     "shadow_theater", "ranger_ridge", "echo",     "firefly_jar",   "stargaze",
+    "fishing_small",   "fishing_log",    "fishing_good", "bathe"};
 
 // The part of a plan line that the variety rule compares: the spine variants
 // and the majors (the fillers and pauses are left out).
@@ -985,7 +990,7 @@ static void planTuple(const App* a, char* out, size_t n) {
   snprintf(out, n, "%.*s%s", head, buf, m ? m : "");
 }
 
-static int majorIndex(const char* name) { return beatIndex(name, kMajorNames, 12); }
+static int majorIndex(const char* name) { return beatIndex(name, kMajorNames, N_MAJORS); }
 
 // The loop's majors as a bit set (bit = index in kMajorNames).
 static unsigned majorSet(const App* a) {
@@ -993,7 +998,7 @@ static unsigned majorSet(const App* a) {
   appLoopPlan(a, buf, sizeof buf);
   const char* m = strstr(buf, "majors=");
   unsigned set = 0;
-  for (int k = 0; m && k < 12; ++k) {
+  for (int k = 0; m && k < N_MAJORS; ++k) {
     const char* q = strstr(m, kMajorNames[k]);
     if (q && (q[strlen(kMajorNames[k])] == ',' || q[strlen(kMajorNames[k])] == 0)) set |= 1u << k;
   }
@@ -1014,7 +1019,7 @@ static void testVariety() {
   Rig a;
   CHECK(a.start(1, makeInputs(0.f, true)), "start");
   char tuples[10][400];
-  int fired[12] = {};
+  int fired[N_MAJORS] = {};
   int loops = 0, bad_busy = 0, bad_still = 0, bad_end = 0, majors_run = 0, repeats = 0;
   unsigned last_set = majorSet(a.app);
   char prev[32] = "build", before[32] = "";
@@ -1103,7 +1108,7 @@ static void testVariety() {
   unsigned sets[10] = {};
   for (int i = 0; i < 10; ++i) {
     const char* m = strstr(tuples[i], "majors=");
-    for (int k = 0; m && k < 12; ++k) {
+    for (int k = 0; m && k < N_MAJORS; ++k) {
       const char* q = strstr(m, kMajorNames[k]);
       if (q && (q[strlen(kMajorNames[k])] == ',' || q[strlen(kMajorNames[k])] == 0)) sets[i] |= 1u << k;
     }
@@ -1116,7 +1121,7 @@ static void testVariety() {
   CHECK(same_set == 0, "%d pairs of the first 10 loops play the same set of majors", same_set);
   int never = 0;
   printf("majors over 30 loops (%d run):", majors_run);
-  for (int i = 0; i < 12; ++i) {
+  for (int i = 0; i < N_MAJORS; ++i) {
     printf(" %s %d", kMajorNames[i], fired[i]);
     if (!fired[i]) ++never;
   }
@@ -1321,6 +1326,191 @@ static void testMajorsStartClear() {
   CHECK(leaves == 0, "%d majors began with a leaf about", leaves);
 }
 
+
+// ---- the stream vignettes (Mike's idea) -------------------------------------------------------
+// fishing_small, fishing_log, fishing_good (and dinner 3, fish_dinner, which
+// it brings), bathe and the birds_on_water filler: seeds tried until each has
+// run (cap 80), rendering every tick. While visible the hiker stays in frame
+// and out of the corner; at the end of each of these beats he is in frame,
+// out of the water and has his hat on; the rod, hat and fish items and the
+// log, the dead fish and the thrown rod never touch the quiet corner; no
+// overruns; strips per frame over the new majors (<= 10); determinism at 3
+// ticks inside one of them; and rod_lost across loops (a stick next time).
+static const char* const kStream[6] = {"fishing_small", "fishing_log", "fishing_good", "bathe", "birds_on_water",
+                                       "fish_dinner"};
+static bool inCorner(const Rect& r) { return !r.empty() && r.x1 > LS_QUIET_X0_T && r.y1 > LS_QUIET_Y0_T; }
+
+static void testStreamVignettes() {
+  bool seen[6] = {};
+  long strips[5] = {};
+  int frames[5] = {}, worst[5] = {};
+  int bad_frame = 0, bad_end = 0, bad_corner = 0, overruns = 0, seeds_run = 0, ends = 0;
+  uint64_t det_seed = 0;
+  int det_at = -1;
+  for (uint64_t seed = 1; seed <= 80; ++seed) {
+    bool all = true;
+    for (bool b : seen) all = all && b;
+    if (all) break;
+    const Inputs in = makeInputs(seed % 3 == 0 ? 0.f : 4.f, seed % 3 == 0);
+    Rig a;
+    CHECK(a.start(seed, in), "start");
+    char plan[400];
+    appLoopPlan(a.app, plan, sizeof plan);
+    int v[8];
+    CHECK(parsePlan(a.app, v), "plan");
+    const bool fish_dinner = v[4] == 3;
+    CHECK(fish_dinner == (strstr(plan, "fishing_good") != nullptr), "seed %d: dinner=%d with plan %s", (int)seed, v[4],
+          plan);
+    bool fresh = fish_dinner && !seen[5];
+    for (int k = 0; k < 5; ++k) fresh = fresh || (!seen[k] && strstr(plan, kStream[k]));
+    if (!fresh) {
+      a.stop();
+      continue;
+    }
+    ++seeds_run;
+    char prev[32] = "build";
+    const uint32_t len = appLoopTicks(a.app);
+    for (uint32_t t = 1; t <= len; ++t) {
+      if (t == len) {   // the loop's last tick: every beat but the close has ended
+        if (appSpineOverruns(a.app)) {
+          ++overruns;
+          printf("seed %d (%s): %d overruns\n", (int)seed, plan, appSpineOverruns(a.app));
+        }
+      }
+      if (appTick(a.app)) break;
+      const int n = appRender(a.app, a.surf);
+      const World* w = appWorld(a.app);
+      const char* beat = appBeatName(a.app);
+      int k = beatIndex(beat, kStream, 5);
+      if (k < 0 && fish_dinner && !strcmp(beat, "dinner")) k = 5;
+      if (k >= 0 && k < 5) {
+        strips[k] += n;
+        ++frames[k];
+        if (n > worst[k]) worst[k] = n;
+        if (det_seed == 0 && k == 1) {   // fishing_log: the determinism check runs on it
+          det_seed = seed;
+          det_at = (int)t;
+        }
+      }
+      Rect hr;
+      if (appHikerBounds(a.app, &hr)) {
+        const bool ok = hr.x1 > 0 && hr.x0 < SS_WIDTH && hr.y0 >= 0 && hr.y1 <= SS_HEIGHT && !inCorner(hr);
+        if (!ok && bad_frame < 3)
+          printf("seed %d tick %u (%s): hiker rect %d,%d,%d,%d\n", (int)seed, (unsigned)t, beat, hr.x0, hr.y0, hr.x1,
+                 hr.y1);
+        if (!ok) ++bad_frame;
+      }
+      for (int i = ITEM_ROD; i <= ITEM_FISH; ++i) {
+        const Item& it = w->items[i];
+        if (!it.down && !(it.held && w->hiker.visible)) continue;
+        const Rect r = itemBounds((ItemId)i, it);
+        if (inCorner(r) || (it.down && (r.y1 > SS_HEIGHT + 2 || r.x0 < -2 || r.x1 > SS_WIDTH + 2))) {
+          if (bad_corner < 3)
+            printf("seed %d tick %u: %s at %d,%d,%d,%d\n", (int)seed, (unsigned)t, itemName((ItemId)i), r.x0, r.y0,
+                   r.x1, r.y1);
+          ++bad_corner;
+        }
+      }
+      for (const Glyph& g : w->major.g) {
+        if (g.kind != GL_SHAPE || (g.shape != SH_LOG && g.shape != SH_DEADFISH && g.shape != SH_ROD)) continue;
+        if (inCorner(glyphBounds(g))) {
+          if (bad_corner < 3) printf("seed %d tick %u: glyph %d in the corner\n", (int)seed, (unsigned)t, g.shape);
+          ++bad_corner;
+        }
+      }
+      if (strcmp(beat, prev) != 0) {   // a beat ended: was it one of ours?
+        int was = beatIndex(prev, kStream, 5);
+        if (was < 0 && fish_dinner && !strcmp(prev, "dinner")) was = 5;
+        if (was >= 0) {
+          seen[was] = true;
+          ++ends;
+          const Hiker& h = w->hiker;
+          float cy, half;
+          const bool wet = w->fx.wet_y > 0.f || w->fx.wade ||
+                           (landscapeStreamSpan(w->land, h.feet.x, cy, half) && fabsf(h.feet.y - cy) < half);
+          const bool ok = h.visible && hr.x0 >= 0 && hr.x1 <= SS_WIDTH && !wet && h.hat_on;
+          if (!ok) {
+            ++bad_end;
+            printf("seed %d: %s ends with the hiker %s (visible %d, wet %d, hat %d)\n", (int)seed, kStream[was],
+                   "out of place", (int)h.visible, (int)wet, (int)h.hat_on);
+          }
+        }
+        snprintf(prev, sizeof prev, "%s", beat);
+      }
+    }
+    a.stop();
+  }
+  int missing = 0;
+  for (int k = 0; k < 6; ++k)
+    if (!seen[k]) {
+      ++missing;
+      printf("stream: %s never ran in 80 seeds\n", kStream[k]);
+    }
+  printf("stream vignettes: all 6 ran in %d seeds, %d beat ends checked\n", seeds_run, ends);
+  for (int k = 0; k < 5; ++k) {
+    const float avg = frames[k] ? (float)strips[k] / (float)frames[k] : 0.f;
+    printf("stream: %s %d frames: avg %.2f strips, max %d\n", kStream[k], frames[k], (double)avg, worst[k]);
+    CHECK(avg <= 10.f, "%s averages %.2f strips per frame (budget 10)", kStream[k], (double)avg);
+  }
+  CHECK(missing == 0, "%d stream vignettes never ran", missing);
+  CHECK(bad_frame == 0, "%d ticks with the hiker out of frame or in the corner", bad_frame);
+  CHECK(bad_end == 0, "%d stream beats ended with him out of frame, wet or hatless", bad_end);
+  CHECK(bad_corner == 0, "%d ticks with a rod, hat, fish, log or dead fish in the quiet corner", bad_corner);
+  CHECK(overruns == 0, "%d stream loops overran", overruns);
+
+  // Determinism at 3 ticks of fishing_log: rendered every tick vs full rebuilds.
+  CHECK(det_seed != 0, "no fishing_log to check determinism on");
+  if (det_seed) {
+    const Inputs in = makeInputs(det_seed % 3 == 0 ? 0.f : 4.f, det_seed % 3 == 0);
+    Rig x, y;
+    CHECK(x.start(det_seed, in) && y.start(det_seed, in), "start");
+    const int at[3] = {det_at + 15 * SS_TICK_HZ, det_at + 27 * SS_TICK_HZ, det_at + 50 * SS_TICK_HZ};
+    int t = 0;
+    for (int k = 0; k < 3; ++k) {
+      for (; t < at[k]; ++t) {
+        appTick(x.app);
+        appTick(y.app);
+        appRender(x.app, x.surf);
+      }
+      appInvalidate(y.app);
+      appRender(y.app, y.surf);
+      CHECK(sameFrame(x, y), "stream: same seed differs at tick %d (%s), pixel %ld", t, appBeatName(x.app),
+            firstDiff(x, y));
+    }
+    printf("stream determinism: seed %d, 3 ticks in %s\n", (int)det_seed, "fishing_log");
+    x.stop();
+    y.stop();
+  }
+
+  // rod_lost: a loop whose fishing threw (or lost) the rod leaves rod=1; the
+  // next fishing major fishes with a stick and clears it.
+  Rig r;
+  CHECK(r.start(1, makeInputs(4.f)), "start");
+  int lost = 0, sticks = 0, bad_stick = 0;
+  int rod_at_begin = -1;
+  char prev[32] = "";
+  for (int loop = 0; loop < 25; ++loop) {
+    while (!appTick(r.app)) {
+      const char* beat = appBeatName(r.app);
+      if (strcmp(beat, prev) == 0) continue;
+      const World* w = appWorld(r.app);
+      if (!strncmp(beat, "fishing_", 8)) {   // just began: the flag was read and cleared
+        if (w->major.stick != (rod_at_begin == 1)) ++bad_stick;
+        if (w->major.stick) ++sticks;
+        if (w->memory.rod_lost) ++bad_stick;
+      }
+      if (!strcmp(beat, "still")) rod_at_begin = memField(r.app, "rod=");
+      if ((!strcmp(prev, "fishing_small") || !strcmp(prev, "fishing_log")) && !w->memory.rod_lost) ++bad_stick;
+      if (!strcmp(prev, "fishing_small") || !strcmp(prev, "fishing_log")) ++lost;
+      snprintf(prev, sizeof prev, "%s", beat);
+    }
+  }
+  printf("stream memory: the rod lost %d times, fished with a stick %d times\n", lost, sticks);
+  CHECK(lost > 0 && sticks > 0, "rod lost %d, stick used %d in 25 loops", lost, sticks);
+  CHECK(bad_stick == 0, "%d rod_lost mistakes", bad_stick);
+  r.stop();
+}
+
 int main() {
   testAppSize();
   testDeterminism();
@@ -1344,6 +1534,7 @@ int main() {
   testMinors();
   testHikerScatter();
   testMajorsStartClear();
+  testStreamVignettes();
   writeImages();
   if (g_fail) {
     printf("%d failure(s)\n", g_fail);

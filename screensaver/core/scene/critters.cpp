@@ -1044,7 +1044,7 @@ void buildBird(const Critter& c, const Look& L, Prims& ps) {
     cap(ps, sh, add(sh, Vec2{-6.5f, -rise - 1.0f}), 1.6f);
     cap(ps, sh, add(sh, Vec2{4.5f, -rise - 0.5f}), 1.5f);
   }
-  if (c.carry != CC_NONE) carryItem(ps, c.carry == CC_SHOE ? CC_CRUMB : c.carry, at(H, 4.6f, -0.8f), P.head);
+  if (c.carry != CC_NONE) carryItem(ps, c.carry == CC_SHOE ? (uint8_t)CC_CRUMB : c.carry, at(H, 4.6f, -0.8f), P.head);
 }
 
 // ---- build + finish ----------------------------------------------------------

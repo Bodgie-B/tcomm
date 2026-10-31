@@ -19,6 +19,10 @@ namespace {
 //     TREES_MID and the near-tree slots darker than RIDGE_NEAR.
 //   - Night stays dim: nothing above ~60% luminance except FIRE_CORE, STAR,
 //     TENT_LIT and SUN (the moon).
+//   - Mike's review (stage 6): ACTOR_LIGHT >= 50/255 luminance over ACTOR at
+//     dawn..dusk and >= 30 at night and under night_dim (small highlights must
+//     read); TRUNK/FOLIAGE/FOLIAGE_DARK >= 25 over ACTOR (the bear on the pine);
+//     TENT keyed per mood; MUSHROOM dim at night. Numbers in test_palette.
 // All values are unverified on the real panel (IPS + RGB565 shift colors).
 // ---------------------------------------------------------------------------
 
@@ -28,18 +32,19 @@ constexpr uint32_t KEY_NIGHT[] = {
   /* SKY0..SKY4        */ 0x0E1A2E, 0x13233B, 0x1A2D47, 0x1E3250, 0x22385A,
   /* SUN (moon)        */ 0xD8E0EE,
   /* CLOUD_LIT, SHADE  */ 0x1D304C, 0x15263F,
-  /* RIDGE F, M, N     */ 0x1B2A40, 0x16253B, 0x132036,
-  /* TREES_FAR, MID    */ 0x142138, 0x121D2E,
+  /* RIDGE F, M, N     */ 0x1E3046, 0x1C2C44, 0x1C2A40,   // lifted ~6/255 to make room for near trees above ACTOR
+  /* TREES_FAR, MID    */ 0x1C2A48, 0x182434,             // follow the ridges up (order rules)
   /* GROUND, DARK      */ 0x0F1A28, 0x0B1420,
   /* GRASS             */ 0x142332,
   /* WATER, LIGHT      */ 0x2A4A74, 0x5A7AA0,
   /* ROCK              */ 0x1C2838,
-  /* TRUNK, FOL, FOLD  */ 0x0E1520, 0x0F1C2A, 0x0A131E,
-  /* TENT, TENT_LIT    */ 0x8A4A2A, 0xF0C070,
+  /* TRUNK, FOL, FOLD  */ 0x262230, 0x1A2634, 0x1A2232,   // >= 28/255 over ACTOR: the bear reads on the pine
+  /* TENT, TENT_LIT    */ 0x4E2C2E, 0xD8964C,   // unlit: dim rust, sits in the dark; lit: amber glow, <= 0.60 under night_dim
   /* FIRE, CORE, SMOKE */ 0xE07B39, 0xFFE3A0, 0x2E4058,
-  /* ACTOR, LIGHT      */ 0x05080F, 0x0C121C,
+  /* ACTOR, LIGHT      */ 0x020408, 0x6E4E34,   // ACTOR near black; LIGHT a small firelit amber (owl eyes, rings, rim)
   /* STAR              */ 0xFFF1C2,
   /* CHIP_OUTLINE      */ 0x3A5478,
+  /* MUSHROOM          */ 0x5A2E2C,   // dim brick red: no bright orange at night
 };
 
 // DAWN: invented. Cool pale violet-gray sky to a peach horizon, muted blue-gray
@@ -57,9 +62,10 @@ constexpr uint32_t KEY_DAWN[] = {
   /* TRUNK, FOL, FOLD  */ 0x3A3A4C, 0x4E5870, 0x3A4258,
   /* TENT, TENT_LIT    */ 0xC47E50, 0xF3D08A,
   /* FIRE, CORE, SMOKE */ 0xE07B39, 0xFFE6A8, 0xA8A4B8,
-  /* ACTOR, LIGHT      */ 0x1E2230, 0x303648,
+  /* ACTOR, LIGHT      */ 0x1A1E2C, 0x7E6E6C,   // ACTOR a step darker (trunk gap); LIGHT a warm gray that reads
   /* STAR              */ 0xFFF1C2,
   /* CHIP_OUTLINE      */ 0x8F8AAA,
+  /* MUSHROOM          */ 0xC46A4A,   // muted red-orange in the soft light
 };
 
 // MORNING: invented. Clear, a little cooler and paler than Day, warm low sun.
@@ -73,12 +79,13 @@ constexpr uint32_t KEY_MORNING[] = {
   /* GRASS             */ 0x5E8C62,
   /* WATER, LIGHT      */ 0xA7D6DD, 0xE6F4F0,
   /* ROCK              */ 0x6C7C7A,
-  /* TRUNK, FOL, FOLD  */ 0x40322A, 0x365A4B, 0x284838,
+  /* TRUNK, FOL, FOLD  */ 0x4C3A2E, 0x365A4B, 0x284838,   // TRUNK lighter: it sat 20/255 over ACTOR
   /* TENT, TENT_LIT    */ 0xCC7440, 0xF2D286,
   /* FIRE, CORE, SMOKE */ 0xE07B39, 0xFFE8A8, 0xA0B4B6,
-  /* ACTOR, LIGHT      */ 0x15251E, 0x24392E,
+  /* ACTOR, LIGHT      */ 0x101C17, 0x7E7A60,   // ACTOR a step darker; LIGHT a khaki highlight that reads
   /* STAR              */ 0xFFF1C2,
   /* CHIP_OUTLINE      */ 0x6FA0B4,
+  /* MUSHROOM          */ 0xD06A3A,   // warm cap (was FIRE)
 };
 
 // DAY: brief section 2 for sky (SKY3 interpolated between the horizon pair),
@@ -93,12 +100,13 @@ constexpr uint32_t KEY_DAY[] = {
   /* GRASS             */ 0x55855A,
   /* WATER, LIGHT      */ 0x8CC4CF, 0xDCEEEA,
   /* ROCK              */ 0x5F6D6B,
-  /* TRUNK, FOL, FOLD  */ 0x3A2E26, 0x2F5646, 0x22402F,
+  /* TRUNK, FOL, FOLD  */ 0x4A3A2E, 0x2F5646, 0x22402F,   // TRUNK lighter: it sat 18/255 over ACTOR
   /* TENT, TENT_LIT    */ 0xC96F3C, 0xF0CF7A,
   /* FIRE, CORE, SMOKE */ 0xE07B39, 0xFFE9A0, 0x8FA5AB,
-  /* ACTOR, LIGHT      */ 0x14231C, 0x22382B,
+  /* ACTOR, LIGHT      */ 0x0F1A15, 0x7E7C64,   // ACTOR a step darker; LIGHT a khaki highlight that reads
   /* STAR              */ 0xFFF1C2,
   /* CHIP_OUTLINE      */ 0x5F8FA8,
+  /* MUSHROOM          */ 0xD2642E,   // warm cap (was FIRE)
 };
 
 // GOLDEN HOUR: brief section 2 for sky (SKY3 interpolated), far ridge, mid
@@ -113,12 +121,13 @@ constexpr uint32_t KEY_GOLDEN[] = {
   /* GRASS             */ 0x6A5A3E,
   /* WATER, LIGHT      */ 0xF8CB78, 0xFFEBB8,
   /* ROCK              */ 0x7A5E58,
-  /* TRUNK, FOL, FOLD  */ 0x3A2A2A, 0x4A3A3F, 0x2E2429,
-  /* TENT, TENT_LIT    */ 0xC8662F, 0xF6C766,
+  /* TRUNK, FOL, FOLD  */ 0x46282A, 0x5A3E44, 0x422838,   // warm plum-brown, >= 32/255 over ACTOR (was ~19)
+  /* TENT, TENT_LIT    */ 0xB65A30, 0xF6C766,   // unlit: deeper sun-warmed rust, under the bright sky
   /* FIRE, CORE, SMOKE */ 0xE07B39, 0xFFE3A0, 0xA9857F,
-  /* ACTOR, LIGHT      */ 0x1A1318, 0x2C2024,
+  /* ACTOR, LIGHT      */ 0x120C10, 0xA87A56,   // ACTOR darker; LIGHT a warm tan that reads (was 16/255 over ACTOR)
   /* STAR              */ 0xFFF1C2,
   /* CHIP_OUTLINE      */ 0xC47A52,
+  /* MUSHROOM          */ 0xD85A2A,   // red-orange, a touch redder than the sky
 };
 
 // DUSK: brief section 2 for sky (SKY3 interpolated), far ridge, mid trees
@@ -133,12 +142,13 @@ constexpr uint32_t KEY_DUSK[] = {
   /* GRASS             */ 0x3C4258,
   /* WATER, LIGHT      */ 0xEF9A7C, 0xFFC9A0,
   /* ROCK              */ 0x4A4260,
-  /* TRUNK, FOL, FOLD  */ 0x2A2038, 0x2A2E48, 0x1E2038,
-  /* TENT, TENT_LIT    */ 0xC8683C, 0xF6C070,
+  /* TRUNK, FOL, FOLD  */ 0x36243A, 0x3A2E48, 0x2C2440,   // warm plum, >= 34/255 over ACTOR (was ~20)
+  /* TENT, TENT_LIT    */ 0x9A5448, 0xEAA45C,   // unlit: dusky rust in the violet light; lit: warm glow
   /* FIRE, CORE, SMOKE */ 0xF2A65A, 0xFFE6A0, 0x8A7490,
-  /* ACTOR, LIGHT      */ 0x0E0D1A, 0x1A1828,
+  /* ACTOR, LIGHT      */ 0x08070F, 0x8E6450,   // ACTOR darker; LIGHT a firelit tan (was 13/255 over ACTOR)
   /* STAR              */ 0xFFF1C2,
   /* CHIP_OUTLINE      */ 0x8A5A80,
+  /* MUSHROOM          */ 0x9C4A48,   // dusky red, no longer fire orange
 };
 
 static_assert(sizeof(KEY_NIGHT)   / sizeof(uint32_t) == SLOT_COUNT, "night table size");
@@ -178,6 +188,25 @@ inline uint8_t roundU8(float v) {
 Pixel scalePx(Pixel p, float s) {
   return rgb565(roundU8((float)red8(p) * s), roundU8((float)green8(p) * s),
                 roundU8((float)blue8(p) * s));
+}
+
+// Rec.709 luminance of the 8-bit expansion, 0..255 (the measure the tests use).
+float lum255(Pixel p) {
+  return 0.2126f * (float)red8(p) + 0.7152f * (float)green8(p) + 0.0722f * (float)blue8(p);
+}
+
+// Scale p down (hue kept) until its luminance is at most `cap` (0..255). The
+// retry absorbs 565 rounding, which can land a step above the exact scale.
+Pixel capLum(Pixel p, float cap) {
+  const float y = lum255(p);
+  if (y <= cap) return p;
+  float k = cap / y;
+  Pixel q = scalePx(p, k);
+  for (int i = 0; i < 8 && lum255(q) > cap; ++i) {
+    k *= 0.97f;
+    q = scalePx(p, k);
+  }
+  return q;
 }
 
 // Desaturate toward the pixel's own luma by `amount` 0..1.
@@ -248,14 +277,20 @@ void computePalette(float mood, const WeatherTint& w, Palette& out) {
     out.c[RIDGE_NEAR] = mixRGB(out.c[RIDGE_NEAR], h, fg * 0.25f);
   }
 
-  // Night dim: scale everything, but keep small light sources nearly intact.
+  // Night dim: scale everything, but keep small light sources nearly intact,
+  // then clamp to the night rule: large areas at most NIGHT_LUM_MAX, the small
+  // highlights at most NIGHT_HIGHLIGHT_MAX (no pure white). ACTOR_LIGHT counts
+  // as a light so the owl's eyes, the raccoon's rings and the fire-side rim
+  // still read when everything around them is dimmed.
   const float nd = clamp01(w.night_dim);
   if (nd > 0.f) {
     const float sAll = lerp(1.f, 0.55f, nd);
     const float sLight = lerp(1.f, 0.85f, nd);
+    const float capAll = 255.f * lerp(1.f, NIGHT_LUM_MAX, nd);
+    const float capHi = 255.f * lerp(1.f, NIGHT_HIGHLIGHT_MAX, nd);
     for (int s = 0; s < SLOT_COUNT; ++s) {
-      const bool light = (s == STAR || s == FIRE || s == FIRE_CORE || s == TENT_LIT);
-      out.c[s] = scalePx(out.c[s], light ? sLight : sAll);
+      const bool light = (s == STAR || s == FIRE || s == FIRE_CORE || s == TENT_LIT || s == ACTOR_LIGHT);
+      out.c[s] = capLum(scalePx(out.c[s], light ? sLight : sAll), isNightHighlight(s) ? capHi : capAll);
     }
   }
 }
