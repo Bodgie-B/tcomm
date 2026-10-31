@@ -853,6 +853,806 @@
       "file": "clips/bathe.mp4",
       "poster": "clips/bathe.png",
       "bytes": 174231
+    },
+    {
+      "name": "morning_wake_c",
+      "beat": "wake",
+      "kind": "beat",
+      "variant": "c",
+      "seed": 1,
+      "start_tick": 300,
+      "seconds": 29.04,
+      "mood": 1.5,
+      "night": false,
+      "file": "clips/morning_wake_c.mp4",
+      "poster": "clips/morning_wake_c.png",
+      "bytes": 66551,
+      "family": "morning",
+      "weather": "clear"
+    },
+    {
+      "name": "morning_coffee_b",
+      "beat": "coffee",
+      "kind": "beat",
+      "variant": "b",
+      "seed": 1,
+      "start_tick": 2200,
+      "seconds": 70.0,
+      "mood": 1.5,
+      "night": false,
+      "file": "clips/morning_coffee_b.mp4",
+      "poster": "clips/morning_coffee_b.png",
+      "bytes": 199771,
+      "family": "morning",
+      "weather": "clear"
+    },
+    {
+      "name": "morning_bag_down_b",
+      "beat": "bag_down",
+      "kind": "beat",
+      "variant": "b",
+      "seed": 1,
+      "start_tick": 8025,
+      "seconds": 42.96,
+      "mood": 1.5,
+      "night": false,
+      "file": "clips/morning_bag_down_b.mp4",
+      "poster": "clips/morning_bag_down_b.png",
+      "bytes": 141356,
+      "family": "morning",
+      "weather": "clear"
+    },
+    {
+      "name": "morning_break_camp_a",
+      "beat": "break_camp",
+      "kind": "beat",
+      "variant": "a",
+      "seed": 1,
+      "start_tick": 10600,
+      "seconds": 48.0,
+      "mood": 1.5,
+      "night": false,
+      "file": "clips/morning_break_camp_a.mp4",
+      "poster": "clips/morning_break_camp_a.png",
+      "bytes": 140959,
+      "family": "morning",
+      "weather": "clear"
+    },
+    {
+      "name": "morning_douse_a",
+      "beat": "douse",
+      "kind": "beat",
+      "variant": "a",
+      "seed": 1,
+      "start_tick": 13400,
+      "seconds": 28.0,
+      "mood": 1.5,
+      "night": false,
+      "file": "clips/morning_douse_a.mp4",
+      "poster": "clips/morning_douse_a.png",
+      "bytes": 76773,
+      "family": "morning",
+      "weather": "clear"
+    },
+    {
+      "name": "morning_leave_a",
+      "beat": "leave",
+      "kind": "beat",
+      "variant": "a",
+      "seed": 1,
+      "start_tick": 14250,
+      "seconds": 48.0,
+      "mood": 1.5,
+      "night": false,
+      "file": "clips/morning_leave_a.mp4",
+      "poster": "clips/morning_leave_a.png",
+      "bytes": 142631,
+      "family": "morning",
+      "weather": "clear"
+    },
+    {
+      "name": "morning_overview",
+      "beat": "loop_overview",
+      "kind": "overview",
+      "variant": null,
+      "seed": 1,
+      "start_tick": 0,
+      "seconds": 77.12,
+      "mood": 1.5,
+      "night": false,
+      "file": "clips/morning_overview.mp4",
+      "poster": "clips/morning_overview.png",
+      "bytes": 454538,
+      "family": "morning",
+      "weather": "clear"
+    },
+    {
+      "name": "morning_wake_a",
+      "beat": "wake",
+      "kind": "beat",
+      "variant": "a",
+      "seed": 2,
+      "start_tick": 300,
+      "seconds": 30.0,
+      "mood": 1.5,
+      "night": false,
+      "file": "clips/morning_wake_a.mp4",
+      "poster": "clips/morning_wake_a.png",
+      "bytes": 73321,
+      "family": "morning",
+      "weather": "clear"
+    },
+    {
+      "name": "morning_coffee_c",
+      "beat": "coffee",
+      "kind": "beat",
+      "variant": "c",
+      "seed": 2,
+      "start_tick": 2250,
+      "seconds": 76.0,
+      "mood": 1.5,
+      "night": false,
+      "file": "clips/morning_coffee_c.mp4",
+      "poster": "clips/morning_coffee_c.png",
+      "bytes": 195572,
+      "family": "morning",
+      "weather": "clear"
+    },
+    {
+      "name": "morning_bag_down_a",
+      "beat": "bag_down",
+      "kind": "beat",
+      "variant": "a",
+      "seed": 2,
+      "start_tick": 8050,
+      "seconds": 35.04,
+      "mood": 1.5,
+      "night": false,
+      "file": "clips/morning_bag_down_a.mp4",
+      "poster": "clips/morning_bag_down_a.png",
+      "bytes": 113581,
+      "family": "morning",
+      "weather": "clear"
+    },
+    {
+      "name": "morning_douse_b",
+      "beat": "douse",
+      "kind": "beat",
+      "variant": "b",
+      "seed": 2,
+      "start_tick": 12875,
+      "seconds": 24.96,
+      "mood": 1.5,
+      "night": false,
+      "file": "clips/morning_douse_b.mp4",
+      "poster": "clips/morning_douse_b.png",
+      "bytes": 77398,
+      "family": "morning",
+      "weather": "clear"
+    },
+    {
+      "name": "morning_leave_c",
+      "beat": "leave",
+      "kind": "beat",
+      "variant": "c",
+      "seed": 2,
+      "start_tick": 13650,
+      "seconds": 57.04,
+      "mood": 1.5,
+      "night": false,
+      "file": "clips/morning_leave_c.mp4",
+      "poster": "clips/morning_leave_c.png",
+      "bytes": 170954,
+      "family": "morning",
+      "weather": "clear"
+    },
+    {
+      "name": "morning_wake_b",
+      "beat": "wake",
+      "kind": "beat",
+      "variant": "b",
+      "seed": 3,
+      "start_tick": 300,
+      "seconds": 32.0,
+      "mood": 1.5,
+      "night": false,
+      "file": "clips/morning_wake_b.mp4",
+      "poster": "clips/morning_wake_b.png",
+      "bytes": 71117,
+      "family": "morning",
+      "weather": "clear"
+    },
+    {
+      "name": "morning_leave_b",
+      "beat": "leave",
+      "kind": "beat",
+      "variant": "b",
+      "seed": 3,
+      "start_tick": 14950,
+      "seconds": 48.0,
+      "mood": 1.5,
+      "night": false,
+      "file": "clips/morning_leave_b.mp4",
+      "poster": "clips/morning_leave_b.png",
+      "bytes": 143482,
+      "family": "morning",
+      "weather": "clear"
+    },
+    {
+      "name": "morning_coffee_a",
+      "beat": "coffee",
+      "kind": "beat",
+      "variant": "a",
+      "seed": 4,
+      "start_tick": 2400,
+      "seconds": 71.04,
+      "mood": 1.5,
+      "night": false,
+      "file": "clips/morning_coffee_a.mp4",
+      "poster": "clips/morning_coffee_a.png",
+      "bytes": 193588,
+      "family": "morning",
+      "weather": "clear"
+    },
+    {
+      "name": "morning_break_camp_c",
+      "beat": "break_camp",
+      "kind": "beat",
+      "variant": "c",
+      "seed": 6,
+      "start_tick": 11625,
+      "seconds": 42.96,
+      "mood": 1.5,
+      "night": false,
+      "file": "clips/morning_break_camp_c.mp4",
+      "poster": "clips/morning_break_camp_c.png",
+      "bytes": 130496,
+      "family": "morning",
+      "weather": "clear"
+    },
+    {
+      "name": "morning_break_camp_b",
+      "beat": "break_camp",
+      "kind": "beat",
+      "variant": "b",
+      "seed": 14,
+      "start_tick": 11475,
+      "seconds": 44.96,
+      "mood": 1.5,
+      "night": false,
+      "file": "clips/morning_break_camp_b.mp4",
+      "poster": "clips/morning_break_camp_b.png",
+      "bytes": 141882,
+      "family": "morning",
+      "weather": "clear"
+    },
+    {
+      "name": "midday_return_c",
+      "beat": "return",
+      "kind": "beat",
+      "variant": "c",
+      "seed": 1,
+      "start_tick": 300,
+      "seconds": 38.0,
+      "mood": 3.0,
+      "night": false,
+      "file": "clips/midday_return_c.mp4",
+      "poster": "clips/midday_return_c.png",
+      "bytes": 96450,
+      "family": "midday",
+      "weather": "clear"
+    },
+    {
+      "name": "midday_lunch_a",
+      "beat": "lunch",
+      "kind": "beat",
+      "variant": "a",
+      "seed": 1,
+      "start_tick": 2700,
+      "seconds": 51.04,
+      "mood": 3.0,
+      "night": false,
+      "file": "clips/midday_lunch_a.mp4",
+      "poster": "clips/midday_lunch_a.png",
+      "bytes": 138250,
+      "family": "midday",
+      "weather": "clear"
+    },
+    {
+      "name": "midday_wade_b",
+      "beat": "wade",
+      "kind": "beat",
+      "variant": "b",
+      "seed": 1,
+      "start_tick": 8125,
+      "seconds": 34.0,
+      "mood": 3.0,
+      "night": false,
+      "file": "clips/midday_wade_b.mp4",
+      "poster": "clips/midday_wade_b.png",
+      "bytes": 84811,
+      "family": "midday",
+      "weather": "clear"
+    },
+    {
+      "name": "midday_nap_a",
+      "beat": "nap",
+      "kind": "beat",
+      "variant": "a",
+      "seed": 1,
+      "start_tick": 10175,
+      "seconds": 54.0,
+      "mood": 3.0,
+      "night": false,
+      "file": "clips/midday_nap_a.mp4",
+      "poster": "clips/midday_nap_a.png",
+      "bytes": 129263,
+      "family": "midday",
+      "weather": "clear"
+    },
+    {
+      "name": "midday_map_a",
+      "beat": "map",
+      "kind": "beat",
+      "variant": "a",
+      "seed": 1,
+      "start_tick": 13425,
+      "seconds": 36.0,
+      "mood": 3.0,
+      "night": false,
+      "file": "clips/midday_map_a.mp4",
+      "poster": "clips/midday_map_a.png",
+      "bytes": 87100,
+      "family": "midday",
+      "weather": "clear"
+    },
+    {
+      "name": "midday_afternoon_a",
+      "beat": "afternoon",
+      "kind": "beat",
+      "variant": "a",
+      "seed": 1,
+      "start_tick": 14475,
+      "seconds": 52.96,
+      "mood": 3.0,
+      "night": false,
+      "file": "clips/midday_afternoon_a.mp4",
+      "poster": "clips/midday_afternoon_a.png",
+      "bytes": 159011,
+      "family": "midday",
+      "weather": "clear"
+    },
+    {
+      "name": "midday_overview",
+      "beat": "loop_overview",
+      "kind": "overview",
+      "variant": null,
+      "seed": 1,
+      "start_tick": 0,
+      "seconds": 78.84,
+      "mood": 3.0,
+      "night": false,
+      "file": "clips/midday_overview.mp4",
+      "poster": "clips/midday_overview.png",
+      "bytes": 445487,
+      "family": "midday",
+      "weather": "clear"
+    },
+    {
+      "name": "midday_return_a",
+      "beat": "return",
+      "kind": "beat",
+      "variant": "a",
+      "seed": 2,
+      "start_tick": 300,
+      "seconds": 37.04,
+      "mood": 3.0,
+      "night": false,
+      "file": "clips/midday_return_a.mp4",
+      "poster": "clips/midday_return_a.png",
+      "bytes": 101747,
+      "family": "midday",
+      "weather": "clear"
+    },
+    {
+      "name": "midday_lunch_b",
+      "beat": "lunch",
+      "kind": "beat",
+      "variant": "b",
+      "seed": 2,
+      "start_tick": 2675,
+      "seconds": 54.0,
+      "mood": 3.0,
+      "night": false,
+      "file": "clips/midday_lunch_b.mp4",
+      "poster": "clips/midday_lunch_b.png",
+      "bytes": 136819,
+      "family": "midday",
+      "weather": "clear"
+    },
+    {
+      "name": "midday_map_b",
+      "beat": "map",
+      "kind": "beat",
+      "variant": "b",
+      "seed": 2,
+      "start_tick": 12675,
+      "seconds": 32.0,
+      "mood": 3.0,
+      "night": false,
+      "file": "clips/midday_map_b.mp4",
+      "poster": "clips/midday_map_b.png",
+      "bytes": 87503,
+      "family": "midday",
+      "weather": "clear"
+    },
+    {
+      "name": "midday_afternoon_b",
+      "beat": "afternoon",
+      "kind": "beat",
+      "variant": "b",
+      "seed": 2,
+      "start_tick": 13625,
+      "seconds": 42.0,
+      "mood": 3.0,
+      "night": false,
+      "file": "clips/midday_afternoon_b.mp4",
+      "poster": "clips/midday_afternoon_b.png",
+      "bytes": 137008,
+      "family": "midday",
+      "weather": "clear"
+    },
+    {
+      "name": "midday_return_b",
+      "beat": "return",
+      "kind": "beat",
+      "variant": "b",
+      "seed": 3,
+      "start_tick": 300,
+      "seconds": 42.0,
+      "mood": 3.0,
+      "night": false,
+      "file": "clips/midday_return_b.mp4",
+      "poster": "clips/midday_return_b.png",
+      "bytes": 119330,
+      "family": "midday",
+      "weather": "clear"
+    },
+    {
+      "name": "midday_wade_a",
+      "beat": "wade",
+      "kind": "beat",
+      "variant": "a",
+      "seed": 3,
+      "start_tick": 7475,
+      "seconds": 42.96,
+      "mood": 3.0,
+      "night": false,
+      "file": "clips/midday_wade_a.mp4",
+      "poster": "clips/midday_wade_a.png",
+      "bytes": 114907,
+      "family": "midday",
+      "weather": "clear"
+    },
+    {
+      "name": "midday_nap_c",
+      "beat": "nap",
+      "kind": "beat",
+      "variant": "c",
+      "seed": 6,
+      "start_tick": 10350,
+      "seconds": 49.04,
+      "mood": 3.0,
+      "night": false,
+      "file": "clips/midday_nap_c.mp4",
+      "poster": "clips/midday_nap_c.png",
+      "bytes": 124176,
+      "family": "midday",
+      "weather": "clear"
+    },
+    {
+      "name": "midday_wade_c",
+      "beat": "wade",
+      "kind": "beat",
+      "variant": "c",
+      "seed": 9,
+      "start_tick": 7650,
+      "seconds": 45.04,
+      "mood": 3.0,
+      "night": false,
+      "file": "clips/midday_wade_c.mp4",
+      "poster": "clips/midday_wade_c.png",
+      "bytes": 175533,
+      "family": "midday",
+      "weather": "clear"
+    },
+    {
+      "name": "midday_nap_b",
+      "beat": "nap",
+      "kind": "beat",
+      "variant": "b",
+      "seed": 14,
+      "start_tick": 11400,
+      "seconds": 51.04,
+      "mood": 3.0,
+      "night": false,
+      "file": "clips/midday_nap_b.mp4",
+      "poster": "clips/midday_nap_b.png",
+      "bytes": 129975,
+      "family": "midday",
+      "weather": "clear"
+    },
+    {
+      "name": "weather_wind_day",
+      "beat": "weather_wind",
+      "kind": "weather",
+      "variant": null,
+      "seed": 3,
+      "start_tick": 4275,
+      "seconds": 24.96,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/weather_wind_day.mp4",
+      "poster": "clips/weather_wind_day.png",
+      "bytes": 78399,
+      "weather": "wind"
+    },
+    {
+      "name": "weather_wind_night",
+      "beat": "weather_wind",
+      "kind": "weather",
+      "variant": null,
+      "seed": 3,
+      "start_tick": 4275,
+      "seconds": 24.96,
+      "mood": 0.0,
+      "night": true,
+      "file": "clips/weather_wind_night.mp4",
+      "poster": "clips/weather_wind_night.png",
+      "bytes": 46828,
+      "weather": "wind"
+    },
+    {
+      "name": "weather_rain_day",
+      "beat": "weather_rain",
+      "kind": "weather",
+      "variant": null,
+      "seed": 3,
+      "start_tick": 4275,
+      "seconds": 24.96,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/weather_rain_day.mp4",
+      "poster": "clips/weather_rain_day.png",
+      "bytes": 367415,
+      "weather": "rain"
+    },
+    {
+      "name": "weather_rain_night",
+      "beat": "weather_rain",
+      "kind": "weather",
+      "variant": null,
+      "seed": 3,
+      "start_tick": 4275,
+      "seconds": 24.96,
+      "mood": 0.0,
+      "night": true,
+      "file": "clips/weather_rain_night.mp4",
+      "poster": "clips/weather_rain_night.png",
+      "bytes": 134728,
+      "weather": "rain"
+    },
+    {
+      "name": "weather_snow_day",
+      "beat": "weather_snow",
+      "kind": "weather",
+      "variant": null,
+      "seed": 3,
+      "start_tick": 4275,
+      "seconds": 24.96,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/weather_snow_day.mp4",
+      "poster": "clips/weather_snow_day.png",
+      "bytes": 263924,
+      "weather": "snow"
+    },
+    {
+      "name": "weather_snow_night",
+      "beat": "weather_snow",
+      "kind": "weather",
+      "variant": null,
+      "seed": 3,
+      "start_tick": 4275,
+      "seconds": 24.96,
+      "mood": 0.0,
+      "night": true,
+      "file": "clips/weather_snow_night.mp4",
+      "poster": "clips/weather_snow_night.png",
+      "bytes": 203406,
+      "weather": "snow"
+    },
+    {
+      "name": "weather_fog_day",
+      "beat": "weather_fog",
+      "kind": "weather",
+      "variant": null,
+      "seed": 3,
+      "start_tick": 4275,
+      "seconds": 24.96,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/weather_fog_day.mp4",
+      "poster": "clips/weather_fog_day.png",
+      "bytes": 79435,
+      "weather": "fog"
+    },
+    {
+      "name": "weather_fog_night",
+      "beat": "weather_fog",
+      "kind": "weather",
+      "variant": null,
+      "seed": 3,
+      "start_tick": 4275,
+      "seconds": 24.96,
+      "mood": 0.0,
+      "night": true,
+      "file": "clips/weather_fog_night.mp4",
+      "poster": "clips/weather_fog_night.png",
+      "bytes": 45113,
+      "weather": "fog"
+    },
+    {
+      "name": "weather_heat_day",
+      "beat": "weather_heat",
+      "kind": "weather",
+      "variant": null,
+      "seed": 3,
+      "start_tick": 4275,
+      "seconds": 24.96,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/weather_heat_day.mp4",
+      "poster": "clips/weather_heat_day.png",
+      "bytes": 90496,
+      "weather": "heat"
+    },
+    {
+      "name": "weather_heat_night",
+      "beat": "weather_heat",
+      "kind": "weather",
+      "variant": null,
+      "seed": 3,
+      "start_tick": 4275,
+      "seconds": 24.96,
+      "mood": 0.0,
+      "night": true,
+      "file": "clips/weather_heat_night.mp4",
+      "poster": "clips/weather_heat_night.png",
+      "bytes": 45677,
+      "weather": "heat"
+    },
+    {
+      "name": "weather_chill_day",
+      "beat": "weather_chill",
+      "kind": "weather",
+      "variant": null,
+      "seed": 3,
+      "start_tick": 4275,
+      "seconds": 24.96,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/weather_chill_day.mp4",
+      "poster": "clips/weather_chill_day.png",
+      "bytes": 71777,
+      "weather": "chill"
+    },
+    {
+      "name": "weather_chill_night",
+      "beat": "weather_chill",
+      "kind": "weather",
+      "variant": null,
+      "seed": 3,
+      "start_tick": 4275,
+      "seconds": 24.96,
+      "mood": 0.0,
+      "night": true,
+      "file": "clips/weather_chill_night.mp4",
+      "poster": "clips/weather_chill_night.png",
+      "bytes": 45573,
+      "weather": "chill"
+    },
+    {
+      "name": "weather_storm_day",
+      "beat": "weather_storm",
+      "kind": "weather",
+      "variant": null,
+      "seed": 3,
+      "start_tick": 4550,
+      "seconds": 25.04,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/weather_storm_day.mp4",
+      "poster": "clips/weather_storm_day.png",
+      "bytes": 407713,
+      "weather": "storm"
+    },
+    {
+      "name": "weather_storm_night",
+      "beat": "weather_storm",
+      "kind": "weather",
+      "variant": null,
+      "seed": 3,
+      "start_tick": 4550,
+      "seconds": 25.04,
+      "mood": 0.0,
+      "night": true,
+      "file": "clips/weather_storm_night.mp4",
+      "poster": "clips/weather_storm_night.png",
+      "bytes": 112281,
+      "weather": "storm"
+    },
+    {
+      "name": "weather_storm_flash",
+      "beat": "weather_storm",
+      "kind": "weather",
+      "variant": null,
+      "seed": 3,
+      "start_tick": 777,
+      "seconds": 10.0,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/weather_storm_flash.mp4",
+      "poster": "clips/weather_storm_flash.png",
+      "bytes": 167732,
+      "weather": "storm",
+      "flash_tick": 902
+    },
+    {
+      "name": "weather_wind_hat",
+      "beat": "weather_wind",
+      "kind": "weather",
+      "variant": null,
+      "seed": 3,
+      "start_tick": 1000,
+      "seconds": 15.04,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/weather_wind_hat.mp4",
+      "poster": "clips/weather_wind_hat.png",
+      "bytes": 45521,
+      "weather": "wind"
+    },
+    {
+      "name": "major_rain_shelter",
+      "beat": "rain_shelter",
+      "kind": "major",
+      "variant": null,
+      "seed": 2,
+      "start_tick": 9900,
+      "seconds": 44.0,
+      "mood": 4.0,
+      "night": false,
+      "file": "clips/major_rain_shelter.mp4",
+      "poster": "clips/major_rain_shelter.png",
+      "bytes": 447876,
+      "weather": "storm"
+    },
+    {
+      "name": "morning_fog_lift",
+      "beat": "morning_fog",
+      "kind": "weather",
+      "variant": null,
+      "seed": 3,
+      "start_tick": 0,
+      "seconds": 18.72,
+      "mood": 1.5,
+      "night": false,
+      "file": "clips/morning_fog_lift.mp4",
+      "poster": "clips/morning_fog_lift.png",
+      "bytes": 111961,
+      "weather": "clear",
+      "family": "morning"
     }
   ],
   "plans": [
@@ -1999,6 +2799,803 @@
       "seed": 2,
       "mood": 4.0,
       "night": false
+    },
+    {
+      "loop_seed": 1,
+      "start_tick": 0,
+      "plan": {
+        "wake": 2,
+        "coffee": 1,
+        "bag_down": 1,
+        "break_camp": 0,
+        "douse": 0,
+        "leave": 0
+      },
+      "family": "morning",
+      "fillers": [
+        "cloud_watch",
+        "birds_on_water",
+        "read"
+      ],
+      "majors": [
+        "pinecone",
+        "echo",
+        "deer_stick"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=1 start tick=0 plan=family=morning wake=2 coffee=1 bag_down=1 break_camp=0 douse=0 leave=0 fillers=cloud_watch,birds_on_water,read majors=pinecone,echo,deer_stick fog=12",
+      "seed": 1,
+      "mood": 1.5,
+      "night": false,
+      "weather": "clear"
+    },
+    {
+      "loop_seed": 2,
+      "start_tick": 0,
+      "plan": {
+        "wake": 0,
+        "coffee": 2,
+        "bag_down": 0,
+        "break_camp": 0,
+        "douse": 1,
+        "leave": 2
+      },
+      "family": "morning",
+      "fillers": [
+        "birds_on_water",
+        "cairn",
+        "stream_listen"
+      ],
+      "majors": [
+        "pinecone",
+        "fish_leap",
+        "squirrel_splash"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=2 start tick=0 plan=family=morning wake=0 coffee=2 bag_down=0 break_camp=0 douse=1 leave=2 fillers=birds_on_water,cairn,stream_listen majors=pinecone,fish_leap,squirrel_splash fog=14",
+      "seed": 2,
+      "mood": 1.5,
+      "night": false,
+      "weather": "clear"
+    },
+    {
+      "loop_seed": 3,
+      "start_tick": 0,
+      "plan": {
+        "wake": 1,
+        "coffee": 2,
+        "bag_down": 0,
+        "break_camp": 0,
+        "douse": 1,
+        "leave": 1
+      },
+      "family": "morning",
+      "fillers": [
+        "read",
+        "cloud_watch"
+      ],
+      "majors": [
+        "ranger_ridge",
+        "fishing_log",
+        "squirrel_splash"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=3 start tick=0 plan=family=morning wake=1 coffee=2 bag_down=0 break_camp=0 douse=1 leave=1 fillers=read,cloud_watch majors=ranger_ridge,fishing_log,squirrel_splash fog=15",
+      "seed": 3,
+      "mood": 1.5,
+      "night": false,
+      "weather": "clear"
+    },
+    {
+      "loop_seed": 4,
+      "start_tick": 0,
+      "plan": {
+        "wake": 0,
+        "coffee": 0,
+        "bag_down": 0,
+        "break_camp": 0,
+        "douse": 1,
+        "leave": 1
+      },
+      "family": "morning",
+      "fillers": [
+        "cairn",
+        "stream_listen",
+        "birds_on_water"
+      ],
+      "majors": [
+        "fish_leap",
+        "pinecone",
+        "ranger_ridge"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=4 start tick=0 plan=family=morning wake=0 coffee=0 bag_down=0 break_camp=0 douse=1 leave=1 fillers=cairn,stream_listen,birds_on_water majors=fish_leap,pinecone,ranger_ridge fog=11",
+      "seed": 4,
+      "mood": 1.5,
+      "night": false,
+      "weather": "clear"
+    },
+    {
+      "loop_seed": 5,
+      "start_tick": 0,
+      "plan": {
+        "wake": 0,
+        "coffee": 0,
+        "bag_down": 0,
+        "break_camp": 0,
+        "douse": 0,
+        "leave": 0
+      },
+      "family": "morning",
+      "fillers": [
+        "birds_on_water",
+        "read",
+        "stream_listen"
+      ],
+      "majors": [
+        "deer_stick",
+        "ranger_ridge",
+        "map_chase"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=5 start tick=0 plan=family=morning wake=0 coffee=0 bag_down=0 break_camp=0 douse=0 leave=0 fillers=birds_on_water,read,stream_listen majors=deer_stick,ranger_ridge,map_chase fog=15",
+      "seed": 5,
+      "mood": 1.5,
+      "night": false,
+      "weather": "clear"
+    },
+    {
+      "loop_seed": 6,
+      "start_tick": 0,
+      "plan": {
+        "wake": 2,
+        "coffee": 2,
+        "bag_down": 1,
+        "break_camp": 2,
+        "douse": 0,
+        "leave": 1
+      },
+      "family": "morning",
+      "fillers": [
+        "cloud_watch",
+        "read",
+        "birds_on_water"
+      ],
+      "majors": [
+        "echo",
+        "ranger_ridge",
+        "deer_stick"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=6 start tick=0 plan=family=morning wake=2 coffee=2 bag_down=1 break_camp=2 douse=0 leave=1 fillers=cloud_watch,read,birds_on_water majors=echo,ranger_ridge,deer_stick fog=16",
+      "seed": 6,
+      "mood": 1.5,
+      "night": false,
+      "weather": "clear"
+    },
+    {
+      "loop_seed": 7,
+      "start_tick": 0,
+      "plan": {
+        "wake": 0,
+        "coffee": 1,
+        "bag_down": 1,
+        "break_camp": 2,
+        "douse": 1,
+        "leave": 2
+      },
+      "family": "morning",
+      "fillers": [
+        "read",
+        "stream_listen",
+        "cairn"
+      ],
+      "majors": [
+        "squirrel_splash",
+        "bathe",
+        "ranger_ridge"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=7 start tick=0 plan=family=morning wake=0 coffee=1 bag_down=1 break_camp=2 douse=1 leave=2 fillers=read,stream_listen,cairn majors=squirrel_splash,bathe,ranger_ridge fog=14",
+      "seed": 7,
+      "mood": 1.5,
+      "night": false,
+      "weather": "clear"
+    },
+    {
+      "loop_seed": 8,
+      "start_tick": 0,
+      "plan": {
+        "wake": 1,
+        "coffee": 1,
+        "bag_down": 0,
+        "break_camp": 2,
+        "douse": 0,
+        "leave": 2
+      },
+      "family": "morning",
+      "fillers": [
+        "birds_on_water",
+        "stream_listen",
+        "read"
+      ],
+      "majors": [
+        "ants_cookie",
+        "echo",
+        "pinecone"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=8 start tick=0 plan=family=morning wake=1 coffee=1 bag_down=0 break_camp=2 douse=0 leave=2 fillers=birds_on_water,stream_listen,read majors=ants_cookie,echo,pinecone fog=13",
+      "seed": 8,
+      "mood": 1.5,
+      "night": false,
+      "weather": "clear"
+    },
+    {
+      "loop_seed": 9,
+      "start_tick": 0,
+      "plan": {
+        "wake": 2,
+        "coffee": 1,
+        "bag_down": 1,
+        "break_camp": 0,
+        "douse": 1,
+        "leave": 1
+      },
+      "family": "morning",
+      "fillers": [
+        "read",
+        "cairn"
+      ],
+      "majors": [
+        "squirrel_splash",
+        "fishing_log",
+        "deer_stick"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=9 start tick=0 plan=family=morning wake=2 coffee=1 bag_down=1 break_camp=0 douse=1 leave=1 fillers=read,cairn majors=squirrel_splash,fishing_log,deer_stick fog=16",
+      "seed": 9,
+      "mood": 1.5,
+      "night": false,
+      "weather": "clear"
+    },
+    {
+      "loop_seed": 10,
+      "start_tick": 0,
+      "plan": {
+        "wake": 2,
+        "coffee": 2,
+        "bag_down": 1,
+        "break_camp": 0,
+        "douse": 0,
+        "leave": 1
+      },
+      "family": "morning",
+      "fillers": [
+        "birds_on_water",
+        "stream_listen",
+        "cloud_watch"
+      ],
+      "majors": [
+        "ants_cookie",
+        "echo",
+        "pinecone"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=10 start tick=0 plan=family=morning wake=2 coffee=2 bag_down=1 break_camp=0 douse=0 leave=1 fillers=birds_on_water,stream_listen,cloud_watch majors=ants_cookie,echo,pinecone fog=11",
+      "seed": 10,
+      "mood": 1.5,
+      "night": false,
+      "weather": "clear"
+    },
+    {
+      "loop_seed": 11,
+      "start_tick": 0,
+      "plan": {
+        "wake": 0,
+        "coffee": 2,
+        "bag_down": 1,
+        "break_camp": 0,
+        "douse": 0,
+        "leave": 1
+      },
+      "family": "morning",
+      "fillers": [
+        "birds_on_water",
+        "cloud_watch"
+      ],
+      "majors": [
+        "fishing_small",
+        "echo"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=11 start tick=0 plan=family=morning wake=0 coffee=2 bag_down=1 break_camp=0 douse=0 leave=1 fillers=birds_on_water,cloud_watch majors=fishing_small,echo fog=11",
+      "seed": 11,
+      "mood": 1.5,
+      "night": false,
+      "weather": "clear"
+    },
+    {
+      "loop_seed": 12,
+      "start_tick": 0,
+      "plan": {
+        "wake": 2,
+        "coffee": 1,
+        "bag_down": 0,
+        "break_camp": 0,
+        "douse": 1,
+        "leave": 0
+      },
+      "family": "morning",
+      "fillers": [
+        "stream_listen",
+        "cairn"
+      ],
+      "majors": [
+        "pinecone",
+        "map_chase"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=12 start tick=0 plan=family=morning wake=2 coffee=1 bag_down=0 break_camp=0 douse=1 leave=0 fillers=stream_listen,cairn majors=pinecone,map_chase fog=16",
+      "seed": 12,
+      "mood": 1.5,
+      "night": false,
+      "weather": "clear"
+    },
+    {
+      "loop_seed": 13,
+      "start_tick": 0,
+      "plan": {
+        "wake": 2,
+        "coffee": 2,
+        "bag_down": 1,
+        "break_camp": 2,
+        "douse": 0,
+        "leave": 1
+      },
+      "family": "morning",
+      "fillers": [
+        "read",
+        "birds_on_water",
+        "stream_listen"
+      ],
+      "majors": [
+        "echo",
+        "map_chase",
+        "deer_stick"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=13 start tick=0 plan=family=morning wake=2 coffee=2 bag_down=1 break_camp=2 douse=0 leave=1 fillers=read,birds_on_water,stream_listen majors=echo,map_chase,deer_stick fog=14",
+      "seed": 13,
+      "mood": 1.5,
+      "night": false,
+      "weather": "clear"
+    },
+    {
+      "loop_seed": 14,
+      "start_tick": 0,
+      "plan": {
+        "wake": 1,
+        "coffee": 1,
+        "bag_down": 0,
+        "break_camp": 1,
+        "douse": 1,
+        "leave": 0
+      },
+      "family": "morning",
+      "fillers": [
+        "cairn",
+        "birds_on_water",
+        "stream_listen"
+      ],
+      "majors": [
+        "map_chase",
+        "echo",
+        "fishing_small"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=14 start tick=0 plan=family=morning wake=1 coffee=1 bag_down=0 break_camp=1 douse=1 leave=0 fillers=cairn,birds_on_water,stream_listen majors=map_chase,echo,fishing_small fog=15",
+      "seed": 14,
+      "mood": 1.5,
+      "night": false,
+      "weather": "clear"
+    },
+    {
+      "loop_seed": 1,
+      "start_tick": 0,
+      "plan": {
+        "return": 2,
+        "lunch": 0,
+        "wade": 1,
+        "nap": 0,
+        "map": 0,
+        "afternoon": 0
+      },
+      "family": "midday",
+      "fillers": [
+        "cloud_watch",
+        "stream_listen",
+        "cairn"
+      ],
+      "majors": [
+        "deer_stick",
+        "pinecone",
+        "ranger_ridge"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=1 start tick=0 plan=family=midday return=2 lunch=0 wade=1 nap=0 map=0 afternoon=0 fillers=cloud_watch,stream_listen,cairn majors=deer_stick,pinecone,ranger_ridge",
+      "seed": 1,
+      "mood": 3.0,
+      "night": false,
+      "weather": "clear"
+    },
+    {
+      "loop_seed": 2,
+      "start_tick": 0,
+      "plan": {
+        "return": 0,
+        "lunch": 1,
+        "wade": 1,
+        "nap": 0,
+        "map": 1,
+        "afternoon": 1
+      },
+      "family": "midday",
+      "fillers": [
+        "birds_on_water",
+        "cairn"
+      ],
+      "majors": [
+        "map_chase",
+        "bathe",
+        "ants_cookie"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=2 start tick=0 plan=family=midday return=0 lunch=1 wade=1 nap=0 map=1 afternoon=1 fillers=birds_on_water,cairn majors=map_chase,bathe,ants_cookie",
+      "seed": 2,
+      "mood": 3.0,
+      "night": false,
+      "weather": "clear"
+    },
+    {
+      "loop_seed": 3,
+      "start_tick": 0,
+      "plan": {
+        "return": 1,
+        "lunch": 1,
+        "wade": 0,
+        "nap": 0,
+        "map": 1,
+        "afternoon": 1
+      },
+      "family": "midday",
+      "fillers": [
+        "read",
+        "skip_stone"
+      ],
+      "majors": [
+        "deer_stick",
+        "map_chase",
+        "bathe"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=3 start tick=0 plan=family=midday return=1 lunch=1 wade=0 nap=0 map=1 afternoon=1 fillers=read,skip_stone majors=deer_stick,map_chase,bathe",
+      "seed": 3,
+      "mood": 3.0,
+      "night": false,
+      "weather": "clear"
+    },
+    {
+      "loop_seed": 4,
+      "start_tick": 0,
+      "plan": {
+        "return": 0,
+        "lunch": 0,
+        "wade": 0,
+        "nap": 0,
+        "map": 1,
+        "afternoon": 0
+      },
+      "family": "midday",
+      "fillers": [
+        "cairn",
+        "stream_listen",
+        "birds_on_water"
+      ],
+      "majors": [
+        "ranger_ridge",
+        "fishing_log"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=4 start tick=0 plan=family=midday return=0 lunch=0 wade=0 nap=0 map=1 afternoon=0 fillers=cairn,stream_listen,birds_on_water majors=ranger_ridge,fishing_log",
+      "seed": 4,
+      "mood": 3.0,
+      "night": false,
+      "weather": "clear"
+    },
+    {
+      "loop_seed": 5,
+      "start_tick": 0,
+      "plan": {
+        "return": 0,
+        "lunch": 0,
+        "wade": 0,
+        "nap": 0,
+        "map": 0,
+        "afternoon": 0
+      },
+      "family": "midday",
+      "fillers": [
+        "birds_on_water",
+        "cairn",
+        "stream_listen"
+      ],
+      "majors": [
+        "fish_leap",
+        "bathe",
+        "echo"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=5 start tick=0 plan=family=midday return=0 lunch=0 wade=0 nap=0 map=0 afternoon=0 fillers=birds_on_water,cairn,stream_listen majors=fish_leap,bathe,echo",
+      "seed": 5,
+      "mood": 3.0,
+      "night": false,
+      "weather": "clear"
+    },
+    {
+      "loop_seed": 6,
+      "start_tick": 0,
+      "plan": {
+        "return": 2,
+        "lunch": 1,
+        "wade": 1,
+        "nap": 2,
+        "map": 0,
+        "afternoon": 0
+      },
+      "family": "midday",
+      "fillers": [
+        "cloud_watch",
+        "read"
+      ],
+      "majors": [
+        "fishing_small",
+        "bathe",
+        "ants_cookie"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=6 start tick=0 plan=family=midday return=2 lunch=1 wade=1 nap=2 map=0 afternoon=0 fillers=cloud_watch,read majors=fishing_small,bathe,ants_cookie",
+      "seed": 6,
+      "mood": 3.0,
+      "night": false,
+      "weather": "clear"
+    },
+    {
+      "loop_seed": 7,
+      "start_tick": 0,
+      "plan": {
+        "return": 0,
+        "lunch": 0,
+        "wade": 1,
+        "nap": 2,
+        "map": 1,
+        "afternoon": 1
+      },
+      "family": "midday",
+      "fillers": [
+        "cairn",
+        "cloud_watch",
+        "skip_stone"
+      ],
+      "majors": [
+        "deer_stick",
+        "ants_cookie",
+        "squirrel_splash"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=7 start tick=0 plan=family=midday return=0 lunch=0 wade=1 nap=2 map=1 afternoon=1 fillers=cairn,cloud_watch,skip_stone majors=deer_stick,ants_cookie,squirrel_splash",
+      "seed": 7,
+      "mood": 3.0,
+      "night": false,
+      "weather": "clear"
+    },
+    {
+      "loop_seed": 8,
+      "start_tick": 0,
+      "plan": {
+        "return": 1,
+        "lunch": 0,
+        "wade": 0,
+        "nap": 2,
+        "map": 0,
+        "afternoon": 1
+      },
+      "family": "midday",
+      "fillers": [
+        "stream_listen",
+        "birds_on_water",
+        "read"
+      ],
+      "majors": [
+        "ants_cookie",
+        "fish_leap",
+        "map_chase"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=8 start tick=0 plan=family=midday return=1 lunch=0 wade=0 nap=2 map=0 afternoon=1 fillers=stream_listen,birds_on_water,read majors=ants_cookie,fish_leap,map_chase",
+      "seed": 8,
+      "mood": 3.0,
+      "night": false,
+      "weather": "clear"
+    },
+    {
+      "loop_seed": 9,
+      "start_tick": 0,
+      "plan": {
+        "return": 2,
+        "lunch": 0,
+        "wade": 2,
+        "nap": 0,
+        "map": 1,
+        "afternoon": 0
+      },
+      "family": "midday",
+      "fillers": [
+        "read",
+        "skip_stone"
+      ],
+      "majors": [
+        "map_chase",
+        "fishing_small",
+        "squirrel_splash"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=9 start tick=0 plan=family=midday return=2 lunch=0 wade=2 nap=0 map=1 afternoon=0 fillers=read,skip_stone majors=map_chase,fishing_small,squirrel_splash",
+      "seed": 9,
+      "mood": 3.0,
+      "night": false,
+      "weather": "clear"
+    },
+    {
+      "loop_seed": 10,
+      "start_tick": 0,
+      "plan": {
+        "return": 2,
+        "lunch": 1,
+        "wade": 1,
+        "nap": 0,
+        "map": 0,
+        "afternoon": 1
+      },
+      "family": "midday",
+      "fillers": [
+        "birds_on_water",
+        "stream_listen",
+        "cloud_watch"
+      ],
+      "majors": [
+        "fishing_small",
+        "ants_cookie"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=10 start tick=0 plan=family=midday return=2 lunch=1 wade=1 nap=0 map=0 afternoon=1 fillers=birds_on_water,stream_listen,cloud_watch majors=fishing_small,ants_cookie",
+      "seed": 10,
+      "mood": 3.0,
+      "night": false,
+      "weather": "clear"
+    },
+    {
+      "loop_seed": 11,
+      "start_tick": 0,
+      "plan": {
+        "return": 0,
+        "lunch": 1,
+        "wade": 1,
+        "nap": 0,
+        "map": 0,
+        "afternoon": 1
+      },
+      "family": "midday",
+      "fillers": [
+        "birds_on_water",
+        "cloud_watch"
+      ],
+      "majors": [
+        "echo",
+        "deer_stick"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=11 start tick=0 plan=family=midday return=0 lunch=1 wade=1 nap=0 map=0 afternoon=1 fillers=birds_on_water,cloud_watch majors=echo,deer_stick",
+      "seed": 11,
+      "mood": 3.0,
+      "night": false,
+      "weather": "clear"
+    },
+    {
+      "loop_seed": 12,
+      "start_tick": 0,
+      "plan": {
+        "return": 2,
+        "lunch": 0,
+        "wade": 0,
+        "nap": 0,
+        "map": 1,
+        "afternoon": 0
+      },
+      "family": "midday",
+      "fillers": [
+        "stream_listen",
+        "cairn"
+      ],
+      "majors": [
+        "deer_stick",
+        "ranger_ridge",
+        "map_chase"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=12 start tick=0 plan=family=midday return=2 lunch=0 wade=0 nap=0 map=1 afternoon=0 fillers=stream_listen,cairn majors=deer_stick,ranger_ridge,map_chase",
+      "seed": 12,
+      "mood": 3.0,
+      "night": false,
+      "weather": "clear"
+    },
+    {
+      "loop_seed": 13,
+      "start_tick": 0,
+      "plan": {
+        "return": 2,
+        "lunch": 1,
+        "wade": 2,
+        "nap": 2,
+        "map": 0,
+        "afternoon": 1
+      },
+      "family": "midday",
+      "fillers": [
+        "read",
+        "birds_on_water",
+        "cloud_watch"
+      ],
+      "majors": [
+        "echo",
+        "map_chase",
+        "ranger_ridge"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=13 start tick=0 plan=family=midday return=2 lunch=1 wade=2 nap=2 map=0 afternoon=1 fillers=read,birds_on_water,cloud_watch majors=echo,map_chase,ranger_ridge",
+      "seed": 13,
+      "mood": 3.0,
+      "night": false,
+      "weather": "clear"
+    },
+    {
+      "loop_seed": 14,
+      "start_tick": 0,
+      "plan": {
+        "return": 1,
+        "lunch": 1,
+        "wade": 0,
+        "nap": 1,
+        "map": 1,
+        "afternoon": 0
+      },
+      "family": "midday",
+      "fillers": [
+        "cairn",
+        "stream_listen",
+        "birds_on_water"
+      ],
+      "majors": [
+        "map_chase",
+        "pinecone",
+        "bathe"
+      ],
+      "memory": {},
+      "line": "loop=0 seed=14 start tick=0 plan=family=midday return=1 lunch=1 wade=0 nap=1 map=1 afternoon=0 fillers=cairn,stream_listen,birds_on_water majors=map_chase,pinecone,bathe",
+      "seed": 14,
+      "mood": 3.0,
+      "night": false,
+      "weather": "clear"
     }
   ],
   "missing_variants": {

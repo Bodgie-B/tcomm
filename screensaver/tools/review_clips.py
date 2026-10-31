@@ -6,6 +6,10 @@ usage: python3 -I review_clips.py --preview PATH --out DIR [--seeds 1,2,3 | 1-12
            [--max-seconds 70] [--minor-seconds 22] [--gif] [--loops-overview]
            [--keep] [--force]
        python3 -I review_clips.py --out DIR --list
+       python3 -I review_clips.py --preview PATH --out DIR --family morning|midday
+           [--seeds 1-40] [--mood M] [--pad-seconds 1]
+       python3 -I review_clips.py --preview PATH --out DIR --weather-clips
+           [--seeds 1-30] [--weather-seed 3]
 
 For each seed a cheap coarse run of ss_preview (--log-beats, no useful frames) gives
 the beat timeline of loop 0. Each wanted beat is then rendered with --skip so that
@@ -24,6 +28,17 @@ night-only majors and minors: names already in the manifest are not re-cut.
 --gif also writes a GIF (two-pass palette, as tools/clip.sh) for clips under 10 s.
 --list prints the manifest table without rendering.
 
+--family morning|midday cuts the spine of that family instead of the evening: the preview
+runs with --spine FAMILY --weather clear at mood 1.5 (morning) or 3 (midday), every beat x
+variant seen over the seeds is cut as clips/<family>_<beat>_<letter>.mp4 (the beat's window
+plus --pad-seconds either side), and clips/<family>_overview.mp4 is the whole first loop at
+8x. Fillers, majors and minors are not cut (the evening runs have them). Rows carry
+"family". Seeds are tried in order until every beat has all its variants (FAMILY_BEATS).
+--weather-clips cuts the weather set (see cut_weather_set): weather_<kind>_day/night,
+weather_storm_flash, weather_wind_hat, major_rain_shelter and morning_fog_lift. --seeds is
+where major_rain_shelter is searched; the rest use --weather-seed (default 3).
+Fixed seeds and a fixed rule keep the output deterministic.
+
 Exit codes: 0 ok, 1 a preview/ffmpeg run failed, 2 usage or ffmpeg missing.
 """
 import argparse
@@ -40,6 +55,22 @@ PROBE_EVERY = 50           # ticks per frame of the log-only probe run
 PROBE_TICKS = 20000        # > longest loop (16,500 ticks) so loop 1 always starts in it
 LETTERS = "abcd"   # dinner has a fourth variant (fish dinner, after fishing_good)
 SKIP_BEATS = {"pause"}
+
+
+# The beats of the morning and midday spines and how many variants each has (the plan line
+# gives only the one a loop plays; this is what "all collected" means).
+FAMILY_BEATS = {
+    "morning": {"wake": 3, "coffee": 3, "bag_down": 2, "break_camp": 3, "douse": 2, "leave": 3},
+    "midday": {"return": 3, "lunch": 2, "wade": 3, "nap": 3, "map": 2, "afternoon": 2},
+}
+FAMILY_MOOD = {"morning": 1.5, "midday": 3.0}
+WEATHER_KINDS = ["wind", "rain", "snow", "fog", "heat", "chill", "storm"]
+WEATHER_SETTLED_TICK = 4000    # snow has grown on the tent (140 s), the gags have had pauses
+WEATHER_CLIP_SECONDS = 25
+FLASH_SCAN = (500, 1800)       # the first strike lands 20 to 40 s after the build
+FAMILY_MAX_SECONDS = 90        # the longest beat is 74 s (coffee c); the cap is for runaways
+FLASH_STEP = 3                 # ticks per probe frame (a flash lasts 7.5 ticks)
+FOG_LIFT_SECONDS = 150
 
 BEAT_RE = re.compile(r"^tick=(\d+) loop=(\d+) seed=(-?\d+) beat=(\S+)\s*$")
 MINOR_RE = re.compile(r"^tick=(\d+) minor=(\S+)\s*$")
@@ -154,10 +185,16 @@ def parse_log(text):
     return info, beats, minors, end_tick
 
 
-def run_preview(args, seed, every, frames, skip, outdir, log_beats):
-    cmd = [args.preview, "--seed", str(seed), "--mood", "%g" % args.mood_eff]
-    if args.night:
+def run_preview(args, seed, every, frames, skip, outdir, log_beats, extra=(), mood=None,
+                night=None):
+    """mood / night override the run's own (args.mood_eff / args.night); extra is a list of
+    more preview flags (--spine, --weather)."""
+    mood = args.mood_eff if mood is None else mood
+    night = args.night if night is None else night
+    cmd = [args.preview, "--seed", str(seed), "--mood", "%g" % mood]
+    if night:
         cmd.append("--night")
+    cmd += list(extra)
     cmd += ["--every", str(every), "--frames", str(frames), "--out", outdir]
     if skip:
         cmd += ["--skip", str(skip)]
@@ -206,10 +243,13 @@ def frame_of_tick(tick, every, skip):
     return max(0, math.ceil((tick - skip) / every) - 1)
 
 
-def cut_clip(args, seed, name, start_tick, end_tick, work, clips_dir, max_seconds):
-    """Render and encode one clip. Returns (seconds, mp4 path, png path, gif path or None)."""
-    N = args.every
-    rate = TICKS_PER_SECOND / N
+def cut_clip(args, seed, name, start_tick, end_tick, work, clips_dir, max_seconds,
+             extra=(), mood=None, night=None, every=None, play_rate=None):
+    """Render and encode one clip. Returns (seconds, mp4 path, png path, gif path or None).
+    every / play_rate: ticks per frame and playback frame rate (default: args.every and
+    real time; every 8 with play_rate 25 is the 8x overview look)."""
+    N = every or args.every
+    rate = play_rate or TICKS_PER_SECOND / N
     f0 = frame_of_tick(start_tick, N, 0)
     f1 = frame_of_tick(end_tick, N, 0)
     nframes = max(1, f1 - f0)
@@ -217,7 +257,7 @@ def cut_clip(args, seed, name, start_tick, end_tick, work, clips_dir, max_second
     framedir = os.path.join(work, "seed%d_%s" % (seed, name))
     shutil.rmtree(framedir, ignore_errors=True)
     # --skip f0*N makes the frame 0 of this run show tick (f0+1)*N, i.e. frame f0 of a full run.
-    run_preview(args, seed, N, nframes, f0 * N, framedir, False)
+    run_preview(args, seed, N, nframes, f0 * N, framedir, False, extra, mood, night)
     mp4 = os.path.join(clips_dir, name + ".mp4")
     png = os.path.join(clips_dir, name + ".png")
     gif = None
@@ -273,15 +313,27 @@ def print_table(clips):
 
 
 def missing_variants(clips, all_plan_beats):
+    """Evening beats (those named by the evening plans) lack any of LETTERS not collected;
+    the morning and midday beats (once the manifest has a clip of that family) lack any of
+    the first FAMILY_BEATS[family][beat] letters, reported as <family>_<beat>."""
     collected = {}
     for c in clips:
         if c.get("variant"):
-            collected.setdefault(c["beat"], set()).add(c["variant"])
+            key = (c.get("family") or "evening", c["beat"])
+            collected.setdefault(key, set()).add(c["variant"])
     missing = {}
     for beat in sorted(all_plan_beats):
-        left = [l for l in LETTERS if l not in collected.get(beat, set())]
+        left = [l for l in LETTERS if l not in collected.get(("evening", beat), set())]
         if left:
             missing[beat] = left
+    seen = {c.get("family") for c in clips}
+    for fam, beats in FAMILY_BEATS.items():
+        if fam not in seen:
+            continue
+        for beat, n in beats.items():
+            left = [l for l in LETTERS[:n] if l not in collected.get((fam, beat), set())]
+            if left:
+                missing["%s_%s" % (fam, beat)] = left
     return missing
 
 
@@ -291,6 +343,293 @@ def beat_kind(info, beat):
     if beat in info["fillers"]:
         return "filler"
     return "beat"
+
+
+class State:
+    """What a run has collected so far: the manifest rows (clips, plans), which names exist
+    (have: name -> set of kinds), the rows this run added, and whether anything failed."""
+
+    def __init__(self, args, clips, plans):
+        self.args = args
+        self.clips = clips
+        self.plans = plans
+        self.have = {}
+        for c in clips:
+            self.have.setdefault(c["name"], set()).add(c["kind"])
+        self.new_rows = []
+        self.failed = False
+
+    def add_row(self, name, beat, kind, variant, seed, tick, secs, mp4, gif, mood=None,
+                night=None, **more):
+        row = {"name": name, "beat": beat, "kind": kind, "variant": variant, "seed": seed,
+               "start_tick": tick, "seconds": round(secs, 2),
+               "mood": self.args.mood_eff if mood is None else mood,
+               "night": bool(self.args.night if night is None else night),
+               "file": "clips/" + name + ".mp4", "poster": "clips/" + name + ".png",
+               "bytes": os.path.getsize(mp4)}
+        row.update(more)
+        if gif:
+            row["gif"] = "clips/" + name + ".gif"
+        self.have.setdefault(name, set()).add(kind)
+        self.clips[:] = [c for c in self.clips
+                         if not (c["name"] == name and c["kind"] == kind)]
+        self.clips.append(row)
+        self.new_rows.append(row)
+        print("  cut %-26s %-8s seed %-6d %6.1f s %8d B" % (name, kind, seed, secs,
+                                                           row["bytes"]), flush=True)
+
+    def want(self, name, kind):
+        return kind not in self.have.get(name, ())
+
+
+def probe_log(args, seed, work, extra=(), mood=None, night=None):
+    """Coarse --log-beats run of seed (no useful frames); returns parse_log's result."""
+    d = os.path.join(work, "probe_seed%d" % seed)
+    try:
+        log = run_preview(args, seed, PROBE_EVERY, PROBE_TICKS // PROBE_EVERY, 0, d, True,
+                          extra, mood, night)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    info, beats, minors, end_tick = parse_log(log)
+    if info is None or not beats:
+        raise RuntimeError("no loop 0 beat log in preview output")
+    return info, beats, minors, (PROBE_TICKS if end_tick is None else end_tick)
+
+
+def beat_windows(beats, end_tick):
+    """[(tick, name, next tick)] for the beats of loop 0."""
+    return [(t, b, beats[i + 1][0] if i + 1 < len(beats) else end_tick)
+            for i, (t, b) in enumerate(beats)]
+
+
+def run_family(args, seeds, st, work, clips_dir):
+    """--family: every beat x variant of the morning or midday spine, plus the overview."""
+    fam = args.family
+    wanted = FAMILY_BEATS[fam]
+    extra = ["--spine", fam, "--weather", "clear"]
+    pad = int(round(args.pad_seconds * TICKS_PER_SECOND))
+    overview = "%s_overview" % fam
+    for seed in seeds:
+        names = ["%s_%s_%s" % (fam, b, LETTERS[k]) for b, n in wanted.items() for k in range(n)]
+        if all(not st.want(n, "beat") for n in names) and not st.want(overview, "overview"):
+            break
+        try:
+            info, beats, minors, end_tick = probe_log(args, seed, work, extra)
+        except RuntimeError as e:
+            print("seed %d: %s" % (seed, e), file=sys.stderr)
+            st.failed = True
+            continue
+        if info["family"] != fam:
+            print("seed %d: the preview played the %s spine, not the %s (is it built?)" % (
+                seed, info["family"], fam), file=sys.stderr)
+            st.failed = True
+            continue
+        st.plans[:] = [p for p in st.plans
+                       if not (p.get("seed") == seed and bool(p.get("night")) == bool(args.night)
+                               and p.get("family", "evening") == fam)]
+        st.plans.append(dict(info, seed=seed, mood=args.mood_eff, night=bool(args.night),
+                             weather="clear"))
+        seen = set()
+        for tick, beat, nxt in beat_windows(beats, end_tick):
+            if beat not in wanted or beat in seen or nxt <= tick:
+                continue
+            seen.add(beat)
+            letter = variant_letter(info["plan"], beat)
+            name = "%s_%s_%s" % (fam, beat, letter)
+            if not letter or not st.want(name, "beat"):
+                continue
+            start = max(0, tick - pad)
+            try:
+                secs, mp4, png, gif = cut_clip(args, seed, name, start, nxt + pad, work,
+                                               clips_dir, FAMILY_MAX_SECONDS,
+                                               extra)
+            except RuntimeError as e:
+                print("seed %d %s: %s" % (seed, name, e), file=sys.stderr)
+                st.failed = True
+                continue
+            st.add_row(name, beat, "beat", letter, seed, start, secs, mp4, gif, family=fam,
+                       weather="clear")
+        if st.want(overview, "overview"):
+            nframes_end = (end_tick // 8) * 8 + 1   # nframes = end_tick // 8, as the evening's
+            try:
+                secs, mp4, png, gif = cut_clip(args, seed, overview, 0, nframes_end, work,
+                                               clips_dir, 10 ** 6, extra, every=8,
+                                               play_rate=TICKS_PER_SECOND)
+            except RuntimeError as e:
+                print("seed %d %s: %s" % (seed, overview, e), file=sys.stderr)
+                st.failed = True
+                continue
+            st.add_row(overview, "loop_overview", "overview", None, seed, 0, secs, mp4, gif,
+                       family=fam, weather="clear")
+
+
+def ppm_mean(path, stride=53):
+    """Mean of every stride-th byte of a binary P6 PPM's pixel data (a cheap brightness)."""
+    with open(path, "rb") as f:
+        data = f.read()
+    # header: P6 <w> <h> <maxval> separated by single whitespace
+    pos, fields = 2, 0
+    while fields < 3:
+        while data[pos:pos + 1].isspace():
+            pos += 1
+        while not data[pos:pos + 1].isspace():
+            pos += 1
+        fields += 1
+    pos += 1
+    px = data[pos::stride]
+    return sum(px) / max(1, len(px))
+
+
+def find_flash(args, seed, work, lo, hi, extra, mood, night):
+    """Tick of the brightest frame of a coarse run over [lo, hi), or None when no frame
+    stands out (< 1.1x the median). Frame f of a run with --skip T shows tick T + (f+1)*N."""
+    ys = []
+    t = lo
+    while t < hi:
+        n = min(100, (hi - t) // FLASH_STEP)
+        if n < 1:
+            break
+        d = os.path.join(work, "flash_seed%d" % seed)
+        shutil.rmtree(d, ignore_errors=True)
+        try:
+            run_preview(args, seed, FLASH_STEP, n, t, d, False, extra, mood, night)
+            for f in range(n):
+                ys.append((t + (f + 1) * FLASH_STEP, ppm_mean(os.path.join(d, "frame_%05d.ppm" % f))))
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+        t += n * FLASH_STEP
+    if not ys:
+        return None, 0.0, 0.0
+    med = sorted(y for _, y in ys)[len(ys) // 2]
+    tick, peak = max(ys, key=lambda a: a[1])
+    return (tick if peak > 1.1 * med else None), peak, med
+
+
+def first_pause(beats, end_tick, min_tick, min_ticks):
+    """(start, end) of the first pause of loop 0 starting at or after min_tick and lasting
+    at least min_ticks, else None."""
+    for tick, beat, nxt in beat_windows(beats, end_tick):
+        if beat == "pause" and tick >= min_tick and nxt - tick >= min_ticks:
+            return tick, nxt
+    return None
+
+
+def run_weather(args, seeds, st, work, clips_dir):
+    """--weather-clips: the weather set (evening spine unless noted; clips at real time).
+      weather_<kind>_day    mood 4, WEATHER_CLIP_SECONDS from 1 s before the first pause of
+                            8 s or more at or after tick WEATHER_SETTLED_TICK (the gags
+                            start on a pause's first tick; the effects have settled)
+      weather_<kind>_night  the same with --night --mood 0
+      weather_storm_flash   10 s centred on the brightest frame of a coarse run over
+                            FLASH_SCAN (the first strike), mood 4
+      weather_wind_hat      15 s from 2 s before the first pause of the loop (the hat gag
+                            starts there), wind, mood 4
+      major_rain_shelter    the rain_shelter major's beat window, storm, mood 4, first of
+                            --seeds whose loop 0 plans it
+      morning_fog_lift      FOG_LIFT_SECONDS of a clear morning (mood 1.5) at 8x: the
+                            morning's own fog (the plan's fog=N steps) lifting
+    All but major_rain_shelter use --weather-seed."""
+    ws = args.weather_seed
+    rate = TICKS_PER_SECOND
+    secs_ticks = WEATHER_CLIP_SECONDS * rate
+
+    def cut(name, tag, seed, start, end, max_s, extra, mood, night, kind="weather",
+            cutopts=None, **more):
+        try:
+            secs, mp4, png, gif = cut_clip(args, seed, name, start, end, work, clips_dir, max_s,
+                                           extra, mood, night, **(cutopts or {}))
+        except RuntimeError as e:
+            print("%s: %s" % (name, e), file=sys.stderr)
+            st.failed = True
+            return
+        st.add_row(name, tag, kind, None, seed, start, secs, mp4, None, mood=mood, night=night,
+                   **more)
+
+    for kind in WEATHER_KINDS:
+        for night in (False, True):
+            name = "weather_%s_%s" % (kind, "night" if night else "day")
+            if not st.want(name, "weather"):
+                continue
+            mood = 0.0 if night else 4.0
+            extra = ["--weather", kind]
+            try:
+                info, beats, minors, end_tick = probe_log(args, ws, work, extra, mood, night)
+            except RuntimeError as e:
+                print("%s: %s" % (name, e), file=sys.stderr)
+                st.failed = True
+                continue
+            p = first_pause(beats, end_tick, WEATHER_SETTLED_TICK, 200)
+            if p is None:
+                print("%s: no settled pause in seed %d" % (name, ws), file=sys.stderr)
+                st.failed = True
+                continue
+            start = p[0] - rate
+            cut(name, "weather_" + kind, ws, start, start + secs_ticks, WEATHER_CLIP_SECONDS + 1,
+                extra, mood, night, weather=kind)
+
+    name = "weather_storm_flash"
+    if st.want(name, "weather"):
+        extra = ["--weather", "storm"]
+        try:
+            tick, peak, med = find_flash(args, ws, work, FLASH_SCAN[0], FLASH_SCAN[1], extra, 4.0, False)
+        except RuntimeError as e:
+            print("%s: %s" % (name, e), file=sys.stderr)
+            st.failed = True
+            tick = None
+        else:
+            if tick is None:
+                print("%s: no flash found in ticks %d-%d of seed %d" % (name, FLASH_SCAN[0],
+                                                                        FLASH_SCAN[1], ws), file=sys.stderr)
+                st.failed = True
+            else:
+                print("  flash at tick %d (brightness %.1f against median %.1f)" % (tick, peak, med))
+                start = max(0, tick - 5 * rate)
+                cut(name, "weather_storm", ws, start, start + 10 * rate, 11, extra, 4.0, False,
+                    weather="storm", flash_tick=tick)
+
+    name = "weather_wind_hat"
+    if st.want(name, "weather"):
+        extra = ["--weather", "wind"]
+        try:
+            info, beats, minors, end_tick = probe_log(args, ws, work, extra, 4.0, False)
+            p = first_pause(beats, end_tick, 0, 200)
+        except RuntimeError as e:
+            print("%s: %s" % (name, e), file=sys.stderr)
+            st.failed = True
+            p = None
+        if p is not None:
+            start = max(0, p[0] - 2 * rate)
+            cut(name, "weather_wind", ws, start, start + 15 * rate, 16, extra, 4.0, False,
+                weather="wind")
+
+    name = "major_rain_shelter"
+    if st.want(name, "major"):
+        extra = ["--weather", "storm"]
+        done = False
+        for seed in seeds:
+            try:
+                info, beats, minors, end_tick = probe_log(args, seed, work, extra, 4.0, False)
+            except RuntimeError as e:
+                print("seed %d: %s" % (seed, e), file=sys.stderr)
+                st.failed = True
+                continue
+            win = [w for w in beat_windows(beats, end_tick) if w[1] == "rain_shelter"]
+            if "rain_shelter" not in info["majors"] or not win:
+                continue
+            tick, _, nxt = win[0]
+            cut(name, "rain_shelter", seed, tick, nxt, args.max_seconds, extra, 4.0, False,
+                kind="major", weather="storm")
+            done = True
+            break
+        if not done:
+            print("%s: no seed in --seeds plans it in loop 0" % name, file=sys.stderr)
+            st.failed = True
+
+    name = "morning_fog_lift"
+    if st.want(name, "weather"):
+        extra = ["--spine", "morning", "--weather", "clear"]
+        cut(name, "morning_fog", ws, 0, FOG_LIFT_SECONDS * rate, 10 ** 6, extra, 1.5, False,
+            weather="clear", family="morning", cutopts={"every": 8, "play_rate": rate})
 
 
 def main():
@@ -311,6 +650,16 @@ def main():
     ap.add_argument("--gif", action="store_true", help="also write a GIF for clips under 10 s")
     ap.add_argument("--loops-overview", action="store_true",
                     help="also render a whole-loop 8x clip of the first seed")
+    ap.add_argument("--family", choices=sorted(FAMILY_BEATS),
+                    help="cut that spine family's beats x variants (clips/<family>_<beat>_<letter>) "
+                         "and its overview, at mood 1.5 (morning) or 3 (midday), weather clear")
+    ap.add_argument("--pad-seconds", type=float, default=1.0,
+                    help="--family: seconds added either side of each beat (default 1)")
+    ap.add_argument("--weather-clips", action="store_true",
+                    help="cut the weather set (weather_<kind>_day/night, storm flash, wind hat, "
+                         "major_rain_shelter, morning_fog_lift)")
+    ap.add_argument("--weather-seed", type=int, default=3,
+                    help="--weather-clips: the seed of every clip but major_rain_shelter (default 3)")
     ap.add_argument("--keep", action="store_true", help="keep the frame work dir")
     ap.add_argument("--force", action="store_true",
                     help="re-cut names already in the manifest")
@@ -328,7 +677,8 @@ def main():
         print_table(clips)
         all_beats = set()
         for p in plans:
-            all_beats.update(p.get("plan", {}))
+            if p.get("family", "evening") == "evening":
+                all_beats.update(p.get("plan", {}))
         miss = missing_variants(clips, all_beats)
         print("%d clips, manifest %s" % (len(clips), manifest_path))
         if miss:
@@ -344,7 +694,15 @@ def main():
     if not (os.path.isfile(args.preview) and os.access(args.preview, os.X_OK)):
         die("preview executable not found: %s" % args.preview)
     args.preview = os.path.abspath(args.preview)
-    args.mood_eff = args.mood if args.mood is not None else (0.0 if args.night else 4.0)
+    if args.family and args.weather_clips:
+        die("--family and --weather-clips are separate runs")
+    if args.family:
+        if args.night:
+            die("--family is a day run (no --night)")
+        default_mood = FAMILY_MOOD[args.family]
+    else:
+        default_mood = 0.0 if args.night else 4.0
+    args.mood_eff = args.mood if args.mood is not None else default_mood
     seeds = parse_seeds(args.seeds)
 
     clips_dir = os.path.join(out, "clips")
@@ -354,33 +712,27 @@ def main():
 
     # Carry over what earlier runs into the same DIR collected.
     clips, plans = [], []
-    if os.path.isfile(manifest_path) and not args.force:
+    if os.path.isfile(manifest_path):
         clips, plans = load_manifest(manifest_path, out)
-    # name -> set of kinds collected under that name. A name is skipped only for the same
-    # kind, so a beat that is a filler in one seed and a major in another is cut for both.
-    have = {}
-    for c in clips:
-        have.setdefault(c["name"], set()).add(c["kind"])
+    # st.have: name -> set of kinds collected under that name. A name is skipped only for the
+    # same kind, so a beat that is a filler in one seed and a major in another is cut for both.
+    # --force forgets what is there (so every name is cut again and replaces its row); rows of
+    # names this run does not cut stay in the manifest.
+    st = State(args, clips, plans)
+    if args.force:
+        st.have = {}
     all_plan_beats = set()
     for p in plans:
-        all_plan_beats.update(p.get("plan", {}))
-    failed = False
-    new_rows = []
+        if p.get("family", "evening") == "evening":
+            all_plan_beats.update(p.get("plan", {}))
     overview_done = False
 
-    def add_row(name, beat, kind, variant, seed, tick, secs, mp4, gif):
-        row = {"name": name, "beat": beat, "kind": kind, "variant": variant, "seed": seed,
-               "start_tick": tick, "seconds": round(secs, 2),
-               "mood": args.mood_eff, "night": bool(args.night),
-               "file": "clips/" + name + ".mp4", "poster": "clips/" + name + ".png",
-               "bytes": os.path.getsize(mp4)}
-        if gif:
-            row["gif"] = "clips/" + name + ".gif"
-        have.setdefault(name, set()).add(kind)
-        clips.append(row)
-        new_rows.append(row)
-        print("  cut %-24s %-7s seed %-6d %6.1f s %8d B" % (name, kind, seed, secs,
-                                                           row["bytes"]), flush=True)
+    if args.family or args.weather_clips:
+        if args.family:
+            run_family(args, seeds, st, work, clips_dir)
+        else:
+            run_weather(args, seeds, st, work, clips_dir)
+        seeds = []   # the evening loop below has nothing to do
 
     for seed in seeds:
         try:
@@ -388,20 +740,21 @@ def main():
                               0, os.path.join(work, "probe_seed%d" % seed), True)
         except RuntimeError as e:
             print("seed %d: %s" % (seed, e), file=sys.stderr)
-            failed = True
+            st.failed = True
             continue
         finally:
             shutil.rmtree(os.path.join(work, "probe_seed%d" % seed), ignore_errors=True)
         info, beats, minors, end_tick = parse_log(log)
         if info is None or not beats:
             print("seed %d: no loop 0 beat log in preview output" % seed, file=sys.stderr)
-            failed = True
+            st.failed = True
             continue
         if end_tick is None:
             end_tick = PROBE_TICKS
-        plans = [p for p in plans
-                 if not (p.get("seed") == seed and bool(p.get("night")) == args.night)]
-        plans.append(dict(info, seed=seed, mood=args.mood_eff, night=bool(args.night)))
+        st.plans[:] = [p for p in st.plans
+                       if not (p.get("seed") == seed and bool(p.get("night")) == args.night
+                               and p.get("family", "evening") == info["family"])]
+        st.plans.append(dict(info, seed=seed, mood=args.mood_eff, night=bool(args.night)))
         all_plan_beats.update(info["plan"])
 
         seen = set()
@@ -413,24 +766,24 @@ def main():
             kind = beat_kind(info, beat)
             letter = variant_letter(info["plan"], beat)
             name = beat + ("_" + letter if letter else "")
-            if kind in have.get(name, ()):
+            if kind in st.have.get(name, ()):
                 continue
-            if name in have:   # same name collected as another kind: keep both files
+            if name in st.have:   # same name collected as another kind: keep both files
                 name += "_" + kind
-                if kind in have.get(name, ()):
+                if kind in st.have.get(name, ()):
                     continue
             try:
                 secs, mp4, png, gif = cut_clip(args, seed, name, tick, nxt, work, clips_dir,
                                                args.max_seconds)
             except RuntimeError as e:
                 print("seed %d %s: %s" % (seed, name, e), file=sys.stderr)
-                failed = True
+                st.failed = True
                 continue
-            add_row(name, beat, kind, letter or None, seed, tick, secs, mp4, gif)
+            st.add_row(name, beat, kind, letter or None, seed, tick, secs, mp4, gif)
 
         for tick, minor in minors:
             name = "minor_" + minor
-            if "minor" in have.get(name, ()):
+            if "minor" in st.have.get(name, ()):
                 continue
             end = tick + int(round(args.minor_seconds * TICKS_PER_SECOND))
             try:
@@ -438,9 +791,9 @@ def main():
                                                args.minor_seconds)
             except RuntimeError as e:
                 print("seed %d %s: %s" % (seed, name, e), file=sys.stderr)
-                failed = True
+                st.failed = True
                 continue
-            add_row(name, minor, "minor", None, seed, tick, secs, mp4, gif)
+            st.add_row(name, minor, "minor", None, seed, tick, secs, mp4, gif)
 
         if args.loops_overview and not overview_done:
             overview_done = True
@@ -457,13 +810,13 @@ def main():
                 finally:
                     if not args.keep:
                         shutil.rmtree(framedir, ignore_errors=True)
-                clips = [c for c in clips if c["name"] != name]
-                add_row(name, "loop_overview", "overview", None, seed, 0,
+                st.add_row(name, "loop_overview", "overview", None, seed, 0,
                         nframes / TICKS_PER_SECOND, mp4, None)
             except RuntimeError as e:
                 print("seed %d overview: %s" % (seed, e), file=sys.stderr)
-                failed = True
+                st.failed = True
 
+    clips, plans = st.clips, st.plans
     missing = missing_variants(clips, all_plan_beats)
     manifest = {"clips": clips, "plans": plans, "missing_variants": missing}
     with open(manifest_path, "w") as f:
@@ -474,10 +827,10 @@ def main():
 
     print()
     print_table(clips)
-    print("%d clips (%d new), manifest %s" % (len(clips), len(new_rows), manifest_path))
+    print("%d clips (%d new), manifest %s" % (len(clips), len(st.new_rows), manifest_path))
     if missing:
         print("missing variants: " + ", ".join("%s:%s" % (b, "".join(l)) for b, l in missing.items()))
-    return 1 if failed else 0
+    return 1 if st.failed else 0
 
 
 if __name__ == "__main__":
