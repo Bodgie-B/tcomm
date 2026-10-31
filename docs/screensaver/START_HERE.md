@@ -41,6 +41,16 @@ below, so nothing is lost if someone wants to run a board smoke test early.
 
 The done-when for each stage is in brief section 15 and repeated below.
 
+## Who is working on what (2026-10-31)
+
+Mark is carrying the screensaver forward on his Mac with Claude (Fable as
+chief, Opus and Sonnet subagents) and pushes to `screensaver`. Mike reviews
+each stage from the clips in `docs/screensaver/reviews/` and from the draft
+pull request, and answers through GitHub issues on `Bodgie-B/tcomm` (see
+issue 1 for his stage 5b review). Mike's laptop takes over at stage 7, when
+the board comes in. Until then a session on Mike's machine should only read
+and comment, not edit the scene code.
+
 ## Who you are working with
 
 - **Mike** owns the repo (GitHub `Bodgie-B`), the Waveshare panel and the
