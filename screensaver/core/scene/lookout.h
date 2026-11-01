@@ -3,8 +3,8 @@
 // switchback trail getting smaller, stops to breathe while a hawk drifts
 // over, the fire lookout rises above the ridge, he climbs its stairs, looks
 // round the cab, sits at the west rail and watches the sun go down: the
-// palette steps from golden hour to dusk while birds cross, one star comes
-// out and the frame fades.
+// palette steps from golden hour to dusk while birds cross, the sun sinks
+// behind the ridge line, the stars come out one by one and the frame fades.
 //
 // lookout.cpp holds the plan, the beats and their scripts (the spine's
 // interpreter, script.h), and the scene's own per-tick state below; World
@@ -23,6 +23,8 @@ struct Renderer;
 struct WeatherTint;
 
 #define LK_BIRDS_MAX 8
+#define LK_STARS 40        // stars that come out through the sunset and the fade (spec 5b)
+#define LK_STARS_BRIGHT 8  // the first ones: discs as the camp's larger stars; the rest single pixels
 
 // One crossing in the sunset, planned at loop start.
 struct LkBird {
@@ -32,6 +34,15 @@ struct LkBird {
   int8_t dir;     // +1 flies right
   bool pair;
   bool lands;     // the pair that circles and lands in the far treeline (once a loop)
+};
+
+// One star, planned at loop start (lookoutBeginLoop). It comes out in four
+// steps of 0.5 s, the last at `full` ticks after the sunset's start.
+struct LkStar {
+  int16_t x, y;      // the pixel it sits on (a bright one's centre is its middle)
+  uint16_t full;     // ticks from the sunset's first tick to full
+  uint8_t r10;       // radius x 10 (0: a single pixel)
+  uint8_t lvl_d;     // the step last marked dirty (world.cpp lookoutMarkDirty)
 };
 
 // What the static cache holds (and so what the dynamic pass adds).
@@ -48,7 +59,7 @@ struct LookoutState {
   uint8_t pause_at;      // the trail vertex the approach ends at (the last left turn)
   uint8_t n_birds;
   LkBird birds[LK_BIRDS_MAX];
-  Vec2 star;             // where the one star comes out
+  // (The one star of the first build went with spec 5b; its two rng draws stay.)
   Vec2 land_at;          // where the landing pair comes down in the far treeline
   Vec2 chip_at;          // the chipmunk's place on the frame's middle girt
   Vec2 perch_at;         // the rail bird's place on the deck's front rail
@@ -75,6 +86,22 @@ struct LookoutState {
   uint16_t birds_flown;  // crossings started this loop (tests, notes)
   uint8_t pairs_landed;
 
+  // ---- the sun and the stars (spec 5b; planned at loop start) ----
+  float sun_r;           // disc radius
+  Vec2 sun_p0;           // its centre at tick 0
+  Vec2 sun_v;            // px a tick: down, a little to the right (dx = 0.2 dy)
+  uint32_t sun_tick;     // the planned tick he is down on the deck's edge (7/8 below then)
+  uint32_t sat_tick;     // the tick he is down (actSitEdge at u = 1); 0 before
+  uint32_t sunset_tick;  // the sunset's first tick; 0 before it
+  uint32_t sun_set_tick; // the planned first tick no pixel of it shows (the kept start's)
+  uint8_t sun_tries;     // starts drawn (1..16; fewer when one has no cloud cover; tests, notes)
+  float sun_cover;       // the kept start's worst share of the disc behind a cloud's puffs (+4 px), 0..1
+  bool sun_done;         // set (lookoutMarkDirty) the first tick after he is down that no pixel of it
+                         // shows; from then it is neither drawn nor tracked, even where the skyline
+                         // steps down past a pine corner and a pixel would show again for a few ticks
+  LkStar stars[LK_STARS];
+  Rect d_sun;            // the sun's bounds last marked (empty once it is set)
+
   // ---- dirty tracking (world.cpp) ----
   uint16_t d_cached;     // the layers the cache was last asked to hold
   float d_build_t;
@@ -99,6 +126,20 @@ int lookoutBuildPhase(const World& w);
 // Static cache and per-strip draws (worldDrawStatic / worldDrawDynamic).
 void lookoutDrawStatic(const World& w, Surface& frame, const Palette& pal, float mood);
 void lookoutDrawDynamic(const World& w, Surface& strip, const Rect& clip, const Palette& pal, float mood);
+// The sun and the stars, for the tests and the notes: how much of the disc
+// is below the skyline at its centre x (0 above the line .. 1 fully set), and
+// how many stars are at full.
+float lookoutSunBelow(const World& w);
+int lookoutStarsOut(const World& w);
+// The sun's centre now (tick w.tick), and whether any pixel of it shows
+// above the skyline (false once it is fully set).
+Vec2 lookoutSunAt(const World& w);
+bool lookoutSunShown(const World& w);
+// A star's step now, 0 (not out) .. 4 (full).
+int lookoutStarLevel(const World& w, int i);
+// The sun's and the stars' dirty marks (world.cpp lookoutTick, after the step).
+void lookoutMarkDirty(World& w, Renderer& r);
+
 // The palette's Lookout touch (app.cpp computeAppPalette): through the
 // sunset the horizon clouds hold their colour, a few tenths of mood behind
 // the sky (the same weather and night rule), so they are the last to go.

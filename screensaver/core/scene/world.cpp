@@ -416,6 +416,7 @@ void lookoutTick(World& w, Renderer& r) {
   track(r, d.bird, ambientBirdBounds(w), w.amb.bird.active);
   track(r, d.hiker, w.hiker_rect, w.hiker.visible);
   majorsTrack(w.major, r);
+  lookoutMarkDirty(w, r);   // the sun when its pixels move, a star at each of its steps
 }
 
 }  // namespace

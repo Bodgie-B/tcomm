@@ -70,6 +70,15 @@ struct LookoutLand {
 
   int16_t tower_x;               // centre of the cab's front (south) face
   int16_t tower_gy;              // ground y under the tower (the flat ridge crest)
+
+  // The skyline per pixel column (lookoutSkylineAt over the column, floored):
+  // the first row of the crests, the hill, the tree teeth and the pine tiers
+  // (not the trail, whose top end draws one row above it in a few columns
+  // inside the tower's bounds; not the tower). The sun and the stars
+  // (lookout.cpp) draw only in the rows above it; where a crest's coverage in
+  // the row rounds to 0 it can sit one row above the first drawn row. Filled
+  // by lookoutLandGenerate (no rng).
+  int16_t sky_top[SS_WIDTH];
 };
 
 void lookoutLandGenerate(LookoutLand& lk, Rng& rng);
@@ -122,6 +131,17 @@ void lookoutLandDraw(const LookoutLand& lk, Surface& s, const Rect& clip, const 
 
 // Hillside skyline y at frame x, linear between the samples (matches the drawn edge).
 float lookoutHillAt(const LookoutLand& lk, float x);
+
+// The skyline at frame x: the lowest y (highest on screen) of what the static
+// landscape draws there, the tower aside: the three valley crests and the
+// hill (SPINES_WEATHER_LOOKOUT_SPEC.md section 5b), and also the near valley's
+// tree line and the hill pines' tiers where they stand above those (both are
+// in the cache, so a sun or a star drawn over them would show on them).
+float lookoutSkylineAt(const LookoutLand& lk, float x);
+// The sky band (0..4, SKY0..SKY4) the static sky fills row y with.
+int lookoutSkyBand(int y);
+// The first landscape row in pixel column x (LookoutLand::sky_top; x clamped to the frame).
+int lookoutSkyTop(const LookoutLand& lk, int x);
 
 // Feet position along the trail, s 0..1 by arc length: 0 off the left edge at
 // the foot, 1 the tower's stair foot (= lookoutStairAt(lk, 0)).

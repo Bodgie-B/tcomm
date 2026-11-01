@@ -228,6 +228,76 @@ height is monotone non-increasing over the approach, the tower's bounds
 never enter the quiet zone, the sunset's palette steps are monotone in
 mood, the night caps hold through the fade.
 
+## 5b. The sun and the stars (Mike, PR #2, 2026-11-01)
+
+Two deliberate changes to brief section 7, asked for after the clips:
+the sun sinks, and the stars come out one by one. Both are sky things
+drawn in the dynamic pass over the cached landscape (the sky stays plain
+in the cache), clipped to the skyline, with small dirty marks; the
+sunset's palette steps and the rebuild count do not change.
+
+**The sun.** One flat disc in `SUN`, radius 20 to 24 px (the sun's own stream, below), over
+the valley on the west side. It moves linearly in loop time from the
+loop's start to the moment he is down on the deck's edge: down, and a
+little to the right (dx = 0.2 dy). Start: centre x 120 to 300, the disc
+clear above the skyline by 60 to 84 px. Timing (the ask): when
+`actSitEdge` reaches u = 1 the disc is 7/8 below the skyline at its
+centre x, within 1/16 either way; the last sliver goes in the 8 s or so
+after that, while he sits still (as built, seeds 1 to 20: fully set from
+7.2 s before the sunset beat starts to 1.1 s after it, and 11 to 19 s
+before its first palette step; the prose first said "in the first 10 s
+of the sunset", which the numbers never gave). The sit moment is computed
+at loop start from the plan: the build, the beats and pauses before the
+settle, the walk from the compass to the seat at the deck pace, the sit's
+1.8 s. The skyline at x is the lowest y (highest on screen) of the three
+valley crests and the hill (`lookoutSkylineAt`); the disc is drawn only
+where y < skyline(x), column by column, so it goes down behind the ridge
+line. Drawn after the sky and before the clouds (a cloud can pass in
+front of it); during the build's sky fade its colour mixes toward SKY4
+with the sky, as the clouds do. Once fully set it is neither drawn nor
+tracked. Dirty: the union of its last and current integer bounds when
+they differ (about one strip every second or two). Kept out from behind
+the clouds (added after the first frames): the start is drawn up to 16
+times and each try scored by its worst cover by either cloud's puffs
+(padded 4 px) at 8 even times over the descent plus the sit; the least
+covered is kept. The sun and the stars draw from their own rng stream
+(seeded from the loop rng's state, as the weather's is from the seed), so
+the loop rng's sequence and every later loop are unchanged.
+
+**The stars.** `LK_STARS = 40`, planned at loop start: positions over the
+whole width, each at least 8 px above the skyline at its x, outside the
+tower's bounds (`lookoutTowerBounds`: they would otherwise draw over the
+tower, which is in the cache), outside the reserved corner, no two within
+10 px (retry, one rng call per statement, bounded). The first eight are
+the bright ones (radius as the camp's larger stars), the rest single
+pixels. Appearance order is the array order (bright first). Schedule in
+seconds from the sunset's start: 34 stars over 45 % to 100 % of the
+sunset with gaps that shrink toward the end (`u_i = (i / 34)^0.6`, plus
+±1.5 s jitter, gaps never under 0.4 s), the last six at 0.5 to 6 s into
+the fade. Each star comes out in four steps of 0.5 s (colour mixed from
+the sky band behind it toward `STAR`, as the camp's `drawSkyBody` does),
+so a star marks dirty four times, not every tick. Drawn after the sky and
+before the sun and the clouds (a cloud or a bird in front of a star is
+right). They stay through the fade's night step and go to black with the
+frame. The old single `G_STAR` glyph goes.
+
+**Helpers for the tests and the notes:** `float lookoutSunBelow(const
+World&)` (0 above the line .. 1 fully set), `int lookoutStarsOut(const
+World&)` (stars at full), `uint32_t LookoutState::sat_tick` (the tick
+he is down; 0 before).
+
+**Tests (`test_lookout.cpp`):** over the 20 seeds the sun's fraction
+below is non-decreasing, 0 at the loop's first tick with the whole disc
+inside the frame and clear of the corner, 13/16 to 15/16 at `sat_tick`,
+1 before 30 % of the sunset; the stars-out count is non-decreasing, 0
+before 40 % of the sunset, at least 20 at the sunset's end, 40 by 7 s
+into the fade; every star is at least 8 px above the skyline at its x,
+outside the tower's bounds and the corner, no two within 10 px; the
+incremental render still equals the full render at checkpoints that
+include the sun's crossing and the stars' coming out; rebuilds still at
+most 16; `sizeof(App)` still fits. The `seen.star` check becomes
+`lookoutStarsOut(w) == LK_STARS` at the loop's end.
+
 ## 6. Budget and determinism (unchanged rules, restated)
 
 - One `rng` call per statement; table sines; no doubles; `-Werror` under

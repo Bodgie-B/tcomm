@@ -22,8 +22,17 @@
 // are set every tick from where he is (lookoutHikerPre).
 //
 // The palette's mood is the scene's own (World::mood_override): 4.0 from loop
-// start, stepped to 5.9 through the sunset in 10 to 12 steps, then 0.0 and 0.1
-// in the fade; each step is a palette change and a cache rebuild.
+// start, stepped to 5.9 through the sunset in 8 to 10 steps, then 0.0 in the
+// fade; each step is a palette change and a cache rebuild.
+//
+// The sun and the stars (spec section 5b) are sky things drawn in the dynamic
+// pass over the cache, clipped to the skyline (LookoutLand::sky_top): the sun
+// sinks in a straight line from the loop's start, timed from the plan so it is
+// 7/8 below the skyline the tick he is down on the deck's edge; 40 stars come
+// out through the sunset's second half and the fade's first seconds, each in
+// four steps. Both are planned at loop start from their own rng stream (the
+// loop rng's draws are untouched), the sun's start the least hidden by the
+// horizon clouds of sixteen tries, and mark only when their pixels change (lookoutMarkDirty).
 #include "lookout.h"
 
 #include <math.h>
@@ -31,6 +40,7 @@
 #include <string.h>
 
 #include "../anim/ease.h"
+#include "../render/renderer.h"
 #include "../ss_app.h"
 #include "script.h"
 #include "spine_family.h"
@@ -60,7 +70,7 @@ constexpr int kAimMin = 255, kAimMax = 315;   // the loop's length, s (policy 25
 constexpr uint8_t kSunMin = 90, kSunMax = 120, kPauseMin = 2, kPauseMax = 12;
 
 // Glyph slots in World::major (no major runs in a Lookout loop).
-enum : int { G_RAILBIRD = 0, G_CHIP = 1, G_TAP = 2, G_STAR = 3 };
+enum : int { G_RAILBIRD = 0, G_CHIP = 1, G_TAP = 2 };
 
 enum BirdMode : uint8_t { BM_NONE = 0, BM_HAWK, BM_CROSS, BM_IN, BM_CIRCLE, BM_DOWN };
 enum RailMode : uint8_t { RB_NONE = 0, RB_IN, RB_SIT, RB_OFF, RB_GONE };
@@ -260,6 +270,8 @@ void actSitEdge(World& w, float u) {
     w.spine.v0 = h.feet;
   }
   h.feet.y = w.spine.v0.y + kSitDrop * h.height * easeInOut(u);
+  // He is down: the tick this one becomes once the world has stepped (worldTick counts it).
+  if (u >= 1.f && w.look.sat_tick == 0) w.look.sat_tick = w.tick + 1;
 }
 
 // ---- scripts -----------------------------------------------------------------------------
@@ -337,6 +349,7 @@ void beatBegin(SceneCtx& ctx) {
   if (B == LB_SUNSET) {   // still but for his breath: slower and deeper (4 s, 1 px)
     L.sun_on = true;
     L.sun_s = 0.f;
+    L.sunset_tick = w.tick + 1;   // the stars' clock (as sat_tick: the tick once the world has stepped)
     w.hiker.breath_rate = 0.9f;
     w.hiker.breath_scale = 1.f / (0.011f * w.hiker.height);
   }
@@ -369,21 +382,12 @@ void sunsetUpdate(SceneCtx& ctx, float t, float) {
   }
 }
 
-// The fade: 0.0 at its start (beatBegin), 0.1 at 3 s; the star at 4 s; the
-// last kFadeS seconds to black, 1 on the beat's last tick.
+// The fade: mood 0.0 at its start (beatBegin); the last six stars come out
+// in its first 6 s (planStars); the last kFadeS seconds to black, 1 on the
+// beat's last tick.
 void fadeUpdate(SceneCtx& ctx, float t, float) {
   World& w = *ctx.w;
   const float d = (float)w.plan.fsec[LB_FADE];
-  const float s = t * d;
-  Glyph& g = w.major.g[G_STAR];
-  const float k = easeOutCubic(window(s, 4.f, 5.4f));
-  if (k > 0.f) {
-    g.kind = GL_DOT;
-    g.slot = STAR;
-    g.pos = w.look.star;
-    g.scale = 1.6f * k;
-    g.base_y = -1000;
-  }
   w.fade = easeInOut(window(t, 1.f - kFadeS / d, 1.f));
 }
 
@@ -713,11 +717,282 @@ float walkSeconds(const LookoutLand& lk, Vec2 a, Vec2 b, float k) {
   return t + 0.3f;
 }
 
+uint32_t buildTicks() { return (uint32_t)ceilf(SS_BUILD_SECONDS * (float)SS_TICK_HZ - 1e-3f); }
+
 int totalSeconds(const LoopPlan& p) {
   int s = (int)(SS_BUILD_SECONDS + 0.5f);
   for (int b = 0; b < LB_COUNT; ++b) s += p.fsec[b];
   s += p.pause_s[LB_REVEAL] + p.pause_s[LB_CLIMB] + p.pause_s[LB_EXPLORE];
   return s;
+}
+
+// ---- the sun and the stars (spec 5b) -------------------------------------------------------
+
+constexpr float kSunDrift = 0.2f;      // px right for each px down
+constexpr float kSunSetAt = 0.875f;    // the fraction below the skyline the tick he is down
+constexpr int kStarsSunset = 34;       // through the sunset; the rest in the fade
+constexpr float kStarGap = 0.4f;       // s, the shortest gap between two stars
+constexpr int kStarClear = 8;          // px between a star's lowest row and the skyline
+constexpr int kStarSpacing = 10;       // px, the closest two stars
+constexpr int kStarTries = 64;
+
+// The disc's pixel-centred centre (the image changes only when it moves a
+// whole pixel, so its bounds change whenever its pixels do) and its bounds.
+Vec2 sunPixel(const World& w) {
+  const Vec2 c = lookoutSunAt(w);
+  return Vec2{floorf(c.x) + 0.5f, floorf(c.y) + 0.5f};
+}
+Rect sunBounds(const World& w) {
+  const Vec2 c = sunPixel(w);
+  const float r = w.look.sun_r;
+  return Rect{(int)floorf(c.x - r) - 1, (int)floorf(c.y - r) - 1, (int)ceilf(c.x + r) + 1, (int)ceilf(c.y + r) + 1};
+}
+
+Rect starBounds(const LkStar& s) {
+  if (s.r10 == 0) return Rect{s.x, s.y, s.x + 1, s.y + 1};
+  return Rect{s.x - 2, s.y - 2, s.x + 3, s.y + 3};   // r <= 2 about the pixel's middle
+}
+
+int starLevelAt(const LookoutState& L, const LkStar& s, uint32_t tick) {
+  if (L.sunset_tick == 0 || tick < L.sunset_tick) return 0;
+  const int dt = (int)s.full - (int)(tick - L.sunset_tick);   // ticks to full
+  if (dt <= 0) return 4;
+  const int k = 3 - (2 * dt) / SS_TICK_HZ;                     // one step every 0.5 s before it
+  return k < 0 ? 0 : k;
+}
+
+// Whether any pixel of a disc drawn at pixel-centred `c` shows above the skyline.
+bool sunShownAt(const LookoutLand& lk, Vec2 c, float radius) {
+  const float r = radius + 0.1f;   // the disc's polygon (area matched) can reach a hair past r
+  for (int x = (int)floorf(c.x - r); x <= (int)ceilf(c.x + r); ++x) {
+    if (x < 0 || x >= SS_WIDTH) continue;
+    const float dx = c.x < (float)x ? (float)x - c.x : (c.x > (float)(x + 1) ? c.x - (float)(x + 1) : 0.f);
+    if (dx >= r) continue;
+    const float top = c.y - sqrtf(r * r - dx * dx);
+    if ((int)floorf(top) < lk.sky_top[x]) return true;
+  }
+  return false;
+}
+
+inline Vec2 pixelCentre(Vec2 c) { return Vec2{floorf(c.x) + 0.5f, floorf(c.y) + 0.5f}; }
+
+// A horizon cloud as it is `ticks` from loop start (cloudStep: leftward at
+// its speed, wrapping as it does).
+Cloud cloudAt(const Cloud& c0, float ticks) {
+  Cloud c = c0;
+  c.x -= c.speed * ticks;
+  while (c.x < CLOUD_WRAP_LEFT) c.x += CLOUD_WRAP_RIGHT - CLOUD_WRAP_LEFT;
+  return c;
+}
+
+constexpr int kSunTries = 16;      // starts tried; the least covered is kept (8 left 4 of 20 seeds half hidden for 30 to 47 s)
+constexpr int kSunSamples = 8;     // times on the path checked, 0 .. fully set (and the sit tick)
+constexpr float kSunCloudPad = 4.f;
+
+inline bool inEllipse(float x, float y, float cx, float cy, float rx, float ry) {
+  const float a = (x - cx) / rx, b = (y - cy) / ry;
+  return a * a + b * b <= 1.f;
+}
+
+// Whether a point is inside the cloud's puffs (cloudDraw's lit and shade
+// ellipses at its whole-pixel x; the Lookout never grows an ear) padded by kSunCloudPad.
+bool inPuffs(const Cloud& c, float x, float y) {
+  const float xq = floorf(c.x);
+  const float k = kSunCloudPad;
+  for (int i = 0; i < c.n; ++i)
+    if (inEllipse(x, y, xq + c.dx[i], c.y + c.dy[i], c.rx[i] + k, c.ry[i] + k)) return true;
+  return inEllipse(x, y, xq + c.sdx, c.y + c.sdy, c.srx + k, c.sry + k);
+}
+
+// The share of the disc's part above the skyline that the padded puffs of
+// either cloud cover, on a 2 px grid of pixel centres (the disc at `c`, `ticks`
+// from loop start). 0 when none of it is above the skyline.
+float sunCover(const World& w, Vec2 c, float r, float ticks) {
+  const Cloud a = cloudAt(w.clouds[0], ticks), b = cloudAt(w.clouds[1], ticks);
+  const Rect disc{(int)floorf(c.x - r) - 1, (int)floorf(c.y - r) - 1, (int)ceilf(c.x + r) + 1, (int)ceilf(c.y + r) + 1};
+  const int pad = (int)kSunCloudPad + 1;
+  const Rect ab = cloudBounds(a), bb = cloudBounds(b);
+  const bool near_a = !disc.clipped(Rect{ab.x0 - pad, ab.y0 - pad, ab.x1 + pad, ab.y1 + pad}).empty();
+  const bool near_b = !disc.clipped(Rect{bb.x0 - pad, bb.y0 - pad, bb.x1 + pad, bb.y1 + pad}).empty();
+  int vis = 0, hid = 0;
+  for (int y = disc.y0; y < disc.y1; y += 2)
+    for (int x = disc.x0; x < disc.x1; x += 2) {
+      if (x < 0 || x >= SS_WIDTH || y >= w.lk.sky_top[x]) continue;
+      const float px = (float)x + 0.5f, py = (float)y + 0.5f;
+      if ((px - c.x) * (px - c.x) + (py - c.y) * (py - c.y) > r * r) continue;
+      ++vis;
+      if ((near_a && inPuffs(a, px, py)) || (near_b && inPuffs(b, px, py))) ++hid;
+    }
+  return vis > 0 ? (float)hid / (float)vis : 0.f;
+}
+
+// The sun: radius, start and speed. It starts clear above the skyline over
+// the valley's west side and moves in a straight line so that the tick he is
+// planned to be down (the build, the beats and pauses before the settle, the
+// walk from where the explore leaves him to the seat at the deck pace, the
+// sit) it is kSunSetAt below the skyline at its centre x. Mike wants to see it
+// sink: the start (x and clearance) is drawn up to kSunTries times and each
+// try scored by its worst cover (sunCover) at kSunSamples even times from the
+// loop's start to the tick it is fully set, and at the sit tick; the least
+// covered try is kept (the first on a tie), and a try with no cover ends the search.
+void planSun(World& w, Rng& rng) {
+  LookoutState& L = w.look;
+  const LookoutLand& lk = w.lk;
+  const LoopPlan& p = w.plan;
+  int before = 0;
+  for (int b = 0; b < LB_SETTLE; ++b) before += p.fsec[b];
+  before += p.pause_s[LB_REVEAL] + p.pause_s[LB_CLIMB] + p.pause_s[LB_EXPLORE];
+  // The explore ends at the compass spot doToCompass walks to (towerP 25, the deck).
+  const float walk = walkSeconds(lk, towerP(w, 25.f, -(float)LK_LEG_H), lookoutRailSeat(lk), kDeckPace);
+  const float settle = walk + kSitS;
+  L.sun_tick = buildTicks() + (uint32_t)before * SS_TICK_HZ + (uint32_t)(settle * (float)SS_TICK_HZ + 0.5f);
+  const float n = (float)(L.sun_tick > 0 ? L.sun_tick : 1u);
+  const float r = rng.range(20.f, 24.f);
+  L.sun_r = r;
+  L.sun_cover = 2.f;   // above any score: the first try is always kept
+  for (int tries = 1; tries <= kSunTries && L.sun_cover > 0.f; ++tries) {
+    const float x = rng.range(120.f, 300.f);
+    const float clear = rng.range(60.f, 84.f);
+    L.sun_tries = (uint8_t)tries;
+    int top = SS_HEIGHT;
+    for (int c = (int)floorf(x - r); c <= (int)ceilf(x + r); ++c) {
+      const int t = lookoutSkyTop(lk, c);
+      if (t < top) top = t;
+    }
+    const Vec2 p0{x, (float)top - clear - r};
+    // How far down: the centre kSunSetAt * 2r - r below the skyline where it
+    // will be. The crests, the hill and the tree teeth slope under 3.3 (less
+    // than 1 / kSunDrift), so f is monotone in d there; a pine tier's corner is
+    // a vertical step in the skyline, where f can dip, but the bisection still
+    // lands on a root and the fraction below at the sit measured 0.871 to 0.874
+    // over seeds 1 to 2000 (the review).
+    const float below = (2.f * kSunSetAt - 1.f) * r;
+    float lo = 0.f, hi = 420.f;
+    for (int i = 0; i < 40; ++i) {
+      const float d = 0.5f * (lo + hi);
+      const float f = p0.y + d - lookoutSkylineAt(lk, p0.x + kSunDrift * d) - below;
+      if (f < 0.f) lo = d;
+      else hi = d;
+    }
+    const float d = 0.5f * (lo + hi);
+    const Vec2 v{kSunDrift * d / n, d / n};
+    // The tick it is fully set: past the sit, the first tick no pixel shows.
+    // Not quite monotone: past a pine corner the skyline steps down and a
+    // pixel can show again for a few ticks (47 of 2000 seeds, the review);
+    // sun_done (lookoutMarkDirty) keeps it set from the first such tick.
+    uint32_t a = L.sun_tick, b = L.sun_tick + 120u * SS_TICK_HZ;
+    while (b - a > 1u) {
+      const uint32_t m = a + (b - a) / 2u;
+      const Vec2 c{p0.x + v.x * (float)m, p0.y + v.y * (float)m};
+      if (sunShownAt(lk, pixelCentre(c), r)) a = m;
+      else b = m;
+    }
+    float worst = 0.f;
+    for (int k = 0; k <= kSunSamples; ++k) {   // k == kSunSamples: the sit tick
+      const float t = k < kSunSamples ? (float)b * (float)k / (float)(kSunSamples - 1) : n;
+      const float cov = sunCover(w, Vec2{p0.x + v.x * t, p0.y + v.y * t}, r, t);
+      if (cov > worst) worst = cov;
+    }
+    if (worst < L.sun_cover) {
+      L.sun_cover = worst;
+      L.sun_p0 = p0;
+      L.sun_v = v;
+      L.sun_set_tick = b;
+    }
+  }
+}
+
+// The stars: places over the whole sky (clear of the skyline, the tower and
+// each other) and their times, the first eight bright. One rng call per
+// statement; a star whose tries all fail keeps the last try that got as far
+// as a place, or 0,0 (the tests check every star; none failed over 2000 seeds).
+void planStars(World& w, Rng& rng) {
+  LookoutState& L = w.look;
+  const LookoutLand& lk = w.lk;
+  const Rect tb = lookoutTowerBounds(lk);
+  const Rect tower{tb.x0 - 2, tb.y0 - 2, tb.x1 + 2, tb.y1 + 2};
+  const float S = (float)w.plan.fsec[LB_SUNSET];
+  float prev = -1e9f;
+  for (int i = 0; i < LK_STARS; ++i) {
+    LkStar& st = L.stars[i];
+    st = LkStar{};
+    float r = 0.f;
+    if (i < LK_STARS_BRIGHT) r = rng.range(1.6f, 2.0f);   // as the camp's larger stars
+    st.r10 = (uint8_t)(r * 10.f + 0.5f);
+    for (int tries = 0; tries < kStarTries; ++tries) {
+      const int x = rng.rangeInt(4, SS_WIDTH - 5);
+      int top = SS_HEIGHT;
+      for (int c = x - 3; c <= x + 3; ++c) {
+        const int t = lookoutSkyTop(lk, c);
+        if (t < top) top = t;
+      }
+      const int lowest = st.r10 ? 2 : 0;   // the star's lowest row below its pixel
+      const int ymax = top - kStarClear - 1 - lowest;
+      if (ymax < 6) continue;
+      const int y = rng.rangeInt(5, ymax);
+      st.x = (int16_t)x;
+      st.y = (int16_t)y;
+      // A bright star mixes from the band at its centre row: keep its rows in one band.
+      if (st.r10 && lookoutSkyBand(y - 2) != lookoutSkyBand(y + 2)) continue;
+      const Rect b = starBounds(st);
+      if (!b.clipped(tower).empty()) continue;
+      if (b.x1 > LS_QUIET_X0 && b.y1 > LS_QUIET_Y0) continue;
+      bool clear = true;
+      for (int j = 0; j < i && clear; ++j) {
+        const int dx = L.stars[j].x - x, dy = L.stars[j].y - y;
+        if (dx * dx + dy * dy < kStarSpacing * kStarSpacing) clear = false;
+      }
+      if (clear) break;
+    }
+    // When it is full, s from the sunset's start: 34 over 45 % to 100 % of the
+    // sunset, the gaps shrinking toward the end, then six in the fade's first 6 s.
+    float t;
+    if (i < kStarsSunset) {
+      const float u = powf((float)i / (float)kStarsSunset, 0.6f);
+      const float jit = rng.range(-1.5f, 1.5f);
+      t = S * (0.45f + 0.55f * u) + jit;
+    } else {
+      t = S + 0.5f + 1.1f * (float)(i - kStarsSunset);
+    }
+    if (t < prev + kStarGap) t = prev + kStarGap;
+    prev = t;
+    st.full = (uint16_t)(t * (float)SS_TICK_HZ + 0.5f);
+  }
+}
+
+void drawStars(const World& w, Surface& s, const Rect& clip, const Palette& pal) {
+  const LookoutState& L = w.look;
+  if (L.sunset_tick == 0) return;
+  for (int i = 0; i < LK_STARS; ++i) {
+    const LkStar& st = L.stars[i];
+    const int lvl = starLevelAt(L, st, w.tick);
+    if (lvl == 0) continue;
+    if (starBounds(st).clipped(clip).empty()) continue;
+    // Mixed from the sky band behind it toward STAR, as the camp's drawSkyBody does.
+    const Pixel col = mixRGB(pal[(Slot)(SKY0 + lookoutSkyBand(st.y))], pal[STAR], 0.25f * (float)lvl);
+    if (st.r10 == 0) fillRect(s, Rect{st.x, st.y, st.x + 1, st.y + 1}, col, clip);
+    else fillCircle(s, Vec2{(float)st.x + 0.5f, (float)st.y + 0.5f}, 0.1f * (float)st.r10, col, clip);
+  }
+}
+
+// The disc, column runs clipped to the rows above the skyline. `sky` is the
+// build's sky fade: the disc mixes toward SKY4 with the sky, as the clouds do.
+void drawSun(const World& w, Surface& s, const Rect& clip, const Palette& pal, float sky) {
+  const LookoutState& L = w.look;
+  if (L.sun_r <= 0.f) return;
+  const Rect c = sunBounds(w).clipped(clip);
+  if (c.empty() || !lookoutSunShown(w)) return;
+  const Pixel col = sky < 1.f ? mixRGB(pal[SKY4], pal[SUN], sky) : pal[SUN];
+  const Vec2 ctr = sunPixel(w);
+  int x = c.x0;
+  while (x < c.x1) {
+    const int top = lookoutSkyTop(w.lk, x);
+    int e = x + 1;
+    while (e < c.x1 && lookoutSkyTop(w.lk, e) == top) ++e;
+    const int y1 = top < c.y1 ? top : c.y1;
+    if (y1 > c.y0) fillCircle(s, ctr, L.sun_r, col, Rect{x, c.y0, e, y1});
+    x = e;
+  }
 }
 
 }  // namespace
@@ -759,9 +1034,12 @@ void lookoutBeginLoop(World& w, Rng& rng) {
     cloudGenerate(w.clouds[1], rng, x1, y1, 0.35f);
   }
   {
+    // The one star of the first build (spec 5b replaced it with the stars
+    // below): its two draws stay so every later draw keeps its place.
     const float sx = rng.range(90.f, 330.f);
     const float sy = rng.range(30.f, 78.f);
-    L.star = Vec2{sx, sy};
+    (void)sx;
+    (void)sy;
     // The far treeline: the near valley crest there, a few px into the trees.
     const float lx = rng.range(70.f, 280.f);
     const float f = (lx - (float)LS_CREST_X0) / (float)LS_CREST_STEP;
@@ -849,6 +1127,17 @@ void lookoutBeginLoop(World& w, Rng& rng) {
   L.d_bphase = 0;
   w.spine.fp[0] = w.spine.fp[1] = tr.p[0];
   majorsReset(w.major);
+
+  // The sun and the stars, after the clouds (the sun keeps clear of them).
+  // Their own stream (as the weather has), so the loop rng's draws, and the
+  // next loop's seed taken from it at the loop's end, are as they were before
+  // the sun and the stars. It is seeded from the loop rng's state here (a
+  // function of the loop seed alone; read, not drawn from): the loop seed
+  // itself does not reach lookoutBeginLoop.
+  Rng sky;
+  sky.seed(rng.state ^ 0x4C4F4F4B53554E21ull, 0x4C4F4F4B53554E03ull);   // "LOOKSUN!"
+  planSun(w, sky);
+  planStars(w, sky);
 }
 
 void lookoutBuildTimeline(Timeline& tl, const LoopPlan& p) {
@@ -861,7 +1150,7 @@ void lookoutBuildTimeline(Timeline& tl, const LoopPlan& p) {
 }
 
 uint32_t lookoutLoopTicks(const LoopPlan& p) {
-  const uint32_t build = (uint32_t)ceilf(SS_BUILD_SECONDS * (float)SS_TICK_HZ - 1e-3f);
+  const uint32_t build = buildTicks();
   const int rest = totalSeconds(p) - (int)(SS_BUILD_SECONDS + 0.5f);
   return build + (uint32_t)rest * SS_TICK_HZ;
 }
@@ -948,13 +1237,16 @@ void lookoutDrawDynamic(const World& w, Surface& s, const Rect& clip, const Pale
   LkDraw d = L.stage == LKS_BUILD ? buildDraw(w, mood, nullptr) : lookoutDrawDone(mood, 0.f, LKL_LAND);
   const uint16_t dyn = (uint16_t)(d.layers & ~cached);
 
-  // 1. The sky while it fades in, then the sky's things: clouds (fading in with the sky) and the bird.
+  // 1. The sky while it fades in, then the sky's things: the stars, the sun,
+  // the clouds (the sun and the clouds fading in with the sky).
   if (dyn & LKL_BIT(LKL_SKY)) {
     LkDraw sd = d;
     sd.layers = LKL_BIT(LKL_SKY);
     lookoutLandDraw(w.lk, s, clip, pal, sd);
   }
   const float sky = L.stage == LKS_BUILD ? (buildPhaseOf(L.build_t) == 0 ? d.sky : 1.f) : 1.f;
+  drawStars(w, s, clip, pal);
+  drawSun(w, s, clip, pal, sky);
   if (sky < 1.f) {
     Palette cp = pal;
     cp.c[CLOUD_LIT] = mixRGB(pal[SKY4], pal[CLOUD_LIT], sky);
@@ -999,6 +1291,61 @@ void lookoutDrawDynamic(const World& w, Surface& s, const Rect& clip, const Pale
     const float a = w.fade >= 1.f ? 255.f : w.fade * 255.f + 0.5f;
     const uint8_t alpha = (uint8_t)a;
     for (int y = clip.y0; y < clip.y1; ++y) blendSpan(s, y, clip.x0, clip.x1, pal[ACTOR], alpha);
+  }
+}
+
+Vec2 lookoutSunAt(const World& w) {
+  const LookoutState& L = w.look;
+  const float t = (float)w.tick;
+  return Vec2{L.sun_p0.x + L.sun_v.x * t, L.sun_p0.y + L.sun_v.y * t};
+}
+
+bool lookoutSunShown(const World& w) {
+  if (w.look.sun_r <= 0.f || w.look.sun_done) return false;
+  return sunShownAt(w.lk, sunPixel(w), w.look.sun_r);
+}
+
+float lookoutSunBelow(const World& w) {
+  const LookoutState& L = w.look;
+  if (L.sun_r <= 0.f) return 0.f;
+  if (L.sun_done) return 1.f;
+  const Vec2 c = lookoutSunAt(w);
+  return clamp01((c.y + L.sun_r - lookoutSkylineAt(w.lk, c.x)) / (2.f * L.sun_r));
+}
+
+int lookoutStarLevel(const World& w, int i) {
+  if (i < 0 || i >= LK_STARS) return 0;
+  return starLevelAt(w.look, w.look.stars[i], w.tick);
+}
+
+int lookoutStarsOut(const World& w) {
+  int n = 0;
+  for (int i = 0; i < LK_STARS; ++i)
+    if (starLevelAt(w.look, w.look.stars[i], w.tick) == 4) ++n;
+  return n;
+}
+
+void lookoutMarkDirty(World& w, Renderer& r) {
+  LookoutState& L = w.look;
+  // The sun: where it was and where it is when its pixels moved; once set, its
+  // last place once and then nothing.
+  const Rect cur = lookoutSunShown(w) ? sunBounds(w) : Rect{0, 0, 0, 0};
+  if (cur.x0 != L.d_sun.x0 || cur.y0 != L.d_sun.y0 || cur.x1 != L.d_sun.x1 || cur.y1 != L.d_sun.y1) {
+    if (!L.d_sun.empty()) r.markDirtyRect(L.d_sun);
+    if (!cur.empty()) r.markDirtyRect(cur);
+    L.d_sun = cur;
+  }
+  // Set for good: the draw this tick and every later one reads sun_done, as
+  // this did not, so the marks and the pixels agree.
+  if (cur.empty() && !L.sun_done && L.sat_tick != 0 && w.tick > L.sat_tick) L.sun_done = true;
+  // A star at each of its four steps.
+  for (int i = 0; i < LK_STARS; ++i) {
+    LkStar& st = L.stars[i];
+    const int lvl = starLevelAt(L, st, w.tick);
+    if (lvl != st.lvl_d) {
+      r.markDirtyRect(starBounds(st));
+      st.lvl_d = (uint8_t)lvl;
+    }
   }
 }
 

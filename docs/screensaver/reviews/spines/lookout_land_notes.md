@@ -180,3 +180,210 @@ All are in `/private/tmp/claude-501/-Users-mark--claude-spares-spare-mjlbDH/8ba6
   dedicated palette slot.
 - **`lookoutTrailScale` is linear in arc length,** not in screen y. It is monotone as the test
   requires, but on long, nearly flat legs he shrinks while barely climbing.
+
+## Sun and stars (2026-11-01)
+
+Spec section 5b. Code: `lookout.cpp` (`planSun`, `planStars`, `drawSun`, `drawStars`,
+`lookoutMarkDirty` and the helpers), `lookout_land.cpp` (`lookoutSkylineAt`,
+`lookoutSkyTop`, `lookoutSkyBand`, the `sky_top` table), one call in `world.cpp`
+`lookoutTick`. Tests in `tests/test_lookout.cpp`.
+
+**What it does.**
+
+- The sun is one flat `SUN` disc, radius 20 to 24. Its start centre x is 120 to 300, and the
+  disc clears the skyline over its width by 60 to 84 px.
+- It moves in a straight line in loop ticks, dx = 0.2 dy. The tick he is planned to be down
+  (`sun_tick`) it is 7/8 below the skyline at its centre x. The end point comes from a
+  bisection on the skyline.
+- `sun_tick` is the build (325 ticks), plus the whole-second beats and pauses before the
+  settle, plus `walkSeconds` from the explore's last spot (`towerP` 25, where `doToCompass`
+  walks) to the rail seat at the deck pace, plus the sit's 1.8 s.
+- It is drawn after the stars and before the clouds. It is drawn only in rows above
+  `LookoutLand::sky_top` (one `fillCircle` per run of columns with the same skyline).
+- During the build's sky fade it mixes toward SKY4.
+- It is drawn at a pixel-centred position, so its image changes only when its integer bounds
+  do. It marks the union of its old and new bounds when they differ. Once no pixel of it is
+  above the skyline, it marks its last bounds once and then nothing more.
+- Stars: 40 places, at least 8 px between a star's lowest row and the skyline. They keep 2 px
+  clear of `lookoutTowerBounds` and out of the corner, and no two are within 10 px. Each star
+  gets 64 tries, with one rng call per statement.
+- The first eight are bright: discs of r 1.6 to 2.0, about a pixel centre. The other 32 are
+  single pixels.
+- Each star comes out in four steps (0.25, 0.5, 0.75, 1 of the mix from its sky band toward
+  STAR), 0.5 s apart. Each step marks its bounds once.
+- They are drawn after the sky and before the sun and the clouds. They stay through the
+  fade's night step.
+- Their clock is `LookoutState::sunset_tick`, set when the sunset begins. The old single
+  `G_STAR` glyph is gone (glyph slot 3 is now free).
+- Helpers: `lookoutSunBelow`, `lookoutStarsOut`, `lookoutSunAt`, `lookoutSunShown`,
+  `lookoutStarLevel` and `LookoutState::sat_tick`. `sat_tick` is set in `actSitEdge` at
+  u = 1, as the tick the world is about to count.
+- **rng (revised the same day):** the sun and the stars draw from their own stream, as the
+  weather does, tagged "LOOKSUN!". The loop seed does not reach `lookoutBeginLoop` (that
+  would need `spine.cpp` or `app.cpp`), so the stream is seeded from the loop rng's state at
+  the end of the loop start. That state is a function of the loop seed alone, and it is only
+  read, never drawn from.
+  - The loop rng's draws are as before the sun and stars. The old star's two draws stay in
+    place, unused. So the next loop's seed is too: `--loops 3` output for seeds 1 to 3 is
+    byte-identical to the build before 5b, and seed 1's loop 1 is seed 387781948 again.
+  - For seeds 1 and 2, frames every 200 ticks over loops 0 and 1 differ from the build before
+    5b only in the sun's disc and the stars' pixels (a pixel diff of 40 frames each).
+- **Kept out from behind the clouds (Mike, revised the same day).** The start (x and
+  clearance) is drawn up to 16 times from the sun's stream (8 at first; the chief raised it
+  when 8 left 4 of 20 seeds half hidden for 30 to 47 s). Each try is scored by its worst
+  cover: the share of the disc's part above the skyline that either horizon cloud's puffs
+  hide. The puffs are the lit and shade ellipses at the drawn position, each padded by
+  4 px, sampled on a 2 px grid.
+  - Cover is checked at 8 evenly spaced ticks from 0 to the try's fully-set tick, and at the
+    planned sit tick. The clouds are advanced as `cloudStep` moves them.
+  - The least-covered try is kept (the first on a tie), and a try with zero cover ends the
+    search. `LookoutState::sun_tries` and `sun_cover` record it.
+  - A cloud edge drifting over the disc for a while is accepted. What this avoids is the
+    disc more than half hidden for long.
+
+**Numbers** (clang and g++-16 give the same results; from `test_lookout`):
+
+| seed | r | start centre | clear | down speed | sat tick (planned) | below at sat | fully set |
+|---|---|---|---|---|---|---|---|
+| 1 | 21.2 | 130.9, 137.1 | 68.7 | 0.740 px/s | 4028 (4031) | 0.873 | tick 4288, 3.5 s before the sunset |
+| 2 | 23.3 | 286.0, 135.5 | 86.3 | 0.799 px/s | 4053 (4056) | 0.873 | tick 4337, 2.5 s before |
+| 3 | 22.6 | 273.2, 131.3 | 80.1 | 0.742 px/s | 4103 (4106) | 0.873 | tick 4437, 0.5 s before |
+| 4 | 23.1 | 125.6, 143.5 | 66.4 | 0.649 px/s | 4053 (4056) | 0.873 | tick 4296, 4.2 s before |
+
+Tries and cover for the kept start (worst cover is the plan's score, puffs plus 4 px; most
+hidden is what the test measured once a second on the bare puffs):
+
+| seed | tries | worst cover (planned) | most hidden (measured) |
+|---|---|---|---|
+| 1 | 16 | 0.20 | 0.13 |
+| 2 | 16 | 0.16 | 0.10 |
+| 3 | 16 | 0.15 | 0.10 |
+| 4 | 1 | 0 | 0 |
+
+These values come from the final version: the sun's own stream and the best of 16 cloud
+tries. Earlier versions in this session had different starts.
+
+- The "clear" column is measured at the centre column; the plan clears the minimum over the
+  disc's width. Over 20 seeds the fraction below at `sat_tick` is 0.873. He sits
+  3 ticks earlier than planned in every seed: the real walk is 0.12 s shorter than the
+  `walkSeconds` estimate. The window is 0.8125 to 0.9375.
+- Seed 1's star schedule (sunset 120 s), times when each star is full, from the sunset's
+  start: the first at 55.0 s (46 %; its first step at 53.5 s), the eighth at 78.2 s, the 34th
+  at 117.9 s, the last at 126.0 s (6.0 s into the fade). Seeds 2 to 4 are within 2.5 s of
+  these.
+- Over 20 seeds no star is out before 40 % of the sunset. At least 20 are out at its end, and
+  all 40 are out at 7 s into the fade.
+- Strips per frame (4 whole loops, seeds 1, 2, 3 and 7, build excluded): average 3.19 before,
+  3.24 after. The maximum is 15 both times.
+- Incremental equals full at 854 checkpoints. 248 of them are in the sun's crossing (every
+  second while it is partly below, and at `sat_tick`) and 160 are on ticks when a star
+  reached full.
+- Palette rebuilds per loop: 10 to 12 before and after (20 seeds). The "11 to 13" in
+  `notes.md` dates from before the review dropped the fade's second step.
+- `sizeof(App)` went from 70,320 to 72,296. `LookoutLand` went from 1,916 to 3,516 (the
+  800-entry `sky_top`). `LookoutState` went from 248 to 624 (the 40 stars at 8 bytes each,
+  plus the sun's fields).
+
+**Review fixes (chief, after the Opus review of the diff).** No high findings; the review
+rendered seeds 1 to 120 incrementally against full renders on every tick (0 differences,
+also across a loop boundary and with the night rule on) and showed the test catches a
+missing dirty mark (three mutated builds, 6 to 44 failures each). Fixed: `sun_done` latches
+the sun off the first tick after the sit that no pixel shows (past a pine corner the
+skyline steps down and a pixel could show again for 2 to 35 ticks in 47 of 2000 seeds,
+drawing a real pixel in 3 of them); the two "monotone" comments in `planSun` corrected;
+a bright star's five rows are kept in one sky band (its mix base is the band at its
+centre row); the `sky_top` comment says what it leaves out (the trail's top end, one row
+above it in a few columns inside the tower's bounds; and a row where a crest's coverage
+rounds to 0); the early-star test checks any lit step, not only full; the set-time range
+and the stale numbers above restated. Not changed: the sun past x 365 never happens, so
+the trail rows do not matter; a 90 s sunset is never planned over 300 seeds (checked by
+hand by the review: the schedule still fits).
+
+**Behind the clouds, over 20 seeds** (from `test_lookout`; printed, not failing checks):
+
+- **Retries:** 18 seeds drew the start again. 2 found a cloud-free start on the first try.
+- **Kept start's worst cover** (planned, puffs plus 4 px):
+
+  | worst cover | seeds |
+  |---|---|
+  | 0 | 8 |
+  | above 0, up to 0.25 | 9 |
+  | above 0.25, up to 0.5 | 1 |
+  | over 0.5 | 2 (most 0.83) |
+
+- **Measured once a second on the bare puffs,** the disc is more than half hidden for a
+  second or more in 1 seed: seed 16, for 40 s, at most 0.70 hidden. With 8 tries it was
+  4 seeds (5, 14, 15 and 16, 30 to 47 s each); under the first rule (8 tries checked
+  against cloud bounds, the last one kept) 9 seeds, seed 1 alone hidden for 33 s.
+- **Why seed 16 remains:** none of its 16 tries found a path past the lower cloud. A scan of
+  the whole of 5b's range finds a path with worst cover of 25 % or less for 17 of 20 seeds;
+  the rest would need a wider x range. Accepted: the sun is clear at the sit and through its
+  crossing in every seed (the crest is below the clouds), and a cloud in front of the sun
+  during the approach reads as weather.
+
+**Deviations from 5b, with reasons.**
+
+- **`lookoutSkylineAt` covers more than 5b lists.** Besides the three valley crests and the
+  hill, it includes the near valley's tree line and the hill pines' tiers. Both are in the
+  cache and sometimes poke above the crests. In 7 of seeds 1 to 20 they rise 3 to 18 px
+  above them (seed 5: 18.2 px at x 359, a pine on the upper slope; none in seeds 1 to 4). A
+  sun or a star drawn over them would show on them. Every use goes through this one skyline: the clip, the fraction, the 7/8 aim and the
+  stars' 8 px. So the spec's checks hold against a stricter line.
+- **Schedule times are when a star reaches full.** The four steps come at t - 1.5, t - 1.0,
+  t - 0.5 and t. With the times read as the first step, the last star (6 s into the fade)
+  would not be full by 7 s, and the test asks for all 40 by then.
+- **`u_i = (i / 34)^0.6` uses i from 0 to 33.** The first star is at 45 % of the sunset and
+  the 34th near 99 %. The 0.4 s minimum gap is applied forward after the ±1.5 s jitter. The
+  fade's six fall at 0.5 + 1.1 j s, with no jitter.
+- **The stream is seeded from the loop rng's state, not the loop seed.** The loop seed does
+  not reach `lookoutBeginLoop`, and passing it in would mean changing `spine.cpp` or
+  `app.cpp`. The effect is the same: the stream is a function of the loop seed alone, and
+  the loop rng is untouched.
+
+**Not as 5b's prose expects (decided).** The spec's prose says the last sliver goes in the
+first 10 s or so of the sunset. With its numbers, it doesn't: he is down about 6.5 s into
+the 20 s settle, and the last 1/8 of the disc takes about 8 s more at 0.65 to 0.85 px/s. So
+the sun is fully set from 7.2 s before the sunset beat begins to 1.1 s after it (seed 14;
+seeds 1 to 20, measured by the review), 11 to 19 s before its first palette step, while he
+sits still at the rail. The chief kept it: the ask was the sun in its last eighth as he sits down, which
+holds in all 20 seeds, and the last sliver going while he sits still before the sky
+starts to turn is the right order. (Alternatives not taken: aim 5/8 below at the sit,
+slow the last stretch, sit later.)
+
+**Looked at** (seed 1, mood 4, `ss_preview --spine lookout --weather clear`, PNGs in the
+session scratchpad). These are from the first version, with the sun drawn from the loop rng;
+the star and sit frames look the same now, apart from the star places.
+
+- **Seed 1, final version, ticks 340, 825, 2500 and 3700:** the whole disc is plainly
+  visible at every one, left of the lower cloud's end, sinking toward the crest by 3700.
+  (In the first version, at ticks 340 and 825, most of it was behind the lower cloud.)
+- **Seed 5, the worst remaining seed with 8 tries** (clear with 16):
+  - tick 340: clear, just under the upper cloud's left end;
+  - tick 825: the top half shows above the lower cloud;
+  - ticks 1200 and 1700: a cap above it, then a sliver below it;
+  - tick 2500: clear below it;
+  - tick 3700: low over the crest.
+
+  It was behind the lower cloud for about 47 s in the approach. With 16 tries the one seed
+  left like this is 16 (40 s); its frames were not looked at.
+- seeds 2 to 4 at tick 825 (first version): clear discs, partly behind a cloud in 2 and 3;
+- tick 3700: about half below, clipped cleanly along the far crest;
+- tick 4028 (`sat_tick`): a thin sliver at the ridge;
+- tick 4278: gone;
+- tick 6175 (60 %): six or so stars, the bright ones, none over the tower or the hill;
+- tick 7225 (95 %): about 30, spread over the whole sky;
+- tick 7550 (fade + 7 s): all 40, the tower clear.
+
+**Unverified.**
+
+- **On the panel:** all colours, and the contrast at mood 4. `SUN` is a pale cream on the
+  pale SKY2 to SKY4 bands. In the PNGs it reads clearly but softly, as the camp's does.
+  Whether single-pixel stars at 1/4 and 1/2 of their mix are visible at all is also
+  unverified.
+- **Cost:** the loop-start cost on the board is untimed. Two parts:
+  - the `sky_top` table (800 columns x 3 samples x crests, 80 tree teeth and the pine tiers);
+  - the sun's cloud scoring (up to 16 tries x 9 samples x about 120 grid points x up to 14
+    ellipses).
+- **The ridge edge:** where the disc meets the ridge, the first row with any landscape
+  coverage is left as the cache drew it (sky blended with ridge). So the sun stops one
+  partial row short of the line. This was not visible in the zoomed PNGs.

@@ -706,6 +706,48 @@ float lookoutPlantScale(float u, float x, float y) {
 
 float lookoutHillAt(const LookoutLand& lk, float x) { return crestAt(lk.hill, x); }
 
+float lookoutSkylineAt(const LookoutLand& lk, float x) {
+  float y = crestAt(lk.hill, x);
+  for (int l = 0; l < 3; ++l) y = minf(y, crestAt(lk.valley[l], x));
+  // The near valley's tree line: tooth i rises from (x_i, crest) to its tip
+  // over the middle of its span and back down (drawValleyTrees).
+  const float* c = lk.valley[2];
+  for (int i = 0; i < lk.n_spikes; ++i) {
+    const float x0 = fl(lk.spikes[i].x), x1 = fl(lk.spikes[i + 1].x);
+    if (x < x0 || x > x1) continue;
+    const float xm = 0.5f * (x0 + x1);
+    const float tip = crestAt(c, xm) - fl(lk.spikes[i].h);
+    const float t = x < xm ? (x1 > x0 ? (x - x0) / (xm - x0) : 0.f) : (x1 > xm ? (x - xm) / (x1 - xm) : 0.f);
+    y = minf(y, x < xm ? lerp(crestAt(c, x0), tip, t) : lerp(tip, crestAt(c, x1), t));
+  }
+  // The hill pines' tiers (drawHillPine at full size).
+  for (int i = 0; i < lk.n_pines; ++i) {
+    const LsPine& p = lk.pines[i];
+    const float h = fl(p.h), base = fl(p.base_y);
+    const float top = base - h;
+    const float fbot = base - maxf(3.f, h * 0.16f);
+    const float dx = fabsf(x - fl(p.x));
+    for (int k = 0; k < p.tiers; ++k) {
+      const Tier t = tierGeom(k, p.tiers, top, fbot, h, fl(p.width_pct));
+      if (dx > t.half_w || t.half_w <= 0.f) continue;
+      y = minf(y, t.apex_y + (t.base_y - t.apex_y) * dx / t.half_w);
+    }
+  }
+  return y;
+}
+
+int lookoutSkyBand(int y) {
+  int b = 0;
+  while (b < 4 && y >= kBand[b + 1]) ++b;
+  return b;
+}
+
+int lookoutSkyTop(const LookoutLand& lk, int x) {
+  if (x < 0) x = 0;
+  if (x >= SS_WIDTH) x = SS_WIDTH - 1;
+  return lk.sky_top[x];
+}
+
 void lookoutLandGenerate(LookoutLand& lk, Rng& rng) {
   // Valley: three ridge layers like the camp's, a little lower so the
   // hillside's skyline stands clear above them.
@@ -772,6 +814,16 @@ void lookoutLandGenerate(LookoutLand& lk, Rng& rng) {
   lk.sh_y[0] = rng.range(352.f, 366.f);
   lk.sh_y[1] = rng.range(300.f, 326.f);
   lk.sh_ph = rng.uniform();
+
+  // The skyline per column: every knot of the crests, the hill and the tree
+  // line sits on a whole or half pixel x and a pine tier's apex on a whole
+  // one, so the column's lowest y is at one of x, x + 0.5, x + 1.
+  for (int col = 0; col < SS_WIDTH; ++col) {
+    const float fx = fl(col);
+    const float sy = minf(lookoutSkylineAt(lk, fx), minf(lookoutSkylineAt(lk, fx + 0.5f), lookoutSkylineAt(lk, fx + 1.f)));
+    const float yc = sy < 0.f ? 0.f : (sy > fl(SS_HEIGHT) ? fl(SS_HEIGHT) : sy);
+    lk.sky_top[col] = (int16_t)floorf(yc);
+  }
 }
 
 LkDraw lookoutDrawDone(float mood, float reveal, uint16_t layers) {
