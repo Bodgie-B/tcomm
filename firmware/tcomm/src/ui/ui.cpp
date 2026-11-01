@@ -25,8 +25,7 @@ struct FloorTile {
   Floor floor;
   int slot;  // its ArtSlot
   lv_obj_t *cont, *img_bot, *img_top, *floor_lbl, *word, *line, *chev, *chev_img, *badge, *inside, *temp, *hum, *drop, *zone;
-  Art art[2];  // front is on screen; the other is drawn in the background, then faded in
-  int front = 0;
+  Art art;  // on screen; a new one is drawn into the spare, then faded in (see Spare)
   Art badge_art, chev_art, drop_art;
   // The mail badge, on the DOWNSTAIRS tile only: its touch area, the outline and the solid one.
   lv_obj_t *mail = nullptr, *mail_ghost = nullptr, *mail_solid = nullptr;
@@ -39,9 +38,68 @@ struct FloorTile {
 };
 
 FloorTile g_tile[2];  // [0] UPSTAIRS on top, [1] DOWNSTAIRS below, whichever unit this is
-// Pairs: [front] on screen, the other drawn in the background (see run_art_job).
-Art g_sky[2], g_bell_art[2][2], g_outside_art[2];
-int g_sky_front = 0, g_bell_front = 0, g_out_front = 0;
+// The big pictures, one copy each; the doorbell's [0] is plain and [1] pressed.
+Art g_sky, g_bell_art[2], g_outside_art;
+
+// One spare picture for all of them (2026-11-01). The drawing task paints whichever is changing
+// into the spare; then the sky trades memory with it and the others are copied in (a tile's fade
+// shows the spare itself until it's over). Each used to keep a second copy of its own for this:
+// 1.8 MB of PSRAM, against 0.77 MB for the spare.
+struct Spare {
+  uint8_t *mem = nullptr;  // the sky's size, enough for any of the others
+  float *row[2] = {};      // scanline buffers, one per view
+  gfx::Canvas view[2];     // what's being drawn (the doorbell draws its two pictures at once)
+  lv_img_dsc_t dsc = {};   // view[0] as an image, for a tile's fade
+  int owner = -1;          // the ArtSlot using it, or -1
+};
+Spare g_spare;
+void (*g_copy_pause)() = nullptr;
+
+bool spare_begin() {
+  g_spare.mem = (uint8_t *)gfx::alloc_bytes((size_t)art::kScreenW * art::kScreenH * 2);
+  for (float *&r : g_spare.row) r = (float *)gfx::alloc_bytes(gfx::Canvas::scanline_bytes(art::kScreenW));
+  return g_spare.mem && g_spare.row[0] && g_spare.row[1];
+}
+
+// The spare for slot, its view 0 (and for the doorbell view 1, after it) set to w x h and cleared;
+// null while another picture has it.
+gfx::Canvas *spare_claim(int slot, int w, int h, bool alpha) {
+  if (g_spare.owner >= 0 || !g_spare.mem || !g_spare.row[0] || !g_spare.row[1]) return nullptr;
+  g_spare.owner = slot;
+  g_spare.view[0].view(g_spare.mem, g_spare.row[0], w, h, alpha);
+  if (slot == kSlotBell) g_spare.view[1].view(g_spare.mem + g_spare.view[0].bytes(), g_spare.row[1], w, h, alpha);
+  return &g_spare.view[0];
+}
+
+void spare_release() { g_spare.owner = -1; }
+
+// Copies view k into a picture's own memory a few KB at a time, pausing between, so the screen's
+// own reads from PSRAM aren't starved (that shows as streaks); then shows it in img, if given.
+void spare_copy(Art &a, int k, lv_obj_t *img) {
+  const uint8_t *src = g_spare.view[k].data();
+  uint8_t *dst = a.cv.data();
+  size_t n = a.cv.bytes();
+  for (size_t i = 0; i < n; i += 4096) {
+    memcpy(dst + i, src + i, n - i < 4096 ? n - i : 4096);
+    if (g_copy_pause) g_copy_pause();
+  }
+  if (img) a.show(img);
+}
+
+// View 0 shown in img, for a tile's fade.
+void spare_show(lv_obj_t *img) {
+  const gfx::Canvas &v = g_spare.view[0];
+  lv_img_dsc_t &d = g_spare.dsc;
+  memset(&d, 0, sizeof(d));
+  d.header.w = (uint32_t)v.width();
+  d.header.h = (uint32_t)v.height();
+  d.header.cf = v.has_alpha() ? LV_IMG_CF_TRUE_COLOR_ALPHA : LV_IMG_CF_TRUE_COLOR;
+  d.data_size = (uint32_t)v.bytes();
+  d.data = v.data();
+  lv_img_cache_invalidate_src(&d);
+  lv_img_set_src(img, &d);
+  lv_obj_invalidate(img);
+}
 Art g_strip, g_paw_in, g_paw_out, g_gear_art, g_close_art, g_fc_art, g_rays_art, g_odrop_art, g_ice_art;
 lv_obj_t *g_sky_img, *g_strip_img, *g_date, *g_time, *g_hol, *g_dog, *g_dog_disc, *g_dog_paw, *g_dog_lbl;
 lv_obj_t *g_gear, *g_gear_img, *g_gear_arc;
@@ -112,8 +170,7 @@ void tile_build(FloorTile &t, Floor f, int x, int y) {
   t.slot = f == Floor::Upstairs ? kSlotTileUp : kSlotTileDown;
   t.cont = plain(lv_scr_act(), x, y, art::kFloorW, art::kFloorH);
   show(t.cont, false);  // until its first art is drawn
-  t.art[0].make(art::kFloorW, art::kFloorH, true);
-  t.art[1].make(art::kFloorW, art::kFloorH, true);
+  t.art.make(art::kFloorW, art::kFloorH, true);
   t.img_bot = image(t.cont, 0, 0);
   t.img_top = image(t.cont, 0, 0);
   show(t.img_top, false);
@@ -159,10 +216,10 @@ void tile_fade_done(lv_anim_t *a) {
   lv_obj_t *top = (lv_obj_t *)a->var;
   for (FloorTile &t : g_tile) {
     if (t.img_top != top) continue;
-    t.front = 1 - t.front;
-    t.art[t.front].show(t.img_bot);
+    spare_copy(t.art, 0, t.img_bot);  // the new picture into the tile's own, under the faded-in spare
     show(t.img_top, false);
     lv_obj_set_style_opa(t.img_top, LV_OPA_COVER, 0);
+    spare_release();
   }
 }
 
@@ -173,12 +230,11 @@ void tile_apply(FloorTile &t, int key) {
   theme::StatusColors sc = theme::status_colors(st, m);
   const theme::Palette &pal = theme::palette(m);
   bool first = t.key < 0;
-  Art &back = t.art[1 - t.front];
   if (first || t.key % 4 != key % 4) {  // first time, or day/night changed: no fade
-    t.front = 1 - t.front;
-    t.art[t.front].show(t.img_bot);
-  } else {  // brief 10.1: the tile fades to the new color over about 250 ms
-    back.show(t.img_top);
+    spare_copy(t.art, 0, t.img_bot);
+    spare_release();
+  } else {  // brief 10.1: the tile fades to the new color over about 250 ms; the spare is the new one
+    spare_show(t.img_top);
     lv_obj_set_style_opa(t.img_top, LV_OPA_TRANSP, 0);
     show(t.img_top, true);
     anim(t.img_top, 0, 255, 250, set_opa, tile_fade_done);
@@ -212,17 +268,29 @@ void tile_render(FloorTile &t, const FloorView &fv) {
   int key = st * 4 + (int)g_mode;
   ArtSlot &slot = g_art[t.slot];
   ArtJob done;
-  if (slot.take(done) && done.key == key) tile_apply(t, key);  // a result that's out of date is dropped
+  if (slot.take(done)) {
+    if (done.key == key) tile_apply(t, key);  // it lets the spare go once the picture is copied in
+    else spare_release();                     // a result that's out of date is dropped
+  }
+  // A fade cut short never calls tile_fade_done: finish its work here, or the spare stays taken.
+  if (g_spare.owner == t.slot && slot.idle() && !lv_anim_get(t.img_top, nullptr)) {
+    spare_copy(t.art, 0, t.img_bot);
+    show(t.img_top, false);
+    lv_obj_set_style_opa(t.img_top, LV_OPA_COVER, 0);
+    spare_release();
+  }
   // Ask for the new tile in the background. Not while a fade shows both canvases.
   if (key != t.key && slot.idle() && !lv_anim_get(t.img_top, nullptr)) {
-    ArtJob j;
-    j.kind = ArtKind::Floor;
-    j.cv = &t.art[1 - t.front].cv;
-    j.floor = t.floor;
-    j.status = st;
-    j.mode = g_mode;
-    j.key = key;
-    slot.submit(j);
+    if (gfx::Canvas *cv = spare_claim(t.slot, art::kFloorW, art::kFloorH, true)) {
+      ArtJob j;
+      j.kind = ArtKind::Floor;
+      j.cv = cv;
+      j.floor = t.floor;
+      j.status = st;
+      j.mode = g_mode;
+      j.key = key;
+      slot.submit(j);
+    }
   }
   // Until the new art is ready the tile keeps its old words, so words and colors change together.
   if (key == t.key) t.shown = fv;
@@ -296,8 +364,8 @@ void dog_clicked(lv_event_t *) {
 
 void bell_event(lv_event_t *e) {
   lv_event_code_t code = lv_event_get_code(e);
-  if (code == LV_EVENT_PRESSED) g_bell_art[g_bell_front][1].show(g_bell_img);
-  else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) g_bell_art[g_bell_front][0].show(g_bell_img);
+  if (code == LV_EVENT_PRESSED) g_bell_art[1].show(g_bell_img);
+  else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) g_bell_art[0].show(g_bell_img);
   else if (code == LV_EVENT_CLICKED && g_act) g_act->tap_bell();
 }
 
@@ -473,8 +541,8 @@ void build_main() {
   lv_obj_clear_flag(lv_layer_top(), LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_clear_flag(lv_layer_sys(), LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
-  g_sky[0].make(art::kScreenW, art::kScreenH, false);
-  g_sky[1].make(art::kScreenW, art::kScreenH, false);
+  g_sky.make(art::kScreenW, art::kScreenH, false);
+  spare_begin();
   g_sky_img = image(scr, 0, 0);
 
   g_strip_img = image(scr, 78, 6);
@@ -543,8 +611,7 @@ void build_main() {
   // Spec 4c, tile coordinates.
   lv_obj_t *out = g_out_cont = plain(scr, 538, 74, art::kSideW, art::kFloorH);
   show(out, false);  // until its art is drawn
-  g_outside_art[0].make(art::kSideW, art::kFloorH, true);
-  g_outside_art[1].make(art::kSideW, art::kFloorH, true);
+  g_outside_art.make(art::kSideW, art::kFloorH, true);
   g_out_img = image(out, 0, 0);
   g_out_title = label(out, B14, hex(0), 0, board_y(B14, 9.2f), "OUTSIDE");
   lv_obj_set_style_text_letter_space(g_out_title, 2, 0);  // 0.16 em (2.24 px)
@@ -570,8 +637,7 @@ void build_main() {
   lv_obj_set_style_translate_y(g_bell_cont, 6, LV_STATE_PRESSED);  // the face drops when pressed
   lv_obj_add_event_cb(g_bell_cont, bell_event, LV_EVENT_ALL, nullptr);
   show(g_bell_cont, false);  // until its art is drawn
-  for (auto &pair : g_bell_art)
-    for (Art &a : pair) a.make(art::kSideW, art::kFloorH, true);
+  for (Art &a : g_bell_art) a.make(art::kSideW, art::kFloorH, true);
   g_bell_img = image(g_bell_cont, 0, 0);
   g_bell_pic_art.make(art::kBellPic, art::kBellPic, true);
   g_bell_pic = image(g_bell_cont, art::kBellPicX, art::kBellPicY);
@@ -608,11 +674,19 @@ void glow_place(Phase ph, float p) {
   lv_obj_invalidate(g_glow_obj);
 }
 
+// A tile still waiting for its new picture. It answers a tap, so it has the spare before the sky.
+bool tile_waiting(const FloorTile &t, const FloorView &fv) {
+  int st = fv.no_signal ? theme::kNoSignal : (int)fv.status;
+  return st * 4 + (int)g_mode != t.key;
+}
+
 void render_sky(const View &v) {
   ArtJob done;
   if (g_art[kSlotSky].take(done)) {
-    g_sky_front = 1 - g_sky_front;
-    g_sky[g_sky_front].show(g_sky_img);
+    g_sky.cv.trade_pixels(g_spare.mem);  // the new sky on screen; the old one's memory is the spare now
+    g_sky.dsc.data = g_sky.cv.data();
+    spare_release();
+    g_sky.show(g_sky_img);
     g_sky_phase = (int)done.phase;
     g_sky_moon = done.moon;
     g_sky_p = done.disc_p;
@@ -625,9 +699,13 @@ void render_sky(const View &v) {
   // Redrawn on a phase change, or once a minute at most while the disc creeps along (brief section 7).
   if (!due && dp > 0.004f && lv_tick_elaps(g_sky_at) > 60000) due = true;
   if (!due || !g_art[kSlotSky].idle()) return;
+  if (tile_waiting(g_tile[0], v.floor[(int)Floor::Upstairs]) || tile_waiting(g_tile[1], v.floor[(int)Floor::Downstairs]))
+    return;
+  gfx::Canvas *cv = spare_claim(kSlotSky, art::kScreenW, art::kScreenH, false);
+  if (!cv) return;
   ArtJob j;
   j.kind = ArtKind::Sky;
-  j.cv = &g_sky[1 - g_sky_front].cv;
+  j.cv = cv;
   j.phase = v.phase;
   j.disc_p = v.disc_p;
   j.moon = v.moon;
@@ -863,8 +941,8 @@ void render_outside(const View &v) {
   ArtJob done;
   if (g_art[kSlotOutside].take(done)) {
     const theme::Palette &pal = theme::palette(done.mode);
-    g_out_front = 1 - g_out_front;
-    g_outside_art[g_out_front].show(g_out_img);
+    spare_copy(g_outside_art, 0, g_out_img);
+    spare_release();
     set_text_color(g_out_title, pal.outside_text);
     set_text_color(g_out_phrase, pal.outside_text);
     set_text_color(g_out_temp, pal.outside_text);
@@ -876,11 +954,13 @@ void render_outside(const View &v) {
     g_out_mode = (int)done.mode;
   }
   if (g_out_mode != (int)g_mode && g_art[kSlotOutside].idle()) {
-    ArtJob j;
-    j.kind = ArtKind::Outside;
-    j.cv = &g_outside_art[1 - g_out_front].cv;
-    j.mode = g_mode;
-    g_art[kSlotOutside].submit(j);
+    if (gfx::Canvas *cv = spare_claim(kSlotOutside, art::kSideW, art::kFloorH, true)) {
+      ArtJob j;
+      j.kind = ArtKind::Outside;
+      j.cv = cv;
+      j.mode = g_mode;
+      g_art[kSlotOutside].submit(j);
+    }
   }
   if (g_out_mode < 0) return;
   Mode shown = (Mode)g_out_mode;
@@ -957,20 +1037,24 @@ void bell_shake() {
 void render_bell(const View &v) {
   ArtJob done;
   if (g_art[kSlotBell].take(done)) {
-    g_bell_front = 1 - g_bell_front;
-    g_bell_art[g_bell_front][lv_obj_has_state(g_bell_cont, LV_STATE_PRESSED) ? 1 : 0].show(g_bell_img);
+    bool pressed = lv_obj_has_state(g_bell_cont, LV_STATE_PRESSED);
+    spare_copy(g_bell_art[0], 0, pressed ? nullptr : g_bell_img);
+    spare_copy(g_bell_art[1], 1, pressed ? g_bell_img : nullptr);
+    spare_release();
     set_text_color(g_bell_word, theme::palette(done.mode).door_text);
     if (g_bell_mode < 0) show(g_bell_cont, true);
     g_bell_mode = (int)done.mode;
     g_bell_warn = -1;
   }
   if (g_bell_mode != (int)g_mode && g_art[kSlotBell].idle()) {
-    ArtJob j;
-    j.kind = ArtKind::Bell;
-    j.cv = &g_bell_art[1 - g_bell_front][0].cv;
-    j.cv2 = &g_bell_art[1 - g_bell_front][1].cv;
-    j.mode = g_mode;
-    g_art[kSlotBell].submit(j);
+    if (gfx::Canvas *cv = spare_claim(kSlotBell, art::kSideW, art::kFloorH, true)) {
+      ArtJob j;
+      j.kind = ArtKind::Bell;
+      j.cv = cv;
+      j.cv2 = &g_spare.view[1];
+      j.mode = g_mode;
+      g_art[kSlotBell].submit(j);
+    }
   }
   if (g_bell_mode < 0) return;
   const theme::Palette &pal = theme::palette((Mode)g_bell_mode);
@@ -1153,6 +1237,8 @@ void render(const Frame &f) {
 }
 
 void tap_gear() { gear_tapped(); }
+
+void set_copy_pause(void (*pause)()) { g_copy_pause = pause; }
 
 void scroll_sheet(int y) {
   if (g_sheet_root && lv_obj_get_child_cnt(g_sheet_root)) lv_obj_scroll_to_y(lv_obj_get_child(g_sheet_root, 0), y, LV_ANIM_OFF);

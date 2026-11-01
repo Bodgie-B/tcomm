@@ -79,6 +79,9 @@ bool run_art_job();
 // Memory the jobs draw in, a strip of rows at a time (the panel gives it fast internal RAM).
 // Without it they draw straight into their PSRAM canvases.
 void set_art_scratch(uint8_t *buf, size_t bytes);
+// Called between the few-KB pieces of a finished picture's copy into its place on screen, to give
+// the screen's own PSRAM reads room (the panel waits a few microseconds).
+void set_copy_pause(void (*pause)());
 
 // For the simulator: open sheets the way a touch would, and scroll the open one's list.
 enum class Sheet { None, Status, Timer, Settings, TimeDate, Test, CleanScreen, Ringtone, Zambretti };

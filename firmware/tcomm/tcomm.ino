@@ -409,6 +409,7 @@ void setup() {
   g_scratch = (uint8_t *)heap_caps_malloc(kScratch, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   if (!g_scratch) g_strips = false;
   ui::set_art_scratch(g_strips ? g_scratch : nullptr, g_strips ? kScratch : 0);
+  ui::set_copy_pause([] { delayMicroseconds(20); });  // between the 4 KB pieces of a picture's copy
   xTaskCreatePinnedToCore(art_task, "art", 8192, nullptr, 1, nullptr, 0);
   Serial.printf("[tcomm] started: %s, clock %s, free PSRAM %u\n", tc::floor_word(settings.floor),
                 g_platform.wall().valid ? "from RTC" : "NOT SET", (unsigned)ESP.getFreePsram());
@@ -456,8 +457,51 @@ static void mail_from_other_floor() {
   Serial.printf("mail: %s taps theirs; now %s\n", tc::floor_lower(other), g_ctrl.mail().waiting ? "waiting" : "none waiting");
 }
 
+// The serial commands' numbers, read by hand: sscanf brought in newlib's scanf for these few lines,
+// about 17 KB of code that these builds copy into PSRAM (2026-11-01).
+// "word N": true, with v set, when s is the word, a space and a whole number (as sscanf's "%d").
+static bool cmd_int(const char *s, const char *word, int &v) {
+  size_t n = strlen(word);
+  if (strncmp(s, word, n) || s[n] != ' ') return false;
+  char *end = nullptr;
+  long x = strtol(s + n + 1, &end, 10);
+  if (end == s + n + 1) return false;
+  v = (int)x;
+  return true;
+}
+
+// "time YYYY-MM-DD HH:MM[:SS]" into f: year, month, day, hour, minute, second (left as it was if
+// not given).
+static bool cmd_time(const char *s, int f[6]) {
+  if (strncmp(s, "time ", 5)) return false;
+  const char *p = s + 5;
+  static const char kAfter[6] = {'-', '-', ' ', ':', ':', 0};  // ' ': spaces, which strtol skips
+  for (int i = 0; i < 6; i++) {
+    char *end = nullptr;
+    long x = strtol(p, &end, 10);
+    if (end == p) return i == 5;
+    f[i] = (int)x;
+    p = end;
+    if (kAfter[i] == '-' || kAfter[i] == ':') {
+      if (*p != kAfter[i]) return i == 4;  // no seconds
+      p++;
+    }
+  }
+  return true;
+}
+
+// "display X": the first character after the word and any spaces.
+static bool cmd_char(const char *s, const char *word, char &ch) {
+  size_t n = strlen(word);
+  if (strncmp(s, word, n) || s[n] != ' ') return false;
+  const char *p = s + n;
+  while (*p == ' ') p++;
+  ch = *p;
+  return ch != 0;
+}
+
 static void command(char *s) {
-  int Y, M, D, h, m, sec = 0, v;
+  int v, t[6] = {0, 0, 0, 0, 0, 0};
   char ch;
   if (!strcmp(s, "help")) {
     Serial.println("status N (0-4) | bell | dog | time YYYY-MM-DD HH:MM[:SS] (local) | demo N (0-7) | info | bench");
@@ -521,7 +565,7 @@ static void command(char *s) {
     board::audio_log_state();
     return;
   }
-  if (sscanf(s, "amp hold %d", &v) == 1) {
+  if (cmd_int(s, "amp hold", v)) {
     board::audio_amp_hold(v != 0);
     Serial.printf("amp hold %s\n", v ? "on" : "off");
     return;
@@ -537,7 +581,7 @@ static void command(char *s) {
     return;
   }
   if (!lvgl_port_lock(1000)) return;
-  if (sscanf(s, "status %d", &v) == 1 && tc::status_valid((uint8_t)v)) g_ctrl.choose_status((tc::Status)v);
+  if (cmd_int(s, "status", v) && tc::status_valid((uint8_t)v)) g_ctrl.choose_status((tc::Status)v);
   else if (!strcmp(s, "bell")) g_ctrl.tap_bell();
   else if (!strcmp(s, "dog")) g_ctrl.tap_dog();
   else if (!strcmp(s, "mail")) Serial.println(g_ctrl.tap_mail() ? "mail: tapped" : "mail: nothing waiting to acknowledge");
@@ -546,21 +590,21 @@ static void command(char *s) {
   else if (!strcmp(s, "update")) board::restart_into_updater();
   else if (!strcmp(s, "timesync")) Serial.println(board::time_sync_start() ? "time: asking" : "time: can't ask now");
   else if (!strcmp(s, "knock")) knock_from_other_floor();
-  else if (sscanf(s, "time %d-%d-%d %d:%d:%d", &Y, &M, &D, &h, &m, &sec) >= 5)
-    g_app.set_clock_local(tc::seconds_from_civil(Y, M, D, h, m, sec));
-  else if (sscanf(s, "demo %d", &v) == 1 && v >= 0 && v <= 7) g_app.demo((ui::DemoAction)v);
-  else if (sscanf(s, "ring %d", &v) == 1 && v >= 0 && v < tc::kRingtoneCount) {
+  else if (cmd_time(s, t))
+    g_app.set_clock_local(tc::seconds_from_civil(t[0], t[1], t[2], t[3], t[4], t[5]));
+  else if (cmd_int(s, "demo", v) && v >= 0 && v <= 7) g_app.demo((ui::DemoAction)v);
+  else if (cmd_int(s, "ring", v) && v >= 0 && v < tc::kRingtoneCount) {
     tc::Settings st = g_ctrl.settings();
     st.ringtone = tc::ringtone_id(v);  // N is the place in the list
     g_app.apply_settings(st);
     g_app.preview(tc::Sound::Chime, st.volume);
   }
-  else if (sscanf(s, "play %d", &v) == 1 && v >= 0 && v <= 3)
+  else if (cmd_int(s, "play", v) && v >= 0 && v <= 3)
     g_platform.preview((tc::Sound)v, g_ctrl.settings().volume);  // the ringtone chosen stays as it is
   else if (!strcmp(s, "pattern")) toggle_pattern();
-  else if (sscanf(s, "display %c", &ch) == 1 && toupper(ch) >= 'A' && toupper(ch) < 'A' + kDisplayPresetCount)
+  else if (cmd_char(s, "display", ch) && toupper(ch) >= 'A' && toupper(ch) < 'A' + kDisplayPresetCount)
     g_platform.display_test_set(toupper(ch) - 'A');  // restarts the panel when the buffer size changes
-  else if (sscanf(s, "pclk %d", &v) == 1 && v >= 8 && v <= 20) {
+  else if (cmd_int(s, "pclk", v) && v >= 8 && v <= 20) {
     // Takes effect at the next frame; back to 16 MHz at the next boot.
     esp_err_t e = esp_lcd_rgb_panel_set_pclk(g_panel, (uint32_t)v * 1000000u);
     Serial.printf("pixel clock %d MHz: %s\n", v, esp_err_to_name(e));

@@ -9,6 +9,8 @@ namespace gfx {
 
 static Allocator g_alloc = {malloc, free};
 void set_allocator(Allocator a) { g_alloc = a; }
+void *alloc_bytes(size_t n) { return g_alloc.alloc(n); }
+void release_bytes(void *p) { g_alloc.release(p); }
 
 static RowHook g_row_hook = nullptr;
 void set_row_hook(RowHook h) { g_row_hook = h; }
@@ -72,36 +74,45 @@ float RRect::coverage(float px, float py) const {
 
 Canvas::~Canvas() { destroy(); }
 
+// The scanline buffers in one block: row_ (w floats), run_ (w + 1), ev_ (w + 1), mark_ (w + 1).
+size_t Canvas::scanline_bytes(int w) { return sizeof(float) * (2 * (size_t)w + 1) + 3 * ((size_t)w + 1); }
+
 bool Canvas::create(int w, int h, bool alpha) {
   // Allocate first: if memory runs short, the old buffer (which an lv_img may still show) survives.
   size_t n = (size_t)w * h * (alpha ? 3 : 2);
   uint8_t *data = (uint8_t *)g_alloc.alloc(n);
-  // The scanline buffers in one block: row_ (w floats), run_ (w + 1), ev_ (w + 1), mark_ (w + 1).
-  size_t nrow = sizeof(float) * (2 * (size_t)w + 1) + 3 * ((size_t)w + 1);
-  float *row = (float *)g_alloc.alloc(nrow);
+  float *row = (float *)g_alloc.alloc(scanline_bytes(w));
   if (!data || !row) {
     if (data) g_alloc.release(data);
     if (row) g_alloc.release(row);
     return false;
   }
   destroy();
+  view(data, row, w, h, alpha);
+  owned_ = true;
+  return true;
+}
+
+void Canvas::view(uint8_t *data, float *row, int w, int h, bool alpha) {
+  destroy();
+  owned_ = false;
   data_ = data;
   row_ = row;
   w_ = w;
   h_ = h;
   alpha_ = alpha;
-  memset(data_, 0, n);
+  memset(data_, 0, bytes());
   run_ = row_ + w;
   ev_ = (uint16_t *)(run_ + w + 1);
   mark_ = (uint8_t *)(ev_ + w + 1);
   nev_ = 0;
-  memset(row_, 0, nrow);
-  return true;
+  memset(row_, 0, scanline_bytes(w));
 }
 
 void Canvas::destroy() {
-  if (data_) g_alloc.release(data_);
-  if (row_) g_alloc.release(row_);
+  if (owned_ && data_) g_alloc.release(data_);
+  if (owned_ && row_) g_alloc.release(row_);
+  owned_ = true;
   data_ = nullptr;
   row_ = run_ = nullptr;
   ev_ = nullptr;

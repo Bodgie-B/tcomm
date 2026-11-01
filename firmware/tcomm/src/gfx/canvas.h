@@ -31,6 +31,9 @@ struct Allocator {
   void (*release)(void *);
 };
 void set_allocator(Allocator a);
+// Memory from the same place, for blocks the interface shares between canvases (a spare picture).
+void *alloc_bytes(size_t n);
+void release_bytes(void *p);
 
 // Called after each row of the larger fills. The panel uses it to keep the task watchdog fed, so a
 // slow redraw makes the screen lag instead of rebooting it.
@@ -52,6 +55,17 @@ class Canvas {
   Canvas &operator=(const Canvas &) = delete;
 
   bool create(int w, int h, bool alpha);
+  // A canvas over memory it doesn't own (a spare picture the interface shares): data holds
+  // w * h * (alpha ? 3 : 2) bytes, row scanline_bytes(w). Cleared, like a new canvas; destroy()
+  // leaves both.
+  void view(uint8_t *data, float *row, int w, int h, bool alpha);
+  static size_t scanline_bytes(int w);
+  // Trades pixel memory with another block of the same size (the sky and its spare).
+  void trade_pixels(uint8_t *&other) {
+    uint8_t *t = data_;
+    data_ = other;
+    other = t;
+  }
   void destroy();
   bool ok() const { return data_ != nullptr; }
   int width() const { return w_; }
@@ -122,6 +136,7 @@ class Canvas {
   }
 
   uint8_t *data_ = nullptr;
+  bool owned_ = true;  // false for a view()
   int w_ = 0, h_ = 0;
   bool alpha_ = false;
   bool atop_ = false;

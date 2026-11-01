@@ -29,7 +29,22 @@ convert_range() {  # font file, base name, glyph range, name suffix, sizes...
   done
 }
 
-convert jost/Jost-ExtraBold-800.ttf font_jost_800 64 54 50 44 36 30 28 27 24 23
+convert jost/Jost-ExtraBold-800.ttf font_jost_800 44 30 28 27 24 23
+# The status word (OPEN, BUSY, PRIVATE, SLEEPING, AWAY, NO SIGNAL) at 64 and 54 px, and the
+# temperatures (72°F, -5°F, --°F) at 50 and 36 px: only the characters they can show, about 150 KB
+# less of the PSRAM the program image is copied into (2026-11-01). A new status word needs its
+# letters added here.
+convert_range jost/Jost-ExtraBold-800.ttf font_jost_800 "0x20,0x41-0x42,0x45,0x47,0x49,0x4C,0x4E-0x50,0x52-0x57,0x59" "" 64 54
+convert_range jost/Jost-ExtraBold-800.ttf font_jost_800 "0x2D,0x30-0x39,0x46,0xB0" "" 50 36
+# lv_font_conv works a font's line height and baseline out from the glyphs it includes; put the full
+# fonts' values back so these labels sit exactly where they did with every glyph.
+set_metrics() {  # name, line height, baseline
+  sed -i -E "s|(\.line_height = )[0-9]+,|\1$2,|; s|(\.base_line = )[0-9]+,|\1$3,|" "$OUT/$1.c"
+}
+set_metrics font_jost_800_64 69 16
+set_metrics font_jost_800_54 60 14
+set_metrics font_jost_800_50 55 13
+set_metrics font_jost_800_36 39 9
 convert atkinson/AtkinsonHyperlegible-Bold.ttf font_atk_bold 11 12 13 14 15 16 18 19 20 21 22 23 24 26
 # The calendar's date numerals (day view, week view, today's pill): digits only, to save flash and
 # the PSRAM the program image is copied into.

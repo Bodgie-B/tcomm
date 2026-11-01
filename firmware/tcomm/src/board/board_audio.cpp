@@ -25,7 +25,7 @@ struct Clip {
   int16_t *pcm = nullptr;  // mono
   size_t frames = 0, cap = 0;
 };
-// Indexed by tc::Sound; [0] holds the chosen ringtone's chime, in room for the longest one.
+// Indexed by tc::Sound; [0] holds the chosen ringtone's chime, in a buffer its own size.
 static Clip g_clips[4];
 static QueueHandle_t g_q = nullptr;
 static volatile uint8_t g_ringtone = 0;  // chosen (set from the interface task)
@@ -127,17 +127,27 @@ struct Req {
 
 static bool render(Clip &c, tc::Sound s, uint8_t ringtone) {
   size_t n = tc::synth_frames(s, ringtone);
-  if (!c.pcm) {
-    size_t cap = s == tc::Sound::Chime ? tc::synth_max_chime_frames() : n;
-    c.pcm = (int16_t *)heap_caps_malloc(cap * sizeof(int16_t), MALLOC_CAP_SPIRAM);
-    if (!c.pcm) {
+  // Room for exactly this sound. The chime's buffer used to stay at the longest ringtone's size
+  // (Westminster, 736 KB) whichever was chosen; Cardinal needs 213 KB (2026-11-01). The new buffer
+  // comes first, so the old sound survives if there's no room; failing that, the old one goes first.
+  if (n && (!c.pcm || c.cap != n)) {
+    int16_t *p = (int16_t *)heap_caps_malloc(n * sizeof(int16_t), MALLOC_CAP_SPIRAM);
+    if (!p && c.pcm) {
+      heap_caps_free(c.pcm);
+      c.pcm = nullptr;
+      c.cap = c.frames = 0;
+      p = (int16_t *)heap_caps_malloc(n * sizeof(int16_t), MALLOC_CAP_SPIRAM);
+    }
+    if (!p) {
       elog("no memory for sound %d", (int)s);
       return false;
     }
-    c.cap = cap;
+    if (c.pcm) heap_caps_free(c.pcm);
+    c.pcm = p;
+    c.cap = n;
   }
   c.frames = 0;
-  if (n == 0 || n > c.cap || !tc::synth(s, ringtone, c.pcm, n, let_idle_run)) {
+  if (n == 0 || !tc::synth(s, ringtone, c.pcm, n, let_idle_run)) {
     elog("sound %d (ringtone %u) not made", (int)s, (unsigned)ringtone);
     return false;
   }
@@ -321,8 +331,12 @@ static void audio_task(void *) {
     Req next;
     while (r.preview && xQueuePeek(g_q, &next, 0) == pdTRUE && next.preview) xQueueReceive(g_q, &r, 0);
     if (r.sound == (uint8_t)tc::Sound::Chime) refresh_chime();
-    if (r.sound > 3 || !g_clips[r.sound].frames) continue;  // not made yet, or failed
-    play_clip(g_clips[r.sound], r.volume, r.preview);
+    int which = r.sound;
+    // A doorbell is never silent: with no chime made (no room for a newly chosen ringtone), the
+    // soft chime plays instead.
+    if (which == 0 && !g_clips[0].frames && !r.preview) which = 1;
+    if (which > 3 || !g_clips[which].frames) continue;  // not made yet, or failed
+    play_clip(g_clips[which], r.volume, r.preview);
   }
 }
 

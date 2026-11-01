@@ -52,6 +52,27 @@ The GUI tweaks (2026-10-26): the bell as its own picture (about 9 KB of PSRAM), 
 pixels a microsecond whatever they are, so an animation's cost is the pixels it redraws: see the
 comment on the Settings roll in ui.cpp for what was tried. 2.8 KB more flash.
 
+## PSRAM trims (2026-11-01)
+
+Before the campsite screensaver comes in, six changes with nothing different on screen (all 117
+simulator screenshots identical, pixel for pixel). The revert point is the git tag
+`pre-psram-trim`, with the firmware that was on the panel saved in `sim/out/backup-pre-psram-trim`.
+
+| Change | PSRAM back |
+|---|---|
+| The doorbell chime's buffer sized to the chosen ringtone, not the longest (Westminster 736 KB; Cardinal 213 KB); the soft chime plays if there's ever no room for a new one | 523 KB with Cardinal (*estimate*, from the sound lengths) |
+| One copy of each big picture and one shared spare (the sky trades memory with it; the tiles fade from it; the outside tile and doorbell are copied from it), instead of a second copy of each | about 1.0 MB (*estimate*: 1.8 MB of second copies for a 0.77 MB spare) |
+| The status word fonts (64 and 54 px) hold only the 16 letters the words use, and the temperature fonts (50 and 36 px) only digits, minus, F and degree | |
+| The LVGL widgets the panel doesn't use, its flex and grid layouts, two themes, demos and examples off | |
+| The serial commands parsed without sscanf | |
+| The last three, in program size: 1,948,938 bytes before, 1,712,254 after | 237 KB (*measured*, build) |
+
+Measured on the panel 2026-11-01 (`info`, 75 s after start-up, screen drawn, Chickadee chosen):
+free PSRAM 555 KB with the old build, 2,436 KB with the trims, so 1.8 MB more, as estimated. Six
+status fades over serial gave no errors and left free memory unchanged. Mike then checked the
+fades (no streaks from the paced copies), the doorbell pictures and a switch to Westminster and
+back on the panel: all good.
+
 ## Where the PSRAM goes (estimates)
 
 The panel keeps ready-drawn pictures so changes appear without flicker. Each full-screen picture
@@ -60,12 +81,13 @@ costs 768 KB.
 | What | Size |
 |---|---|
 | Screen frame buffer (one) | 0.77 MB |
-| Sky, two copies (old and new, for the change-over) | 1.54 MB |
-| Floor tiles, two copies of each of two tiles | 1.19 MB |
-| Doorbell, four versions (two copies, each plain and pressed) | 0.58 MB |
-| Outside tile, two copies | 0.29 MB |
+| Sky, one copy | 0.77 MB |
+| One shared spare (the sky's change-over, tile fades, outside tile and doorbell copies) | 0.77 MB |
+| Floor tiles, one copy of each of two tiles | 0.59 MB |
+| Doorbell, plain and pressed | 0.29 MB |
+| Outside tile | 0.15 MB |
 | Date strip, icons, badges | about 0.15 MB |
-| The chosen ringtone (room for the longest, Westminster) and the four short sounds | about 0.9 MB |
+| The chosen ringtone, its own size (Cardinal 213 KB, Westminster 736 KB), and the four short sounds (350 KB) | about 0.6 to 1.1 MB |
 | Icicles, once shown | 0.24 MB |
 | Calendar, always: 240 event slots (59 KB) and the demo's simulated panel's copy (59 KB); file buffers only while a file is saved | about 0.12 MB |
 | Calendar, while past months are shown: up to six months' files, read from the card and kept | a few KB to about 0.1 MB |
@@ -73,8 +95,9 @@ costs 768 KB.
 | Calendar, while open: its LVGL objects and bubble pictures (freed when it rolls up) | about 0.1 to 0.2 MB |
 | LVGL, program code run from PSRAM (core 3.2.0 high_perf), the rest | the remainder |
 
-Easy savings if it's ever needed: the doorbell's four versions could be two (0.29 MB back); the
-sky could keep one copy (0.77 MB back) at the cost of a brief redraw when it changes.
+The two easy savings once listed here (fewer doorbell versions, one sky copy) came with the PSRAM
+trims above, without the brief redraw once expected. Left from that review: trimming the
+Montserrat icon font (Mike skipped it, 2026-11-01).
 
 ## Speed (measured on the panel)
 

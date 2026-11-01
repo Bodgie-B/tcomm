@@ -15,6 +15,7 @@
 #include "app/panel_app.h"
 #include "core/civil.h"
 #include "lvgl.h"
+#include "ui/fonts/fonts.h"
 #include "ui/ui.h"
 
 using namespace tc;
@@ -304,9 +305,35 @@ static uint32_t event_named(const char *title, bool repeating = false) {
   return 0;
 }
 
+// The status word and temperature fonts hold only the characters those labels can show (2026-11-01,
+// tools/make_fonts.sh). Every status word, NO SIGNAL and every temperature character must be there.
+static int check_trimmed_fonts() {
+  int missing = 0;
+  auto has = [&](const lv_font_t *f, uint32_t c, const char *what) {
+    lv_font_glyph_dsc_t g;
+    if (!lv_font_get_glyph_dsc(f, &g, c, 0)) {
+      std::printf("  MISSING: U+%04X in %s\n", (unsigned)c, what);
+      missing++;
+    }
+  };
+  std::vector<std::string> words = {"NO SIGNAL"};
+  for (int s = 0; s <= (int)Status::Away; s++) words.push_back(status_word((Status)s));
+  for (const std::string &w : words)
+    for (char c : w) {
+      has(&font_jost_800_64, (uint8_t)c, "font_jost_800_64");
+      has(&font_jost_800_54, (uint8_t)c, "font_jost_800_54");
+    }
+  for (uint32_t c : {0x30u, 0x31u, 0x32u, 0x33u, 0x34u, 0x35u, 0x36u, 0x37u, 0x38u, 0x39u, 0x2Du, 0x46u, 0xB0u}) {
+    has(&font_jost_800_50, c, "font_jost_800_50");
+    has(&font_jost_800_36, c, "font_jost_800_36");
+  }
+  return missing;
+}
+
 int main(int argc, char **argv) {
   g_out = argc > 1 ? argv[1] : ".";
   lv_init();
+  std::printf("trimmed fonts: %d missing\n", check_trimmed_fonts());
   static lv_disp_draw_buf_t buf;
   lv_disp_draw_buf_init(&buf, g_draw, nullptr, 800 * 480);
   static lv_disp_drv_t drv;
