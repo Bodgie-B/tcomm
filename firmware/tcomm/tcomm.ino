@@ -473,6 +473,7 @@ static void command(char *s) {
     Serial.println("mail (tap this panel's mail badge) | mail other (the other floor taps theirs, as if by radio)");
     Serial.println("gear (as a tap on the gear: Settings rolls down or up) | knock (the other floor rings, as if by radio)");
     Serial.println("update (restart into the Wi-Fi updater, as Settings > Update over Wi-Fi does)");
+    Serial.println("timesync (ask the internet for the time now; the result shows in log and radio)");
     return;
   }
   if (!strcmp(s, "bench")) {
@@ -543,6 +544,7 @@ static void command(char *s) {
   else if (!strcmp(s, "mail other")) mail_from_other_floor();
   else if (!strcmp(s, "gear")) ui::tap_gear();
   else if (!strcmp(s, "update")) board::restart_into_updater();
+  else if (!strcmp(s, "timesync")) Serial.println(board::time_sync_start() ? "time: asking" : "time: can't ask now");
   else if (!strcmp(s, "knock")) knock_from_other_floor();
   else if (sscanf(s, "time %d-%d-%d %d:%d:%d", &Y, &M, &D, &h, &m, &sec) >= 5)
     g_app.set_clock_local(tc::seconds_from_civil(Y, M, D, h, m, sec));
@@ -600,6 +602,33 @@ static void command(char *s) {
   lvgl_port_unlock();
 }
 
+#if TCOMM_RADIO_ESPNOW
+// Internet time (board_radio.cpp). While the clock is unset, or set from a source less sure than
+// the internet (the other panel, the gateway's weather time, by hand), ask half a minute after
+// start-up, then less and less often: 2, 4, 8 ... minutes, at most hourly. Once the internet has
+// set it, nothing more until the next start-up.
+static void time_tick() {
+  static uint32_t next = 30000, wait = 120000;
+  uint32_t utc = board::time_sync_poll();
+  if (utc) {
+    if (lvgl_port_lock(1000)) {  // the controller reads the clock in the LVGL task
+      g_platform.set_wall(utc, tc::kClockNetwork);
+      lvgl_port_unlock();
+    }
+    return;
+  }
+  if (board::time_sync_busy() || (int32_t)(millis() - next) < 0) return;
+  tc::WallTime w = g_platform.wall();
+  if (w.valid && w.quality >= tc::kClockNetwork) return;
+  if (board::time_sync_start()) {
+    next = millis() + wait;
+    wait = wait < 1800000u ? wait * 2 : 3600000u;
+  } else {
+    next = millis() + 60000;  // no Wi-Fi set up, or a try still under way
+  }
+}
+#endif
+
 void loop() {
   static char buf[64];
   static int len = 0;
@@ -615,6 +644,9 @@ void loop() {
   }
   g_platform.flush_saves();  // NVS writes happen here, not in the LVGL task
   board::elog_flush();       // and so do writes to USB serial
+#if TCOMM_RADIO_ESPNOW
+  time_tick();
+#endif
   static bool healthy = false;
   if (!healthy && millis() > 60000) {  // a minute up: whatever crashed before is behind us
     healthy = true;

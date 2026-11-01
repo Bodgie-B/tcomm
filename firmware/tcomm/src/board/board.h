@@ -122,10 +122,16 @@ bool radio_begin();
 void radio_send(uint8_t to, const uint8_t *data, size_t len);
 bool radio_poll(uint8_t *out, size_t *len);  // one received frame from a known peer, if any
 void radio_report();  // for serial "radio": counts, and the last frames in and out
+// Internet time (radio build, with a Wi-Fi name in secrets.h): join the home Wi-Fi for a few
+// seconds and ask a time server. time_sync_start begins a try (false if one is under way or there's
+// no Wi-Fi set up); time_sync_poll, from loop(), returns the UTC time once it has one, else 0.
+bool time_sync_start();
+bool time_sync_busy();
+uint32_t time_sync_poll();
 
 // ---- Wi-Fi updates (board_update.cpp, docs/wifi-updates.md). ----
 // The updater is its own small sketch (updater) in the app slot this firmware isn't
-// running from; only it has a network stack. Whether it's there, and restarting into it.
+// running from, and it takes new firmware over Wi-Fi. Whether it's there, and restarting into it.
 bool updater_installed();
 void restart_into_updater();  // returns only if there's no updater to start
 // First thing in setup(): three crash restarts in a row start the updater, if it's installed, so a

@@ -1,8 +1,8 @@
-// Wi-Fi updates (docs/wifi-updates.md). The panel firmware runs from app0 and has no network stack:
-// these builds run all their code from PSRAM, and the stack would cost about 260 KB of it. The
-// updater (updater) sits in app1; this firmware only checks that it's there and restarts
-// into it. The updater takes the new panel firmware over Wi-Fi, writes it into app0 and restarts
-// into that. Written 2026-10-31; UNVERIFIED on a panel.
+// Wi-Fi updates (docs/wifi-updates.md). The panel firmware runs from app0; the updater
+// (updater) sits in app1, and this firmware only checks that it's there and restarts into
+// it. The updater takes the new panel firmware over Wi-Fi, writes it into app0 and restarts into
+// that. (The panel firmware's own Wi-Fi is only for the time after a power cut: board_radio.cpp.)
+// Written and tested on the upstairs panel 2026-10-31.
 #include <Arduino.h>
 #include "board.h"
 #include "esp_attr.h"

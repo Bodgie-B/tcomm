@@ -67,7 +67,7 @@ Runs the host tests, writes the synthesized sounds to `docs/sounds/` (the 17 doo
 
 ## Secrets
 
-ESP-NOW keys, the MAC table, the panels' location, and the Wi-Fi name and passwords the updater uses go in `tcomm/src/config/secrets.h`, copied from `secrets.example.h`. The C6 gateway and its listener are built from the same file. The repository's `.gitignore` keeps `secrets.*` out, and `firmware/.gitignore` lets the template back in. The panel firmware itself never joins a network; only the updater does. Nothing from Mike's other projects goes in this repository.
+ESP-NOW keys, the MAC table, the panels' location, and the Wi-Fi name and passwords go in `tcomm/src/config/secrets.h`, copied from `secrets.example.h`. The C6 gateway and its listener are built from the same file. The repository's `.gitignore` keeps `secrets.*` out, and `firmware/.gitignore` lets the template back in. The panel firmware joins the home Wi-Fi only for a few seconds, to get the time after a power cut; the updater joins it for new firmware. Nothing from Mike's other projects goes in this repository.
 
 ## Licences
 

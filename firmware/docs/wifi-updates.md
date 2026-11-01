@@ -3,9 +3,9 @@
 Written 2026-10-31. Tested on the upstairs panel the same day as far as noted below; the rest is
 UNVERIFIED.
 
-The panel firmware never joins Wi-Fi. A second, small program, the updater
-(`updater`), sits in the panel's other program slot. When you ask for an update, the panel
-restarts into the updater. It joins the home Wi-Fi, waits up to ten minutes for the new firmware
+The panel firmware joins Wi-Fi only for a few seconds, to get the time after a power cut (last
+section). For new firmware, a second, small program, the updater (`updater`), sits in the
+panel's other program slot. When you ask for an update, the panel restarts into the updater. It joins the home Wi-Fi, waits up to ten minutes for the new firmware
 from the laptop, writes it over the panel firmware and restarts into it. If nothing arrives, it
 restarts into the panel firmware as it was. While it's in the updater the panel is off the radio,
 so the other panel shows No Signal for those few minutes.
@@ -73,6 +73,23 @@ only in `secrets.h`, which never goes to GitHub.
   the Wi-Fi in a few seconds and waited.
 - `fw.sh ota` with the address on the screen sent the radio build over Wi-Fi; the panel answered "Update Success",
   restarted into it and came back up as UPSTAIRS with its radio, SD card and readings.
+
+## The clock after a power cut
+
+The panels have no coin cell, so a power cut stops the clock. A panel that starts without a clock,
+or with one less sure than internet time (copied from the other panel, taken from the Pi's weather
+messages, or set by hand), joins the home Wi-Fi half a minute after start-up, asks pool.ntp.org for
+the time, and goes back to its ESP-NOW channel. That takes a few seconds. While it's joined, the
+other panel and the gateway can't reach it unless the router is on channel 1 too; their messages are
+retried. If it can't get the time, it tries again after 2, 4, 8 minutes and so on, at most hourly.
+Once the internet has set the clock it doesn't ask again until the next start-up. The other panel's
+clock and the Pi's weather time stay as fallbacks (the Pi's ran 10 minutes slow on 2026-10-31).
+
+Over USB serial, `timesync` asks right away, and `radio` shows the tries and the last result.
+
+The cost is ESP-IDF's network stack, about 150 KB of code that these builds copy into PSRAM: the
+radio build went from 1,794,686 to 1,948,938 bytes. Checked on the upstairs panel, 2026-10-31: after
+70 seconds unplugged, it showed the right time within a minute and a half.
 
 ## Not yet checked
 

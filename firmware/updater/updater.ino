@@ -10,8 +10,9 @@
  * the first try, with ArduinoOTA and espota, authenticated and then stalled because the panel
  * couldn't connect back to the laptop (2026-10-31).
  *
- * Only this sketch has a network stack. The panel firmware runs all its code from PSRAM (Espressif's
- * high_perf libraries), where the stack would cost it about 260 KB for good.
+ * Taking firmware over Wi-Fi needs a web server and a lot of Arduino's Network library, which the
+ * panel firmware would carry in PSRAM for good (these builds run all their code from there). The
+ * panel firmware only has ESP-IDF's smaller stack, for the time after a power cut.
  *
  * Written 2026-10-31. On the upstairs panel that day it started from serial "update", joined the
  * Wi-Fi, took the radio build over HTTP and restarted into it. UNVERIFIED: its screen (nobody has

@@ -10,9 +10,12 @@
 #include <esp_now.h>
 #include <esp_wifi.h>
 #include <string.h>
+#include <time.h>
 #include "../config/secrets.h"
 #include "../core/protocol.h"
 #include "esp_mac.h"
+#include "esp_netif.h"
+#include "esp_netif_sntp.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 
@@ -124,14 +127,108 @@ static bool check(esp_err_t e, const char *what) {
   return e == ESP_OK;
 }
 
+// ---- Internet time (Mike, 2026-10-31) ----
+// A panel that has lost its clock (a power cut: no coin cell) joins the home Wi-Fi from secrets.h
+// for a few seconds, asks an internet time server, and goes back to ESP-NOW's channel. The Pi's
+// weather time was the first answer, but it ran 10 minutes slow, and the Pi went off the network.
+// This brings in ESP-IDF's TCP/IP stack (not Arduino's Network library): about 150 KB more code,
+// which these builds copy into PSRAM (measured with a probe, 2026-10-31). While it's joined, the
+// other panel and the gateway can't reach this one unless the router is on channel 1 too; their
+// messages are retried.
+#ifndef TCOMM_WIFI_SSID
+#define TCOMM_WIFI_SSID ""
+#define TCOMM_WIFI_PASS ""
+#endif
+static esp_netif_t *g_sta = nullptr;  // only with a Wi-Fi name in secrets.h
+enum class TimeSync : uint8_t { kIdle, kJoining, kAsking, kLeaving };
+static TimeSync g_ts = TimeSync::kIdle;
+static uint32_t g_ts_since = 0, g_ts_tries = 0, g_ts_set = 0;
+static const char *g_ts_last = "not tried yet";
+static volatile bool g_got_ip = false;
+
+static void on_got_ip(void *, esp_event_base_t, int32_t, void *) { g_got_ip = true; }
+
+bool time_sync_busy() { return g_ts != TimeSync::kIdle; }
+
+bool time_sync_start() {
+  if (!g_sta || g_ts != TimeSync::kIdle) return false;
+  wifi_config_t wc = {};
+  strncpy((char *)wc.sta.ssid, TCOMM_WIFI_SSID, sizeof(wc.sta.ssid));
+  strncpy((char *)wc.sta.password, TCOMM_WIFI_PASS, sizeof(wc.sta.password));
+  if (!check(esp_wifi_set_config(WIFI_IF_STA, &wc), "time: Wi-Fi settings")) return false;
+  g_got_ip = false;
+  if (!check(esp_wifi_connect(), "time: Wi-Fi connect")) return false;
+  g_ts = TimeSync::kJoining;
+  g_ts_since = millis();
+  g_ts_tries++;
+  elog("time: joining the Wi-Fi to ask for the time");
+  return true;
+}
+
+static void time_sync_leave(const char *result) {
+  if (g_ts == TimeSync::kAsking) esp_netif_sntp_deinit();
+  esp_wifi_disconnect();
+  g_ts = TimeSync::kLeaving;
+  g_ts_since = millis();
+  g_ts_last = result;
+  elog("time: %s", result);
+}
+
+uint32_t time_sync_poll() {
+  switch (g_ts) {
+    case TimeSync::kIdle:
+      return 0;
+    case TimeSync::kJoining:
+      if (g_got_ip) {
+        esp_sntp_config_t c = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
+        if (esp_netif_sntp_init(&c) != ESP_OK) {
+          time_sync_leave("couldn't start asking for the time");
+          return 0;
+        }
+        g_ts = TimeSync::kAsking;
+        g_ts_since = millis();
+      } else if (millis() - g_ts_since > 15000) {
+        time_sync_leave("no Wi-Fi connection");
+      }
+      return 0;
+    case TimeSync::kAsking:
+      if (esp_netif_sntp_sync_wait(0) == ESP_OK) {  // SNTP has set the system clock
+        uint32_t utc = (uint32_t)time(nullptr);
+        g_ts_set++;
+        time_sync_leave("set from the internet");
+        return utc;
+      }
+      if (millis() - g_ts_since > 10000) time_sync_leave("no answer from the time server");
+      return 0;
+    case TimeSync::kLeaving:
+      // The channel can only change once the disconnect has gone through.
+      if (esp_wifi_set_channel(TCOMM_ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE) == ESP_OK) {
+        g_ts = TimeSync::kIdle;
+      } else if (millis() - g_ts_since > 10000) {
+        elog("time: couldn't get back to channel %d", TCOMM_ESPNOW_CHANNEL);
+        g_ts = TimeSync::kIdle;
+      }
+      return 0;
+  }
+  return 0;
+}
+
 // Wi-Fi started with ESP-IDF's own calls, as its ESP-NOW example does, not Arduino's WiFi class:
 // including WiFi.h links Arduino's whole Network library, and with it the TCP/IP stack, about
 // 200 KB that this build copies into PSRAM with the rest of the code (2026-10-25). ESP-NOW uses
-// none of it. Station mode, never connected to anything.
+// none of it. Station mode, connected to the home Wi-Fi only for the internet time above.
 bool radio_begin() {
   g_rx = xQueueCreate(16, sizeof(Frame));
   esp_err_t e = esp_event_loop_create_default();  // the Wi-Fi driver posts its events here
   if (e != ESP_ERR_INVALID_STATE) check(e, "event loop");  // one made already is fine
+  if (TCOMM_WIFI_SSID[0]) {  // the network interface goes in before Wi-Fi starts, as ESP-IDF asks
+    e = esp_netif_init();
+    if (e == ESP_OK || e == ESP_ERR_INVALID_STATE) g_sta = esp_netif_create_default_wifi_sta();
+    if (g_sta) {
+      esp_netif_set_hostname(g_sta, radio_own_floor() == 1 ? "tcomm-downstairs" : "tcomm-upstairs");
+      check(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, on_got_ip, nullptr), "time: IP event");
+    }
+  }
   wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
   cfg.nvs_enable = 0;  // no Wi-Fi settings to keep, so nothing written to flash
   if (!check(esp_wifi_init(&cfg), "wifi init")) return false;
@@ -217,6 +314,11 @@ void radio_report() {
   Serial.printf("radio: out %lu (a radio acknowledged %lu, none did for %lu), %lu refused, %lu for a board not set\n",
                 (unsigned long)g_count.out, (unsigned long)g_count.reached, (unsigned long)g_count.missed,
                 (unsigned long)g_count.send_err, (unsigned long)g_count.unset);
+  if (g_sta)
+    Serial.printf("radio: internet time: %lu tries, %lu set; last: %s\n", (unsigned long)g_ts_tries,
+                  (unsigned long)g_ts_set, g_ts_last);
+  else
+    Serial.println("radio: internet time off (no Wi-Fi name in secrets.h)");
   Trace t[kTraces];
   uint32_t n;
   portENTER_CRITICAL(&g_trace_lock);
@@ -247,6 +349,9 @@ bool radio_begin() { return false; }
 void radio_send(uint8_t, const uint8_t *, size_t) {}
 bool radio_poll(uint8_t *, size_t *) { return false; }
 void radio_report() { Serial.println("radio: off in this build (bash tools/fw.sh radio turns it on)"); }
+bool time_sync_start() { return false; }
+bool time_sync_busy() { return false; }
+uint32_t time_sync_poll() { return 0; }
 }  // namespace board
 
 #endif

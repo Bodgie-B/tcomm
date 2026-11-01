@@ -22,8 +22,9 @@
 #define TCOMM_LATITUDE  38.9f
 #define TCOMM_LONGITUDE -77.0f
 
-// Wi-Fi updates (docs/wifi-updates.md). Only the updater joins Wi-Fi, never the panel firmware:
-// the home network's name and password, and a password of your own for uploads to the updater.
+// The home Wi-Fi (docs/wifi-updates.md): the panel joins it for a few seconds to get the time after
+// a power cut, and the updater for new firmware. Its name and password, and a password of your own
+// for uploads to the updater.
 #define TCOMM_WIFI_SSID ""
 #define TCOMM_WIFI_PASS ""
 #define TCOMM_OTA_PASS  ""
