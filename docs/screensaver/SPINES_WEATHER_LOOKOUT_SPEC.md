@@ -344,7 +344,17 @@ and pushed to `screensaver`:
   loop, 11 to 13 rebuilds, strips 3.3 a frame. `test_lookout`. Not done: the
   approach's wind rising (no swaying grass on the hill).
 
-`sizeof(App)` 70,320 of 98,304. 10 test suites under clang and g++-16.
+- Section 5b (Mike's two Lookout changes, 2026-11-01): eb679d6 (the sun
+  sinks, the stars come out; Opus review fixes folded in), 9ee92dd (the
+  sun a deep orange so it reads low in the sky). The loop rng is untouched
+  (own stream), rebuilds 10 to 12, strips 3.24 a frame. The sun is fully
+  set before the sunset beat's first palette step in every seed (the
+  "first 10 s of the sunset" in the first prose was never what the
+  numbers gave); one seed in 20 has it behind the lower cloud for 40 s
+  on the approach. `test_lookout` checks the timing, the schedule and the
+  places.
+
+`sizeof(App)` 72,296 of 98,304. 10 test suites under clang and g++-16.
 Notes: `reviews/spines/notes.md`, `weather_notes.md`,
 `lookout_land_notes.md`. Clips: `reviews/stages2-6/index.html`.
 

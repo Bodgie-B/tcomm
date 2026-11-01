@@ -126,3 +126,28 @@ page: docs/screensaver/reviews/stages2-6/index.html; 123 clips in manifest; 130 
 missing clips: none (lookout: 11 clips in the manifest)
 clip bytes: 15.2 MB
 ```
+
+## The Lookout re-cut for the sun and the stars (2026-11-01, tree 9ee92dd)
+
+Mike's two changes (spec section 5b: the sun sinks, the stars come out one by one) change
+every Lookout clip and still, so the whole family was re-cut with `--force` from a clean copy
+of 9ee92dd (eb679d6 plus the orange sun), the same commands as above with `src7` / `b_tools7`. `review_clips.py` now also
+cuts five sun stills for seed 1: `img/lookout_sun_1..4.png` (tick 340 just after the build;
+midway between that and the half-below tick; 16 s before the sit, about half the disc
+below the far ridge; and the sit itself, 6.2 s into the settle beat, where the disc is 7/8
+below) and `img/lookout_sun_zoom.png` (the sit tick, the left 400x240 from y 120 at 2x,
+nearest neighbour: fixed at x=0, y=120, so check it by eye if the sun's place changes).
+The constants are `LOOKOUT_SUN_*` and `LOOKOUT_SIT_AFTER` at the top of the script.
+
+```sh
+S=/private/tmp/claude-501/-Users-mark--claude-spares-spare-mjlbDH/8ba60bf2-9ee9-4fb0-b995-8ac90a7e3bcd/scratchpad
+mkdir -p $S/src7 && git -C /Users/mark/Repos/TComm/tcomm archive 9ee92dd | tar -x -C $S/src7
+cmake -S $S/src7/screensaver -B $S/b_tools7 -DCMAKE_BUILD_TYPE=Release
+cmake --build $S/b_tools7 -j8
+P=$S/b_tools7/ss_preview
+cd /Users/mark/Repos/TComm/tcomm
+D=docs/screensaver/reviews/stages2-6
+T=screensaver/tools
+python3 -I $T/review_clips.py --preview $P --out $D --family lookout --seeds 1,2 --force
+python3 -I $T/review_page.py --preview $P --dir $D
+```

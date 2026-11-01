@@ -82,6 +82,12 @@ LOOKOUT_BEAT_EVERY = {"sunset": 8}
 LOOKOUT_STILLS = 6
 LOOKOUT_RAIL_CROP = "crop=400:240:400:0,scale=iw*2:ih*2:flags=neighbor"   # x, y of the crop: 400, 0
 LOOKOUT_RAIL_AFTER = 2         # seconds into the sunset beat
+# The sun (spec 5b): four stills of its descent and a 2x crop of the sliver as he sits.
+LOOKOUT_SUN_STILLS = 4
+LOOKOUT_SUN_FIRST_TICK = 340   # just after the build
+LOOKOUT_SIT_AFTER = 6.2        # seconds into the settle beat he is down (seed 1: 6.1; the sun 7/8 below)
+LOOKOUT_SUN_HALF_BEFORE = 16   # seconds before the sit: about half the disc below the ridge line
+LOOKOUT_SUN_CROP = "crop=400:240:0:120,scale=iw*2:ih*2:flags=neighbor"   # x, y of the crop: 0, 120
 WEATHER_KINDS = ["wind", "rain", "snow", "fog", "heat", "chill", "storm"]
 WEATHER_SETTLED_TICK = 4000    # snow has grown on the tent (140 s), the gags have had pauses
 WEATHER_CLIP_SECONDS = 25
@@ -506,6 +512,9 @@ def run_lookout(args, seeds, st, work, clips_dir):
         names = ["lookout_" + b for b in LOOKOUT_BEATS] if n == 0 else []
         stills = [os.path.join(img_dir, "lookout_sunset_%d.png" % (k + 1))
                   for k in range(LOOKOUT_STILLS)] + [os.path.join(img_dir, "lookout_rail.png")]
+        sun_stills = [os.path.join(img_dir, "lookout_sun_%d.png" % (k + 1))
+                      for k in range(LOOKOUT_SUN_STILLS)] + [os.path.join(img_dir, "lookout_sun_zoom.png")]
+        stills += sun_stills
         if (all(not st.want(x, "beat") for x in names) and not st.want(overview, "overview")
                 and (n > 0 or (all(os.path.isfile(x) for x in stills) and not args.force))):
             continue
@@ -560,10 +569,22 @@ def run_lookout(args, seeds, st, work, clips_dir):
                         tick = lo + int(round(k * (hi - lo) / (LOOKOUT_STILLS - 1)))
                         lookout_still(args, seed, tick, extra, work, stills[k])
                         print("  still %s tick %d" % (os.path.basename(stills[k]), tick), flush=True)
+                    rail_png = os.path.join(img_dir, "lookout_rail.png")
                     lookout_still(args, seed, s0 + LOOKOUT_RAIL_AFTER * TICKS_PER_SECOND, extra,
-                                  work, stills[-1], LOOKOUT_RAIL_CROP)
+                                  work, rail_png, LOOKOUT_RAIL_CROP)
                     print("  still lookout_rail.png tick %d" % (s0 + LOOKOUT_RAIL_AFTER * TICKS_PER_SECOND),
                           flush=True)
+                    # The sun: just after the build, midway down, about half below (16 s before
+                    # the sit), the sliver as he sits; and that last one cropped at 2x.
+                    if "settle" in windows:
+                        sit = windows["settle"][0] + int(round(LOOKOUT_SIT_AFTER * TICKS_PER_SECOND))
+                        half = sit - LOOKOUT_SUN_HALF_BEFORE * TICKS_PER_SECOND
+                        sun_ticks = [LOOKOUT_SUN_FIRST_TICK, (LOOKOUT_SUN_FIRST_TICK + half) // 2, half, sit]
+                        for k, tick in enumerate(sun_ticks):
+                            lookout_still(args, seed, tick, extra, work, sun_stills[k])
+                            print("  still %s tick %d" % (os.path.basename(sun_stills[k]), tick), flush=True)
+                        lookout_still(args, seed, sit, extra, work, sun_stills[-1], LOOKOUT_SUN_CROP)
+                        print("  still lookout_sun_zoom.png tick %d" % sit, flush=True)
                 except RuntimeError as e:
                     print("seed %d stills: %s" % (seed, e), file=sys.stderr)
                     st.failed = True
