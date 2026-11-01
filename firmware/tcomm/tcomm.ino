@@ -623,9 +623,11 @@ static void command(char *s) {
   }
   else if (!strcmp(s, "info")) {
     tc::WallTime w = g_platform.wall();
-    Serial.printf("floor %s, status %s, clock %s (quality %u), free heap %u, free PSRAM %u\n",
+    // utc: the clock in seconds since 1970, for tools/two_panels.ps1 to compare with the PC's and
+    // the other panel's.
+    Serial.printf("floor %s, status %s, clock %s (quality %u, utc %lu), free heap %u, free PSRAM %u\n",
                   tc::floor_word(g_ctrl.settings().floor), tc::status_word(g_ctrl.own().status), w.valid ? "set" : "NOT SET",
-                  w.quality, (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getFreePsram());
+                  w.quality, (unsigned long)w.utc, (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getFreePsram());
     Serial.printf("since the last info (%lu s): %lu redraws, %lu px, %lu ms drawing, slowest %lu ms\n",
                   (unsigned long)((millis() - g_stats_since) / 1000), (unsigned long)g_refr_count,
                   (unsigned long)g_refr_px, (unsigned long)g_refr_ms, (unsigned long)g_refr_max);

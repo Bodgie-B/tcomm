@@ -26,9 +26,10 @@ started from PowerShell). Close any serial monitor on a board's port before flas
 
 ## Steps
 
-1. Plug in only the new panel. Find its port in Device Manager, under Ports (COM & LPT), as "USB
-   Serial Device (COMx)". Tell Claude the port, and Claude confirms it with you before writing
-   anything.
+1. Plug in the new panel. The first can stay plugged in on its own port (it has been COM5); plug
+   each straight into the PC, not into a hub without its own power. Find the new one's port in
+   Device Manager, under Ports (COM & LPT), as "USB Serial Device (COMx)": the one that wasn't
+   there before. Tell Claude the port, and Claude confirms it with you before writing anything.
 
 2. Read its MAC. This writes nothing:
 
@@ -62,8 +63,7 @@ started from PowerShell). Close any serial monitor on a board's port before flas
    That's the only thing it erases, and it doesn't touch the SD card. Settings > This unit is
    should read "DOWNSTAIRS (by MAC)".
 
-6. Plug the first panel back in, confirm its port (it has been COM5), and flash it so it knows the
-   new panel:
+6. Confirm the first panel's port (it has been COM5), and flash it so it knows the new panel:
 
    ```
    bash tools/fw.sh radio COM5
@@ -80,6 +80,30 @@ started from PowerShell). Close any serial monitor on a board's port before flas
    `docs/wifi-updates.md`.
 
 ## Checks, with both panels powered
+
+With both panels on USB, `tools/two_panels.ps1` runs these checks over the two serial ports. Run it
+from PowerShell (serial is fine there; only builds are blocked), with no serial monitor open on
+either port:
+
+```
+powershell -ExecutionPolicy Bypass -File tools\two_panels.ps1
+```
+
+It asks each port which floor its panel is, so the ports don't need naming (`-Upstairs COM5
+-Downstairs COM6` checks them instead). It changes the status, the dogs and the mail on each panel
+in turn and times how long the other takes to show it, then puts everything back, even if a check
+fails. Mail and the doorbell play sounds on both panels; `-Quiet` leaves them out. What only eyes
+can check (the banner, the bell shaking and turning red, the mail badge pulsing) it prints as LOOK
+lines; when it rings, it waits 15 seconds for someone to tap a reply on the banner. `-WeatherWait
+15` waits up to 15 minutes for downstairs's Outside tile. Each run's serial traffic from both
+panels goes to `sim/out/two-panels/`. The clock comparison needs firmware from 2026-11-01 on,
+whose `info` prints the time.
+
+The script was tested against two pretend panels that answer in the firmware's formats (working,
+not hearing each other, losing touch partway, and one panel alone), not yet against two real
+ones: UNVERIFIED until the second panel arrives.
+
+The checks, by hand:
 
 - Type `radio` on each panel's serial port. Each should name its own floor and count frames from
   the other, with nothing about a board missing from `secrets.h`.
