@@ -236,7 +236,9 @@ drawn in the dynamic pass over the cached landscape (the sky stays plain
 in the cache), clipped to the skyline, with small dirty marks; the
 sunset's palette steps and the rebuild count do not change.
 
-**The sun.** One flat disc in `SUN`, radius 20 to 24 px (the sun's own stream, below), over
+**The sun.** One flat disc in `SUN` (which `lookoutPaletteTweak` sets to a
+deep orange, 0xF28C3A, at the loop's mood 4.0: the key's pale cream vanished
+against the low sky bands), radius 20 to 24 px (the sun's own stream, below), over
 the valley on the west side. It moves linearly in loop time from the
 loop's start to the moment he is down on the deck's edge: down, and a
 little to the right (dx = 0.2 dy). Start: centre x 120 to 300, the disc

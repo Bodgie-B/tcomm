@@ -299,6 +299,14 @@ and the stale numbers above restated. Not changed: the sun past x 365 never happ
 the trail rows do not matter; a 90 s sunset is never planned over 300 seeds (checked by
 hand by the review: the schedule still fits).
 
+**The sun's colour (chief, from the first stills).** The key's `SUN` at mood 4 (0xFFE3A3,
+pale cream) all but vanished against SKY3 and SKY4 (0xF4C87B, 0xF7D58C) once the disc was
+low, so the half-below and sliver stills showed nothing. `lookoutPaletteTweak` now sets
+`SUN` to 0xF28C3A (deep orange, luminance 0.61) whenever the mood is the loop's own 4.0,
+which is the only time the sun shows; nothing else in the Lookout draws with `SUN` and the
+camp's palette is untouched. It reads at every stage in the seed 1 stills. Unverified on the
+panel.
+
 **Behind the clouds, over 20 seeds** (from `test_lookout`; printed, not failing checks):
 
 - **Retries:** 18 seeds drew the start again. 2 found a cloud-free start on the first try.

@@ -1355,6 +1355,11 @@ void lookoutPaletteTweak(const World&, float mood, const WeatherTint& t, float f
   // 4.0), with the same weather and night rule, so the fade's one step does
   // not snap them to night grey.
   const float m = mood < 1.f ? mood + 6.f : mood;
+  // The sun (spec 5b) shows only at the loop's own mood 4.0 (it is set before
+  // the first step). The key's pale cream is near the low sky bands' tone, so
+  // it vanished as it sank: a deep orange reads against them, and against the
+  // band it starts in. Luminance 0.61, under the highlight cap. Unverified on the panel.
+  if (fabsf(m - kMoodFrom) < 1e-3f) p.c[SUN] = rgb565_hex(0xF28C3A);
   if (!(m > kMoodFrom && m <= 6.f + 1e-3f)) return;
   const float lag = maxf(kMoodFrom, m - 0.45f);
   Palette q;
