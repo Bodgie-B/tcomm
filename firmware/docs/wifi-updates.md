@@ -39,8 +39,9 @@ the panel went back to its old firmware as it should).
 2. Wait for READY FOR THE UPLOAD and note the address on the screen, for example
    "WI-FI 192.168.1.37".
 3. On the laptop, in Git Bash in the firmware folder: `bash tools/fw.sh ota 192.168.1.37`.
-   `tcomm-upstairs.local` or `tcomm-downstairs.local` may work instead of the address, if Windows
-   finds names on the network.
+   Use the address: on 2026-11-05 this laptop couldn't find `tcomm-downstairs.local` ("Could not
+   resolve host"), and the ten minutes ran out while the address was fetched. With the panel on USB,
+   serial `update` also prints the address (`updater: WI-FI ...`).
 4. The screen counts the kilobytes as they arrive, and the panel restarts into the new firmware.
    The send took about 70 seconds on 2026-10-31, most of it the compile.
 
@@ -73,6 +74,15 @@ only in `secrets.h`, which never goes to GitHub.
   the Wi-Fi in a few seconds and waited.
 - `fw.sh ota` with the address on the screen sent the radio build over Wi-Fi; the panel answered "Update Success",
   restarted into it and came back up as UPSTAIRS with its radio, SD card and readings.
+
+## Checked on the downstairs panel, 2026-11-05
+
+- On USB (COM7, its MAC read first): the radio build with the screensaver, then `fw.sh updater COM7`
+  ("updater written into app1"; the panel firmware untouched). It started as DOWNSTAIRS with its own
+  saved settings.
+- Serial `update`: the updater named itself tcomm-downstairs, joined the Wi-Fi and showed its
+  address; `fw.sh ota` with that address sent the build, and the panel came back as DOWNSTAIRS and
+  heard upstairs at once. So downstairs can be updated over Wi-Fi from now on.
 
 ## The clock after a power cut
 
