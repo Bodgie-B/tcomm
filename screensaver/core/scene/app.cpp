@@ -1,0 +1,246 @@
+// Screensaver application: implements ss_app.h.
+//
+// Each loop opens with the build-up beat, then the story spine (spine.h):
+// arrival, setup, firewood, fire, dinner, food bag, bear and close, with pauses
+// and calm fillers between. The loop ends when the close does (8 to 11 min). The World (world.h) holds
+// everything dynamic; App owns it by value with the timeline, palette and
+// renderer, and delegates drawing to it.
+#include <math.h>
+#include <string.h>
+#include <new>
+
+#include "../render/renderer.h"
+#include "../ss_app.h"
+#include "director.h"
+#include "world.h"
+
+namespace ss {
+
+struct App {
+  Inputs in;
+  Rng rng;
+  uint64_t loop_seed;
+  Timeline timeline;
+  SceneCtx ctx;
+  SceneDraw draw;
+  World world;
+
+  // Inputs the current palette was computed from.
+  Palette pal;
+  float pal_mood;
+  WeatherTint pal_weather;
+  float pal_flash;        // the lightning's flash step it was computed with (weather.h)
+  bool pal_night;
+
+  uint32_t events_seen;   // drained events; ignored until later stages
+  uint16_t pal_rebuilds;  // computeAppPalette calls this loop (appPaletteRebuilds)
+
+  Renderer renderer;      // last: it carries the 51 KB strip buffer
+};
+
+static_assert(sizeof(App) <= SS_APP_BYTES, "App exceeds SS_APP_BYTES");
+
+namespace {
+
+constexpr float kMoodEps = 1.0f / 48.0f;
+constexpr float kWeatherEps = 0.02f;
+
+void drawStatic(void* user, Surface& frame, const Palette& pal) {
+  const App* a = static_cast<const App*>(user);
+  worldDrawStatic(a->world, frame, pal, a->pal_mood);
+}
+
+void drawDynamic(void* user, Surface& strip, const Rect& clip, const Palette& pal) {
+  const App* a = static_cast<const App*>(user);
+  worldDrawDynamic(a->world, strip, clip, pal, a->pal_mood);
+}
+
+float moodDistance(float a, float b) {
+  float d = fabsf(a - b);
+  d -= (float)SS_MOOD_COUNT * floorf(d / (float)SS_MOOD_COUNT);   // wrap into [0, 6)
+  return d > 3.f ? (float)SS_MOOD_COUNT - d : d;
+}
+
+// The weather the palette is computed from: the inputs', plus the fog the
+// scene adds (the morning opens in fog, World::fog_extra), plus the loop's
+// weather (weather.h: overcast, fog, the lightning's flash, in steps).
+// Untouched when they add none, so a clear loop is bit for bit what it was.
+WeatherTint sceneWeather(const App* a, float* flash) {
+  WeatherTint w = a->in.weather;
+  if (a->world.fog_extra > 0.f) {
+    const float f = w.fog + a->world.fog_extra;
+    w.fog = f > 1.f ? 1.f : f;
+  }
+  *flash = weatherTint(a->world, w);
+  return w;
+}
+
+// The palette's mood: the scene's own when it sets one (the Lookout's sunset
+// steps World::mood_override), else the host's.
+float sceneMood(const App* a) { return a->world.mood_override >= 0.f ? a->world.mood_override : a->in.mood; }
+
+// `force`: the loop's geometry changed (loop start), so the cache is rebuilt
+// even when the palette came out the same; otherwise a palette byte for byte
+// the one in use costs nothing (an input step that lands on the same 565
+// colours).
+void computeAppPalette(App* a, bool force) {
+  float flash = 0.f;
+  WeatherTint w = sceneWeather(a, &flash);
+  a->pal_weather = w;
+  a->pal_flash = flash;
+  if (a->in.night_mode && w.night_dim < 1.f) w.night_dim = 1.f;   // night mode alone must dim
+  Palette p;
+  const float mood = sceneMood(a);
+  computePalette(mood, w, flash, p);
+  if (a->world.plan.family == SF_LOOKOUT) lookoutPaletteTweak(a->world, mood, w, flash, p);
+  a->pal_mood = mood;
+  a->pal_night = a->in.night_mode;
+  if (!force && memcmp(&p, &a->pal, sizeof p) == 0) return;
+  a->pal = p;
+  a->renderer.setPalette(a->pal);   // forces a cache rebuild and marks every strip
+  if (a->pal_rebuilds < 0xFFFF) ++a->pal_rebuilds;
+}
+
+// Generate a loop's geometry from the loop seed and restart the timeline.
+void beginLoop(App* a) {
+  a->rng.seed(a->loop_seed);
+  worldBeginLoop(a->world, a->rng);
+  // The family is a function of the inputs alone: it costs the loop rng nothing.
+  a->world.plan.family = spineFamilyFor(a->in);
+  spinePlan(a->world.plan, a->rng, a->in, a->world.memory);
+  memoryBeginLoop(a->world, a->rng);
+  spineBeginLoop(a->world, a->rng);
+  // The weather: its own rng stream from the loop seed (the loop rng never sees it).
+  weatherPlan(a->world, a->loop_seed, a->in, spineLoopTicks(a->world.plan));
+  a->pal_rebuilds = 0;
+  a->timeline.reset();
+  spineBuildTimeline(a->timeline, a->world.plan);
+  a->ctx = SceneCtx{a, &a->world, &a->rng, &a->in, &a->renderer, SS_TICK_DT};
+  a->timeline.start(a->ctx);
+}
+
+}  // namespace
+
+App* appStart(void* storage, const HostAlloc& alloc, uint64_t seed, const Inputs& in) {
+  App* a = new (storage) App();
+  if (!a->renderer.init(alloc)) {
+    a->~App();
+    return nullptr;
+  }
+  a->in = in;
+  a->loop_seed = seed;
+  a->draw.user = a;
+  a->draw.draw_static = drawStatic;
+  a->draw.draw_dynamic = drawDynamic;
+  beginLoop(a);
+  computeAppPalette(a, true);
+  return a;
+}
+
+void appStop(App* app, const HostAlloc& alloc) {
+  app->renderer.shutdown(alloc);
+  app->~App();
+}
+
+void appSetInputs(App* app, const Inputs& in) { app->in = in; }
+
+bool appPostEvent(App* app, Event e) { return app->timeline.post(e); }
+
+bool appTick(App* a) {
+  Event ev[SS_MAX_PENDING_EVENTS];
+  a->events_seen += (uint32_t)a->timeline.takeEvents(ev, SS_MAX_PENDING_EVENTS);
+
+  // Palette follows the inputs only when they moved enough to matter.
+  float flash = 0.f;
+  const WeatherTint w = sceneWeather(a, &flash);
+  if (moodDistance(sceneMood(a), a->pal_mood) > kMoodEps ||
+      fabsf(w.overcast - a->pal_weather.overcast) > kWeatherEps ||
+      fabsf(w.fog - a->pal_weather.fog) > kWeatherEps ||
+      fabsf(w.night_dim - a->pal_weather.night_dim) > kWeatherEps ||
+      flash != a->pal_flash ||   // the flash moves in a few fixed steps: every step counts
+      a->in.night_mode != a->pal_night) {
+    computeAppPalette(a, false);
+  }
+
+  // Beats drive the world first, then the world steps its ambient layer and
+  // marks what changed.
+  if (!a->timeline.tick(a->ctx)) {
+    // Loop over: what it leaves for the next (memory), new seed from the
+    // running RNG, new place, same inputs.
+    memoryEndLoop(a->world);
+    a->loop_seed = (uint64_t)a->rng.next();
+    beginLoop(a);
+    computeAppPalette(a, true);   // rebuilds the cache for the new geometry
+    return true;
+  }
+  minorsSync(a->world, a->timeline, a->in);
+  worldTick(a->world, a->rng, a->renderer);
+  return false;
+}
+
+int appRender(App* app, Surface& fb) { return app->renderer.render(fb, app->draw); }
+
+void appInvalidate(App* app) { app->renderer.markAllDirty(); }
+
+const char* appBeatName(const App* app) {
+  const Beat* b = app->timeline.currentBeat();
+  return b ? b->name : "";
+}
+
+float appBeatProgress(const App* app) { return app->timeline.progress(); }
+uint64_t appLoopSeed(const App* app) { return app->loop_seed; }
+uint32_t appTickCount(const App* app) { return app->timeline.tick_count; }
+int appBuildPhase(const App* app) { return app->world.build.phase; }
+uint32_t appAppBytes() { return (uint32_t)sizeof(App); }
+
+int appLoopPlan(const App* app, char* buf, size_t n) { return spineFormatPlan(app->world.plan, buf, n); }
+
+bool appHikerRect(const App* app, Rect* out) {
+  const World& w = app->world;
+  if (out) *out = w.hiker_rect;
+  return w.hiker.visible;
+}
+
+bool appHikerBounds(const App* app, Rect* out) {
+  const World& w = app->world;
+  if (out) *out = w.hiker_full;
+  return w.hiker.visible;
+}
+
+bool appHikerWalking(const App* app) { return app->world.hiker.visible && app->world.hiker.walking; }
+
+int appCritterCount(const App* app) { return directorCount(app->world); }
+
+bool appCritterRect(const App* app, int slot, Rect* out, int* kind) {
+  if (slot < 0 || slot >= CRITTER_MAX) return false;
+  const World& w = app->world;
+  if (!w.crit[slot].in_use) return false;
+  if (out) *out = critterBounds(w.critters[slot]);
+  if (kind) *kind = w.critters[slot].kind;
+  return w.critters[slot].visible;
+}
+
+bool appMemoryShoeTaken(const App* app) { return app->world.memory.shoe_taken; }
+uint32_t appMemoryLoopCount(const App* app) { return app->world.memory.loop_count; }
+int appMemory(const App* app, char* buf, size_t n) { return memoryFormat(app->world.memory, buf, n); }
+bool appBusy(const App* app) { return app->world.busy; }
+
+int appSpineOverruns(const App* app) { return app->world.spine.overruns; }
+uint32_t appLoopTicks(const App* app) { return spineLoopTicks(app->world.plan); }
+float appFade(const App* app) { return app->world.fade; }
+int appPaletteRebuilds(const App* app) { return app->pal_rebuilds; }
+int appSpineFamily(const App* app) { return app->world.plan.family; }
+
+const char* appMinorName(const App* app) { return minorsName(app->world); }
+int appMinorCount(const App* app) { return app->world.minors.fired; }
+int appMinorCritters(const App* app) { return minorsCritters(app->world); }
+int appMinorForced(const App* app) { return minorsForced(app->world); }
+int appLeaves(const App* app) {
+  int n = 0;
+  for (const Bit& b : app->world.bits) n += b.kind == BIT_LEAF ? 1 : 0;
+  return n;
+}
+const World* appWorld(const App* app) { return &app->world; }
+const Palette* appPalette(const App* app) { return &app->pal; }
+
+}  // namespace ss
