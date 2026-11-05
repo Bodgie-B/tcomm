@@ -418,13 +418,17 @@ static lv_disp_t *display_init(esp_lcd_panel_handle_t panel_handle)
     return lv_disp_drv_register(&disp_drv); // Register the display driver
 }
 
+static lvgl_port_touch_hook_t s_touch_hook = NULL;  // TComm: see lvgl_port.h
+
+void lvgl_port_set_touch_hook(lvgl_port_touch_hook_t hook) { s_touch_hook = hook; }
+
 static void touchpad_read(lv_indev_drv_t *indev_drv, lv_indev_data_t *data)
 {
     esp_lcd_touch_handle_t tp = (esp_lcd_touch_handle_t)indev_drv->user_data; // Get touchpad handle from user data
     assert(tp); // Ensure touchpad handle is valid
 
-    uint16_t touchpad_x; // Variable for X coordinate
-    uint16_t touchpad_y; // Variable for Y coordinate
+    uint16_t touchpad_x = 0; // Variable for X coordinate
+    uint16_t touchpad_y = 0; // Variable for Y coordinate
     uint8_t touchpad_cnt = 0; // Variable for touch count
 
     /* Read data from touch controller into memory */
@@ -432,6 +436,11 @@ static void touchpad_read(lv_indev_drv_t *indev_drv, lv_indev_data_t *data)
 
     /* Read data from touch controller */
     bool touchpad_pressed = esp_lcd_touch_get_coordinates(tp, &touchpad_x, &touchpad_y, NULL, &touchpad_cnt, 1); // Get touch coordinates
+    // TComm: the screensaver's hook may keep this touch from LVGL (lvgl_port.h).
+    if (s_touch_hook && s_touch_hook(touchpad_pressed && touchpad_cnt > 0, touchpad_x, touchpad_y)) {
+        data->state = LV_INDEV_STATE_RELEASED;
+        return;
+    }
     if (touchpad_pressed && touchpad_cnt > 0) {
         data->point.x = touchpad_x; // Set the X coordinate
         data->point.y = touchpad_y; // Set the Y coordinate

@@ -84,7 +84,7 @@ void set_art_scratch(uint8_t *buf, size_t bytes);
 void set_copy_pause(void (*pause)());
 
 // For the simulator: open sheets the way a touch would, and scroll the open one's list.
-enum class Sheet { None, Status, Timer, Settings, TimeDate, Test, CleanScreen, Ringtone, Zambretti };
+enum class Sheet { None, Status, Timer, Settings, TimeDate, Test, CleanScreen, Ringtone, Zambretti, Screensaver };
 void open_sheet(Sheet s, tc::Status timed = tc::Status::Private);
 void scroll_sheet(int y);
 void tap_gear();  // as a tap on the gear (Settings rolls down or up), for testing over serial

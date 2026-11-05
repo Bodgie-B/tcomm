@@ -12,3 +12,6 @@ sim/out/
 
 # Python bytecode (tools/boards_to_art.py imports tools/forecast_icons.py)
 __pycache__/
+
+# The screensaver core, copied in from ../screensaver/core by tools/fw.sh before each panel build
+libraries/ss_core/src/

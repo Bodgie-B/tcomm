@@ -32,43 +32,90 @@ void Renderer::setPalette(const Palette& p) {
   markAllDirty();
 }
 
-void Renderer::markDirtyRows(int y0, int y1) {
+// Columns marked dirty are widened by this much each side: a few elements draw a pixel or two past
+// the bounds they mark (anti-aliased fringes, the hat fanned at arm's length), which never showed
+// while every dirty strip was redrawn full width.
+constexpr int kColPad = 4;
+
+void Renderer::markDirtyCols(int y0, int y1, int x0, int x1) {
+  x0 -= kColPad;
+  x1 += kColPad;
+  if (y0 < 0) y0 = 0;
+  if (y1 > SS_HEIGHT) y1 = SS_HEIGHT;
+  if (x0 < 0) x0 = 0;
+  if (x1 > SS_WIDTH) x1 = SS_WIDTH;
+  if (y1 <= y0 || x1 <= x0) return;
+  const int s0 = y0 / SS_STRIP_ROWS;
+  const int s1 = (y1 - 1) / SS_STRIP_ROWS;   // strip holding the last dirty row
+  for (int s = s0; s <= s1; ++s) {
+    if (!(dirty_mask & (1u << s))) {
+      dirty_x0[s] = (int16_t)x0;
+      dirty_x1[s] = (int16_t)x1;
+    } else {
+      if (x0 < dirty_x0[s]) dirty_x0[s] = (int16_t)x0;
+      if (x1 > dirty_x1[s]) dirty_x1[s] = (int16_t)x1;
+    }
+    dirty_mask = (uint16_t)(dirty_mask | (1u << s));
+  }
+}
+
+void Renderer::fullWidthRows(int y0, int y1) {
   if (y0 < 0) y0 = 0;
   if (y1 > SS_HEIGHT) y1 = SS_HEIGHT;
   if (y1 <= y0) return;
-  const int s0 = y0 / SS_STRIP_ROWS;
-  const int s1 = (y1 - 1) / SS_STRIP_ROWS;   // strip holding the last dirty row
-  for (int s = s0; s <= s1; ++s) dirty_mask = (uint16_t)(dirty_mask | (1u << s));
+  for (int s = y0 / SS_STRIP_ROWS; s <= (y1 - 1) / SS_STRIP_ROWS; ++s) full_mask = (uint16_t)(full_mask | (1u << s));
 }
 
 int Renderer::render(Surface& fb, const SceneDraw& scene) {
   if (cache == nullptr) return 0;
   if (fb.pixels == nullptr || fb.width < SS_WIDTH || fb.height < SS_HEIGHT || fb.origin_y != 0 || fb.stride < SS_WIDTH) return 0;
 
+  uint32_t t = clock_us ? clock_us() : 0;
+  auto lap = [&](uint32_t& acc) {
+    if (!clock_us) return;
+    const uint32_t now = clock_us();
+    acc += now - t;
+    t = now;
+  };
+
   if (!cache_valid) {
     Surface full{cache, SS_WIDTH, SS_HEIGHT, SS_WIDTH, 0};
     if (scene.draw_static) scene.draw_static(scene.user, full, palette);
     cache_valid = true;
     markAllDirty();
+    lap(prof.static_us);
   }
 
   int written = 0;
   for (int i = 0; i < SS_STRIP_COUNT; ++i) {
     if (!(dirty_mask & (1u << i))) continue;
     const int y0 = i * SS_STRIP_ROWS;
+    const bool full = (full_mask & (1u << i)) != 0;
+    const int x0 = full ? 0 : dirty_x0[i], x1 = full ? SS_WIDTH : dirty_x1[i];
+    const size_t run = (size_t)(x1 - x0) * sizeof(Pixel);
     Surface strip{strip_buf, SS_WIDTH, SS_STRIP_ROWS, SS_WIDTH, y0};
-    // Cache stride equals the frame width, so the strip is one contiguous run.
-    memcpy(strip_buf, cache + (size_t)y0 * SS_WIDTH,
-           (size_t)SS_WIDTH * SS_STRIP_ROWS * sizeof(Pixel));
+    // Only the changed columns come in from the cache; the rest of the strip buffer holds whatever
+    // was there and is never copied out. A full-width strip is one run (cache stride = frame width).
+    if (x0 == 0 && x1 == SS_WIDTH) {
+      memcpy(strip_buf, cache + (size_t)y0 * SS_WIDTH, (size_t)SS_WIDTH * SS_STRIP_ROWS * sizeof(Pixel));
+    } else {
+      for (int r = 0; r < SS_STRIP_ROWS; ++r)
+        memcpy(strip_buf + (size_t)r * SS_WIDTH + x0, cache + (size_t)(y0 + r) * SS_WIDTH + x0, run);
+    }
+    lap(prof.copy_in_us);
     const Rect clip{0, y0, SS_WIDTH, y0 + SS_STRIP_ROWS};
     if (scene.draw_dynamic) scene.draw_dynamic(scene.user, strip, clip, palette);
+    lap(prof.draw_us);
     // fb may have a different stride, so copy row by row.
-    for (int r = 0; r < SS_STRIP_ROWS; ++r) {
-      memcpy(fb.row(y0 + r), strip_buf + (size_t)r * SS_WIDTH, (size_t)SS_WIDTH * sizeof(Pixel));
-    }
+    for (int r = 0; r < SS_STRIP_ROWS; ++r)
+      memcpy(fb.row(y0 + r) + x0, strip_buf + (size_t)r * SS_WIDTH + x0, run);
+    lap(prof.copy_out_us);
+    prof.strips++;
+    prof.px += (uint32_t)(x1 - x0) * SS_STRIP_ROWS;
     ++written;
   }
   dirty_mask = 0;
+  full_mask = 0;
   return written;
 }
 

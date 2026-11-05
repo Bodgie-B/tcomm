@@ -29,10 +29,33 @@ struct SceneDraw {
   void (*draw_dynamic)(void* user, Surface& strip, const Rect& clip, const Palette& pal);
 };
 
+// Time spent in render(), for the host's frame log (appProfile). Microseconds; only counted when the
+// host gives a clock (appSetClock), so the PC tests see zeros.
+struct RenderProfile {
+  uint32_t copy_in_us;     // cache rows into the strip buffer
+  uint32_t draw_us;        // the dynamic layers, drawn into the strip
+  uint32_t copy_out_us;    // the strip into the frame buffer
+  uint32_t static_us;      // rebuilding the cache (palette or build-up changes)
+  uint32_t strips;         // dirty strips composited
+  uint32_t px;             // pixels copied out (a full strip is SS_WIDTH * SS_STRIP_ROWS)
+};
+
 struct Renderer {
   Pixel* cache;                 // SS_WIDTH * SS_HEIGHT, large memory
   Pixel* strip_buf;             // SS_STRIP_BYTES, the head of the fast block (ss_platform.h)
   uint16_t dirty_mask;          // bit i = strip i needs compositing this frame
+  // The columns of each dirty strip that changed, [dirty_x0, dirty_x1): only those are copied in
+  // from the cache and out to the frame buffer. The dynamic layers are still drawn across the whole
+  // strip, so every copied pixel is exactly what a full redraw gives (the rasterizer's x clipping
+  // isn't bit-exact at its edges, so the clip stays full width). Marks without columns
+  // (markDirtyRows, markAllDirty) are full width.
+  int16_t dirty_x0[SS_STRIP_COUNT];
+  int16_t dirty_x1[SS_STRIP_COUNT];
+  // Strips that copy in full width whenever they're dirty this frame (fullWidthRows): a layer that
+  // reads its neighbours' pixels, like the heat shimmer shifting rows sideways, needs the whole row.
+  uint16_t full_mask;
+  uint32_t (*clock_us)();       // the host's microsecond clock for the profile, or nullptr
+  RenderProfile prof;
   bool cache_valid;
   Palette palette;
 
@@ -54,9 +77,13 @@ struct Renderer {
 
   // Mark the strips covering frame rows [y0, y1) dirty. Call for every
   // dynamic element's bounding box, both its previous and current position.
-  void markDirtyRows(int y0, int y1);
-  void markDirtyRect(const Rect& r) { markDirtyRows(r.y0, r.y1); }
-  void markAllDirty() { dirty_mask = (uint16_t)((1u << SS_STRIP_COUNT) - 1); }
+  void markDirtyRows(int y0, int y1) { markDirtyCols(y0, y1, 0, SS_WIDTH); }
+  void markDirtyRect(const Rect& r) { markDirtyCols(r.y0, r.y1, r.x0, r.x1); }
+  void markAllDirty() { markDirtyCols(0, SS_HEIGHT, 0, SS_WIDTH); }
+  // Rows [y0, y1), columns [x0, x1) (clamped to the frame).
+  void markDirtyCols(int y0, int y1, int x0, int x1);
+  // Until the next render: any of rows [y0, y1) that is dirty composites full width.
+  void fullWidthRows(int y0, int y1);
 
   // Composite dirty strips into `fb` (a full-frame surface, origin_y 0).
   // Rebuilds the cache first if needed. Clears the dirty mask afterwards.

@@ -10,6 +10,7 @@
 #include "gfx/surface.h"
 #include "palette.h"
 #include "anim/scheduler.h"
+#include "render/renderer.h"
 
 namespace ss {
 
@@ -71,6 +72,10 @@ void appInvalidate(App* app);
 // buffer to draw the main screen into the frame core returned. Afterwards the
 // host gives the screen back to its own UI and calls appStop.
 Pixel* appRevealBegin(App* app, int x, int y);
+// The renderer's time split for the frame log (render/renderer.h RenderProfile): set a microsecond
+// clock, then read and reset the sums. Without a clock everything reads zero.
+void appSetClock(App* app, uint32_t (*us)());
+RenderProfile appProfile(App* app);
 bool appRevealStep(App* app, Surface& fb, float dt);
 
 // Introspection for the preview HUD and logs.

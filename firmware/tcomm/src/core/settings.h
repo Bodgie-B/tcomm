@@ -57,7 +57,15 @@ struct Settings {
   char tz[48] = "EST5EDT,M3.2.0,M11.1.0";
 
   uint16_t outside_stale_min = 15;  // HANDOFF: dashes after 15 minutes without an OUTSIDE reading
+
+  // MIKE (2026-11-05): the campsite screensaver starts after this many minutes without a touch,
+  // 10 to begin with, changed in Settings a minute, 5 minutes or an hour at a time. Last in the
+  // struct: the settings saved before it (board_storage.cpp, versions 1 to 3) are the bytes up to here.
+  uint16_t screensaver_min = 10;
 };
+
+constexpr uint16_t kScreensaverMinLeast = 1;      // PROPOSED: a minute
+constexpr uint16_t kScreensaverMinMost = 24 * 60;  // PROPOSED: a day
 
 inline uint8_t night_backlight(NightLevel n) {
   // PROPOSED steps toward Mike's 224. Names and steps are still open.

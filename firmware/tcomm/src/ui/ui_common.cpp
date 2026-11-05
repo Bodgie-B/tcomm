@@ -254,7 +254,7 @@ lv_obj_t *new_sheet(Sheet s, bool dim_overlay) {
 
 bool settings_family_open() {
   return g_sheet == Sheet::Settings || g_sheet == Sheet::TimeDate || g_sheet == Sheet::Test ||
-         g_sheet == Sheet::Ringtone || g_sheet == Sheet::Zambretti;
+         g_sheet == Sheet::Ringtone || g_sheet == Sheet::Zambretti || g_sheet == Sheet::Screensaver;
 }
 
 }  // namespace detail

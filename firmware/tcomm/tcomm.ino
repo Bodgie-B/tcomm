@@ -24,6 +24,7 @@
 #include "src/core/synth.h"
 #include "src/gfx/canvas.h"
 #include "src/ui/art.h"
+#include "src/ui/ss_host.h"
 #include "src/ui/ui.h"
 #include "src/ws/gt911/gt911.h"
 #include "src/ws/i2c/i2c.h"
@@ -196,12 +197,14 @@ static void app_tick(lv_timer_t *) {
   g_demo.tick();
 #endif
   tc::WallTime w = g_platform.wall();
-  ui::Frame f{&g_ctrl.view(), &g_ctrl.settings(), g_ctrl.own(), w, w.valid ? g_platform.utc_offset(w.utc) : 0, millis(),
-              &g_ctrl};
+  const int32_t off = w.valid ? g_platform.utc_offset(w.utc) : 0;
+  ui::Frame f{&g_ctrl.view(), &g_ctrl.settings(), g_ctrl.own(), w, off, millis(), &g_ctrl};
   uint32_t t0 = millis();
   ui::render(f);
   uint32_t ms = millis() - t0;
   if (ms > 100) board::elog("frame took %lu ms", (unsigned long)ms);
+  // The screensaver: on after 10 minutes without a touch, fed the panel's own state (ss_host.h).
+  ui::screensaver_service(g_ctrl.view(), g_ctrl.settings(), w, off, idle);
   // The calendar's and Settings' animations, measured here (the spec drops one under about 20 fps).
   static uint32_t anim_seen = 0;
   ui::AnimReport a = ui::anim_report();
@@ -358,6 +361,8 @@ void setup() {
   esp_lcd_touch_handle_t tp = touch_gt911_init(DEV_I2C_Get_Bus_Device());
   esp_lcd_panel_handle_t panel = g_panel =
       waveshare_esp32_s3_rgb_lcd_init(dp.mhz * 1000000u, (size_t)EXAMPLE_LCD_H_RES * dp.lines);
+  void *fb = nullptr;   // the screensaver draws straight into it (src/ui/ss_host.h)
+  if (panel && esp_lcd_rgb_panel_get_frame_buffer(panel, 1, &fb) == ESP_OK) ui::screensaver_set_frame_buffer(fb);
   codec_init();
   board::expander_begin();
   board::expander_output(board::kExioDisp, true);
@@ -457,6 +462,25 @@ static void mail_from_other_floor() {
   Serial.printf("mail: %s taps theirs; now %s\n", tc::floor_lower(other), g_ctrl.mail().waiting ? "waiting" : "none waiting");
 }
 
+// Starts the screensaver and says with what seed, so a run can be repeated (ss seed N).
+static void ss_start(uint32_t seed) {
+  if (ui::screensaver_start(seed)) Serial.printf("screensaver: started, seed %lu (a touch or ss again stops it)\n", (unsigned long)seed);
+  else Serial.println("screensaver: couldn't start (no frame buffer, or no memory)");
+}
+static bool g_ss_log = false;   // "ss log": its frame stats every 5 s while it runs
+
+// "ss touch X Y": two whole numbers after the words.
+static bool cmd_touch(const char *s, int &x, int &y) {
+  if (strncmp(s, "ss touch ", 9)) return false;
+  char *end = nullptr;
+  const char *p = s + 9;
+  x = (int)strtol(p, &end, 10);
+  if (end == p) return false;
+  p = end;
+  y = (int)strtol(p, &end, 10);
+  return end != p;
+}
+
 // The serial commands' numbers, read by hand: sscanf brought in newlib's scanf for these few lines,
 // about 17 KB of code that these builds copy into PSRAM (2026-11-01).
 // "word N": true, with v set, when s is the word, a space and a whole number (as sscanf's "%d").
@@ -518,6 +542,10 @@ static void command(char *s) {
     Serial.println("gear (as a tap on the gear: Settings rolls down or up) | knock (the other floor rings, as if by radio)");
     Serial.println("update (restart into the Wi-Fi updater, as Settings > Update over Wi-Fi does)");
     Serial.println("timesync (ask the internet for the time now; the result shows in log and radio)");
+    Serial.println("screensaver (on by itself after 10 min without a touch): ss (on or off now, no reveal) | ss seed N | "
+                   "ss touch X Y (as a touch there: the reveal) | ss scene F (0 any, 1 evening, 2 morning, 3 midday, 4 lookout)");
+    Serial.println("  ss mood N (0 night .. 5 dusk; -1 the clock's) | ss bell (the hiker's reaction only; knock rings for real) | "
+                   "ss auto 0/1 | ss idle N (seconds until restart; 0 = the Settings value) | ss inputs | ss stats | ss log (stats every 5 s)");
     return;
   }
   if (!strcmp(s, "bench")) {
@@ -590,6 +618,41 @@ static void command(char *s) {
   else if (!strcmp(s, "update")) board::restart_into_updater();
   else if (!strcmp(s, "timesync")) Serial.println(board::time_sync_start() ? "time: asking" : "time: can't ask now");
   else if (!strcmp(s, "knock")) knock_from_other_floor();
+  else if (!strcmp(s, "ss")) {
+    if (ui::screensaver_running()) {
+      ui::screensaver_stop();
+      Serial.println("screensaver: stopped");
+    } else {
+      ss_start(esp_random() & 0x7fffffffu);   // in range for ss seed N
+    }
+  } else if (cmd_int(s, "ss seed", v)) {
+    if (ui::screensaver_running()) ui::screensaver_stop();
+    ss_start((uint32_t)v);
+  } else if (cmd_int(s, "ss scene", v)) {
+    ui::screensaver_set_scene(v);
+    Serial.printf("screensaver: scene %d from the next start\n", v);
+  } else if (!strcmp(s, "ss bell")) ui::screensaver_doorbell();
+  else if (cmd_int(s, "ss mood", v)) ui::screensaver_set_mood((float)v);
+  else if (cmd_touch(s, v, t[0])) ui::screensaver_touch(v, t[0]);
+  else if (cmd_int(s, "ss auto", v)) {
+    ui::screensaver_set_auto(v != 0);
+    Serial.printf("screensaver: %s\n", v ? "starts on its own after the idle time" : "only starts by hand");
+  } else if (cmd_int(s, "ss idle", v)) {
+    ui::screensaver_set_idle(v < 0 ? 0 : (uint32_t)v);
+    if (v > 0) Serial.printf("screensaver: starts after %lu s without a touch (until restart)\n", (unsigned long)ui::screensaver_idle());
+    else Serial.println("screensaver: starts after the wait in Settings > SCREENSAVER");
+  } else if (!strcmp(s, "ss log")) {
+    g_ss_log = !g_ss_log;
+    Serial.printf("screensaver: frame stats every 5 s %s\n", g_ss_log ? "on" : "off");
+  } else if (!strcmp(s, "ss inputs")) {
+    char b[400];
+    ui::screensaver_inputs(b, sizeof b);
+    Serial.println(b);
+  } else if (!strcmp(s, "ss stats")) {
+    char b[700];
+    ui::screensaver_stats(b, sizeof b);
+    Serial.println(b);
+  }
   else if (cmd_time(s, t))
     g_app.set_clock_local(tc::seconds_from_civil(t[0], t[1], t[2], t[3], t[4], t[5]));
   else if (cmd_int(s, "demo", v) && v >= 0 && v <= 7) g_app.demo((ui::DemoAction)v);
@@ -701,5 +764,12 @@ void loop() {
 #if TCOMM_SENSOR
   sensor_tick();
 #endif
+  static uint32_t ss_log = 0;   // the screensaver's frame stats, every 5 s while it runs (ss log)
+  if (g_ss_log && ui::screensaver_running() && millis() - ss_log >= 5000) {
+    ss_log = millis();
+    char b[700];
+    ui::screensaver_stats(b, sizeof b);
+    Serial.println(b);
+  }
   delay(20);
 }

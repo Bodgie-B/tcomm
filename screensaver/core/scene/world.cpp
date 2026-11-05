@@ -140,6 +140,28 @@ void sortActors(World& w) {
   w.n_actors = n;
 }
 
+// What he covers, with everything he holds, so a foreground pine he walks
+// behind also covers the dragged stick. Measured in stepHiker, and again once
+// the rest of the tick has had its say: the weather, the director and the day
+// scenes turn him, pose him and hand him things after stepHiker, and the
+// renderer copies only the columns his rect covers.
+void coverHiker(World& w) {
+  Hiker& h = w.hiker;
+  if (!w.fx.on) return;   // stepHiker emptied his rect
+  Rect r = hikerBounds(h);
+  h.visible = r.x1 > 0 && r.x0 < SS_WIDTH;
+  if (h.visible) {
+    unite(r, armloadBounds(h, w.fx.armload));
+    if (w.pack.held) unite(r, packBounds(w.pack));
+    for (int i = 0; i < ITEM_COUNT; ++i)
+      if (w.items[i].held && !w.items[i].critter) unite(r, itemBounds((ItemId)i, w.items[i]));
+    w.hiker_full = r;
+    w.hiker_rect = r.clipped(kFrame);
+  } else {
+    w.hiker_rect = w.hiker_full = kEmpty;
+  }
+}
+
 // The hiker's tick: the rig, then what the spine layers on it (feet on the
 // walk path, a hop while wading, pose offsets), the fire's rim light, what he
 // holds, and whether he is in frame.
@@ -226,20 +248,7 @@ void stepHiker(World& w, bool frozen = false) {
   }
   if (w.bag.state == BAG_FLYING) w.bag.rope = hikerHandPos(h, 0);
 
-  // What he covers, with everything he holds, so a foreground pine he walks
-  // behind also covers the dragged stick.
-  Rect r = hikerBounds(h);
-  h.visible = r.x1 > 0 && r.x0 < SS_WIDTH;
-  if (h.visible) {
-    unite(r, armloadBounds(h, fx.armload));
-    if (w.pack.held) unite(r, packBounds(w.pack));
-    for (int i = 0; i < ITEM_COUNT; ++i)
-      if (w.items[i].held && !w.items[i].critter) unite(r, itemBounds((ItemId)i, w.items[i]));
-    w.hiker_full = r;
-    w.hiker_rect = r.clipped(kFrame);
-  } else {
-    w.hiker_rect = w.hiker_full = kEmpty;
-  }
+  coverHiker(w);
 }
 
 // Bounds of a prop he holds: nothing while he is out of frame.
@@ -489,6 +498,7 @@ void worldTick(World& w, Rng& rng, Renderer& r) {
                           : 0.f;
   weatherStep(w);
   weatherPlaceHeld(w);
+  coverHiker(w);   // after everything that moved him this tick
   sortActors(w);
 
   WorldDirty& d = w.dirty;

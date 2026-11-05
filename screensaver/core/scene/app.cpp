@@ -242,6 +242,14 @@ Pixel* appRevealBegin(App* app, int x, int y) {
   return app->renderer.cache;
 }
 
+void appSetClock(App* app, uint32_t (*us)()) { app->renderer.clock_us = us; }
+
+RenderProfile appProfile(App* app) {
+  const RenderProfile p = app->renderer.prof;
+  memset(&app->renderer.prof, 0, sizeof app->renderer.prof);
+  return p;
+}
+
 bool appRevealStep(App* app, Surface& fb, float dt) {
   if (!app->reveal.active) return false;
   if (fb.width < SS_WIDTH || fb.height < SS_HEIGHT || fb.origin_y != 0 || fb.stride < SS_WIDTH) return false;

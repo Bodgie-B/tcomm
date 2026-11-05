@@ -9,6 +9,7 @@
 #include "esp_vfs_fat.h"
 #include <Preferences.h>
 #include <math.h>
+#include <stddef.h>
 #include "../core/synth.h"
 #include "board.h"
 
@@ -16,7 +17,12 @@ namespace board {
 
 static Preferences g_prefs;
 static bool g_open = false;
-static constexpr uint16_t kSettingsVersion = 3;  // 2, 3: ringtones renumbered (sci-fi, then Water drops removed)
+static constexpr uint16_t kSettingsVersion = 4;  // 2, 3: ringtones renumbered (sci-fi, then Water drops removed); 4: screensaver_min added
+// Settings saved by versions 1 to 3 end where screensaver_min begins (it was added last, after a
+// uint16_t, so nothing was padded in between): their size is that offset rounded up to the struct's
+// alignment.
+static constexpr size_t kSettingsV3Size =
+    (offsetof(tc::Settings, screensaver_min) + alignof(tc::Settings) - 1) / alignof(tc::Settings) * alignof(tc::Settings);
 static constexpr uint16_t kOwnVersion = 1;
 static constexpr uint16_t kDogVersion = 3;  // 2: change counter added; 3: each dog on its own
 static constexpr uint16_t kMailVersion = 1;
@@ -55,18 +61,34 @@ static bool settings_ok(const tc::Settings &s) {
   if (s.temp_offset_tenths_f < -200 || s.temp_offset_tenths_f > 200) return false;
   if (!(s.latitude >= -90 && s.latitude <= 90) || !(s.longitude >= -180 && s.longitude <= 180)) return false;  // also NaN
   if (s.outside_stale_min < 1 || s.outside_stale_min > 1440) return false;
+  if (s.screensaver_min < tc::kScreensaverMinLeast || s.screensaver_min > tc::kScreensaverMinMost) return false;
   for (const tc::KnockRule &r : s.knock)
     if ((uint8_t)r.chime > 2) return false;
   return true;
 }
 
+// Settings saved before version 4: the same bytes up to screensaver_min, which starts at its
+// default. Returns the version they were saved with, or 0.
+static uint16_t load_settings_before_4(tc::Settings &out) {
+  if (!g_open) return 0;
+  uint8_t buf[kSettingsV3Size + 4];
+  size_t n = g_prefs.getBytes("settings", buf, sizeof(buf));
+  if (n != sizeof(buf)) return 0;
+  uint16_t ver = (uint16_t)(buf[0] | (buf[1] << 8)), size = (uint16_t)(buf[2] | (buf[3] << 8));
+  if (ver < 1 || ver > 3 || size != kSettingsV3Size) return 0;
+  tc::Settings s;
+  memcpy(&s, buf + 4, kSettingsV3Size);
+  s.screensaver_min = tc::Settings().screensaver_min;  // past the old end (or in its padding)
+  out = s;
+  return ver;
+}
+
 bool load_settings(tc::Settings &s) {
   tc::Settings tmp;
   // Versions 1 and 2 had the same layout; only the ringtone numbers moved. A ringtone that has
-  // been removed since it was saved becomes Westminster, and the other settings stay.
-  uint16_t version = load_blob("settings", kSettingsVersion, tmp)
-                         ? kSettingsVersion
-                         : (load_blob("settings", 2, tmp) ? 2 : (load_blob("settings", 1, tmp) ? 1 : 0));
+  // been removed since it was saved becomes Westminster, and the other settings stay. Version 4
+  // added screensaver_min at the end.
+  uint16_t version = load_blob("settings", kSettingsVersion, tmp) ? kSettingsVersion : load_settings_before_4(tmp);
   if (!version) return false;
   tmp.ringtone = tc::ringtone_from_saved(version, tmp.ringtone);
   tmp.tz[sizeof(tmp.tz) - 1] = 0;

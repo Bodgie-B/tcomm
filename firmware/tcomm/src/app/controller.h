@@ -87,6 +87,8 @@ struct OutsideView {
   bool valid;
   Forecast code;
   bool heat, cold;  // WeatherGate's danger heat and danger cold
+  int16_t temp_tenths;  // the reading as numbers (the screensaver's weather): tenths of a degree F
+  uint8_t hum_pct;      // and percent; both 0 when !valid
   char temp[12];
   char hum[12];
   char phrase[kMaxPhrase + 1];

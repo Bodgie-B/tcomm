@@ -155,3 +155,11 @@ void lvgl_port_unlock(void);
  *      - false: The tasks don't need to be re-scheduled
  */
 bool lvgl_port_notify_rgb_vsync(void);
+
+/**
+ * @brief TComm: a hook that sees every touch reading before LVGL does (the screensaver,
+ * src/ui/ss_host.cpp). When it returns true, LVGL is told nothing is touching, so the touch that
+ * wakes the screen doesn't press whatever is under the finger. nullptr removes it.
+ */
+typedef bool (*lvgl_port_touch_hook_t)(bool pressed, int x, int y);
+void lvgl_port_set_touch_hook(lvgl_port_touch_hook_t hook);

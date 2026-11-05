@@ -114,6 +114,18 @@ mkdir -p "$OUT"
 # the Arduino core stays cached).
 if [ "$WHAT" = gateway ] || [ "$WHAT" = listener ] || [ "$WHAT" = updater ]; then rm -rf "$OUT/sketch"; fi
 
+# The campsite screensaver's core (screensaver/core, plain C++17) builds into the panel firmware as
+# the ss_core library: refreshed into libraries/ss_core/src (not in git) before each panel build, so
+# there is one copy of it in git. On GitHub the screensaver sits beside firmware/.
+if [ "$WHAT" = panel ] || [ "$WHAT" = radio ] || [ "$WHAT" = ota ]; then
+  SS_CORE=screensaver/core
+  [ -d "$SS_CORE" ] || SS_CORE=../screensaver/core
+  [ -d "$SS_CORE" ] || { echo "screensaver/core not found: the panel firmware builds the screensaver in"; exit 1; }
+  SYNC=tools/sync_ss_core.py
+  [ -f "$SYNC" ] || SYNC=../tools/sync_ss_core.py
+  python "$SYNC" "$SS_CORE" libraries/ss_core/src || exit 1   # -O2 on the screensaver only
+fi
+
 if ! grep -q "high_perf" "$ARDUINO_DIRECTORIES_DATA"/packages/esp32/tools/esp32-arduino-libs/*/versions.txt 2>/dev/null; then
   echo "The high_perf libraries aren't installed in $ARDUINO_DIRECTORIES_DATA (see README, Toolchain)."
   exit 1

@@ -1022,12 +1022,16 @@ void Controller::build_view() {
     v.outside.code = forecast_valid(outside_.code) ? (Forecast)outside_.code : Forecast::Unknown;
     v.outside.heat = outside_.flags & kOutsideDangerHeat;
     v.outside.cold = outside_.flags & kOutsideDangerCold;
+    v.outside.temp_tenths = outside_.temp;
+    v.outside.hum_pct = outside_.hum;
     snprintf(v.outside.temp, sizeof(v.outside.temp), "%d%sF", round_tenths(outside_.temp), kDeg);
     snprintf(v.outside.hum, sizeof(v.outside.hum), "%u%%", (unsigned)outside_.hum);
     snprintf(v.outside.phrase, sizeof(v.outside.phrase), "%s", outside_.phrase);
   } else {
     v.outside.code = Forecast::Unknown;
     v.outside.heat = v.outside.cold = false;
+    v.outside.temp_tenths = 0;
+    v.outside.hum_pct = 0;
     snprintf(v.outside.temp, sizeof(v.outside.temp), "--%sF", kDeg);
     snprintf(v.outside.hum, sizeof(v.outside.hum), "--%%");
     snprintf(v.outside.phrase, sizeof(v.outside.phrase), "No reading");

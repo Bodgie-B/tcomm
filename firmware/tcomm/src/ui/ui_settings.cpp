@@ -20,14 +20,16 @@ namespace {
 // never join a network, presets aren't needed, and the date strip already shows each holiday,
 // birthday and anniversary with its icon. Each tile keeps the colour it had beside them
 // (kTileColour).
-enum TileId { kTime, kTemp, kUnit, kRing, kVol, kNight, kScreen, kQuiet, kUpdate, kZambretti, kTest, kTiles };
+// SCREENSAVER (Mike, 2026-11-05) sits beside SCREEN AT NIGHT; its colour differs from the three
+// tiles around it.
+enum TileId { kTime, kTemp, kUnit, kRing, kVol, kNight, kScreen, kSaver, kQuiet, kUpdate, kZambretti, kTest, kTiles };
 const char *const kTileLabel[kTiles] = {"TIME & DATE",  "TEMP OFFSET",     "THIS UNIT IS",   "RINGTONE",
-                                        "VOLUME",       "NIGHT LIGHT",     "SCREEN AT NIGHT", "QUIET HOURS",
-                                        "UPDATE OVER WI-FI", "ZAMBRETTI DEMO", "TEST PANEL"};
+                                        "VOLUME",       "NIGHT LIGHT",     "SCREEN AT NIGHT", "SCREENSAVER",
+                                        "QUIET HOURS",  "UPDATE OVER WI-FI", "ZAMBRETTI DEMO", "TEST PANEL"};
 const char *const kTileSym[kTiles] = {LV_SYMBOL_LOOP,       LV_SYMBOL_TINT,      LV_SYMBOL_HOME,  LV_SYMBOL_BELL,
-                                      LV_SYMBOL_VOLUME_MAX, LV_SYMBOL_EYE_CLOSE, LV_SYMBOL_POWER, LV_SYMBOL_MUTE,
-                                      LV_SYMBOL_DOWNLOAD,   LV_SYMBOL_IMAGE,     LV_SYMBOL_SETTINGS};
-const int kTileColour[kTiles] = {1, 4, 5, 6, 7, 8, 9, 10, 0, 11, 12};  // theme::settings_tile
+                                      LV_SYMBOL_VOLUME_MAX, LV_SYMBOL_EYE_CLOSE, LV_SYMBOL_POWER, LV_SYMBOL_VIDEO,
+                                      LV_SYMBOL_MUTE,       LV_SYMBOL_DOWNLOAD,  LV_SYMBOL_IMAGE, LV_SYMBOL_SETTINGS};
+const int kTileColour[kTiles] = {1, 4, 5, 6, 7, 8, 9, 3, 10, 0, 11, 12};  // theme::settings_tile
 bool g_updater = false;  // the Wi-Fi updater is installed (checked once, when Settings opens)
 lv_obj_t *g_val[kTiles] = {};
 lv_obj_t *g_confirm = nullptr;
@@ -37,6 +39,23 @@ lv_obj_t *g_test_lbl[11] = {};
 uint32_t g_clean_start = 0;
 lv_obj_t *g_clean_lbl = nullptr;
 uint32_t g_done_down = 0;
+lv_obj_t *g_saver_val = nullptr;
+
+// The screensaver's wait: "10 min", "1 hr", "1 hr 5 min" (the tile), or in words for its page.
+void saver_text(char *out, size_t n, unsigned m, bool words) {
+  const unsigned h = m / 60, r = m % 60;
+  if (!words) {
+    if (!h) snprintf(out, n, "%u min", r);
+    else if (!r) snprintf(out, n, "%u hr", h);
+    else snprintf(out, n, "%u hr %u min", h, r);
+  } else if (h && r) {
+    snprintf(out, n, "%u hour%s %u minute%s", h, h == 1 ? "" : "s", r, r == 1 ? "" : "s");
+  } else if (h) {
+    snprintf(out, n, "%u hour%s", h, h == 1 ? "" : "s");
+  } else {
+    snprintf(out, n, "%u minute%s", r, r == 1 ? "" : "s");
+  }
+}
 
 void apply(const Settings &s) {
   g_set = s;
@@ -78,6 +97,12 @@ void tile_value(int id, char *out, size_t n) {
     }
     case kNight: snprintf(out, n, "%s (%u)", night_level_name(g_set.night_level), (unsigned)night_backlight(g_set.night_level)); break;
     case kScreen: snprintf(out, n, "%s", g_set.screen_off_overnight ? "Off overnight" : "Stays on, dim"); break;
+    case kSaver: {
+      char t[24];
+      saver_text(t, sizeof(t), g_set.screensaver_min, false);
+      snprintf(out, n, "After %s", t);
+      break;
+    }
     case kQuiet: {
       char a[16], b[16];
       format_time12(a, sizeof(a), g_set.quiet_start_min * 60);
@@ -185,6 +210,7 @@ void tile_clicked(lv_event_t *e) {
     case kScreen: s.screen_off_overnight = !s.screen_off_overnight; apply(s); return;
     case kRing: open_ringtones(); return;
     case kZambretti: open_zambretti_demo(); return;
+    case kSaver: open_screensaver(); return;
     case kUpdate: ask_update(); return;
     default: return;  // quiet hours aren't editable yet
   }
@@ -210,7 +236,7 @@ void build_settings(lv_obj_t *root) {
     // (2026-10-26).
     bool edge_buttons = id == kTemp || id == kVol || id == kNight || (id == kUnit && !(g_act && g_act->floor_locked()));
     if (edge_buttons) lv_obj_set_style_clip_corner(t, true, 0);
-    bool tappable = id == kTime || id == kTest || id == kScreen || id == kRing || id == kZambretti ||
+    bool tappable = id == kTime || id == kTest || id == kScreen || id == kSaver || id == kRing || id == kZambretti ||
                     (id == kUpdate && g_updater);
     if (tappable) {
       pressable(t, face, 90);
@@ -289,6 +315,21 @@ void test_action(lv_event_t *e) {
 }
 
 void back_to_settings(lv_event_t *) { open_settings(); }
+
+// --- Screensaver (Mike, 2026-11-05) ---
+// The minutes without a touch before the screensaver starts: a minute, 5 minutes or an hour at a
+// time, from a minute to a day. Each step is saved at once, as volume is; hold a button to repeat.
+void saver_step(lv_event_t *e) {
+  const int d = (int)(intptr_t)lv_event_get_user_data(e);
+  int m = (int)g_set.screensaver_min + d;
+  if (m < kScreensaverMinLeast) m = kScreensaverMinLeast;
+  if (m > kScreensaverMinMost) m = kScreensaverMinMost;
+  if (m == (int)g_set.screensaver_min) return;
+  Settings s = g_set;
+  s.screensaver_min = (uint16_t)m;
+  apply(s);
+  refresh_sheet();
+}
 
 // --- The Zambretti demo (Mike, 2026-10-25) ---
 // Every forecast WeatherGate can send, with a reading to suit it, and its two warnings: the list
@@ -422,6 +463,24 @@ void open_time_date() {
   theme::StatusColors open = theme::status_colors(0, g_mode);
   button(bg, 12, 306, 250, 90, chip(), k, "Cancel", J30, edit_done, (void *)0);
   button(bg, 274, 306, 514, 90, open.tile, open.text, "Save", J30, edit_done, (void *)1);
+  refresh_sheet();
+}
+
+void open_screensaver() {
+  lv_obj_t *root = new_sheet(Sheet::Screensaver, false);
+  Color k = ink();
+  lv_obj_t *bg = box(root, 0, 74, 800, 406, theme::sheet_bg(g_mode), 0);
+  lv_obj_add_flag(bg, LV_OBJ_FLAG_CLICKABLE);
+  label(bg, B16, k, 16, 14, "THE SCREENSAVER STARTS AFTER THIS LONG WITHOUT A TOUCH");
+  g_saver_val = label(bg, J44, k, 16, 34, "");
+  const int steps[6] = {-60, 60, -5, 5, -1, 1};
+  const char *labels[6] = {"- 1 hour", "+ 1 hour", "- 5 min", "+ 5 min", "- 1 min", "+ 1 min"};
+  for (int i = 0; i < 6; i++) {  // columns: hour, 5 minutes, minute; minus above plus, as Time & Date
+    lv_obj_t *b = button(bg, 12 + (i / 2) * 262, 96 + (i % 2) * 102, 252, 90, chip(), k, labels[i], B24, saver_step,
+                         (void *)(intptr_t)steps[i]);
+    lv_obj_add_event_cb(b, saver_step, LV_EVENT_LONG_PRESSED_REPEAT, (void *)(intptr_t)steps[i]);
+  }
+  button(bg, 12, 306, 776, 90, chip(), k, "Back to Settings", J30, back_to_settings, nullptr);
   refresh_sheet();
 }
 
@@ -607,6 +666,13 @@ void refresh_sheet() {
       snprintf(b[10], 64, "Other floor taps the mail badge");
       for (int i = 0; i < 11; i++)
         if (g_test_lbl[i]) set_text(g_test_lbl[i], b[i]);
+      break;
+    }
+    case Sheet::Screensaver: {
+      if (idle > 60000) { close_sheet(); break; }
+      char t[40];
+      saver_text(t, sizeof(t), g_set.screensaver_min, true);
+      set_text(g_saver_val, t);
       break;
     }
     case Sheet::Ringtone:

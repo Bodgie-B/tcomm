@@ -1004,6 +1004,7 @@ void weatherTrack(World& w, Renderer& r) {
     x.d_shim[i] = dx;
   }
   if (shim) r.markDirtyRows(kShimY0, LS_HORIZON);
+  if (on) r.fullWidthRows(kShimY0, LS_HORIZON);   // it shifts rows sideways: anything redrawn there needs whole rows
   // Fog bands.
   for (int i = 0; i < WX_BANDS; ++i) {
     int cx = 0;

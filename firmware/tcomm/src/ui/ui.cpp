@@ -1202,6 +1202,7 @@ void render(const Frame &f) {
     else if (g_sheet == Sheet::Settings) open_settings();
     else if (g_sheet == Sheet::Test) open_test_panel();
     else if (g_sheet == Sheet::Ringtone) open_ringtones();
+    else if (g_sheet == Sheet::Screensaver) open_screensaver();
     else if (g_sheet == Sheet::Zambretti) open_zambretti_demo();
   }
 
@@ -1252,6 +1253,7 @@ void open_sheet(Sheet s, Status timed) {
     case Sheet::TimeDate: open_time_date(); break;
     case Sheet::Test: open_test_panel(); break;
     case Sheet::Ringtone: open_ringtones(); break;
+    case Sheet::Screensaver: open_screensaver(); break;
     case Sheet::Zambretti: open_zambretti_demo(); break;
     case Sheet::CleanScreen: start_clean_screen(); break;
     default: close_sheet(); break;

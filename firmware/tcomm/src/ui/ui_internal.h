@@ -105,6 +105,7 @@ void open_settings();
 void open_time_date();
 void open_test_panel();
 void open_ringtones();
+void open_screensaver();  // Settings > SCREENSAVER: the minutes before it starts
 void start_clean_screen();
 void refresh_sheet();  // live values while a sheet is open (called from render)
 void open_zambretti_demo();

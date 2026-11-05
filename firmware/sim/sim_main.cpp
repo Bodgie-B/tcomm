@@ -461,6 +461,17 @@ int main(int argc, char **argv) {
     capture("28_ringtones_nature");
   }
   start(p1); ui::open_sheet(ui::Sheet::Ringtone); ui::scroll_sheet(800); pump(300); capture("29_ringtones_night");
+  // Settings > SCREENSAVER (Mike, 2026-11-05): 10 minutes to begin with; by night, 2 hours 5 minutes.
+  start(p4); ui::open_sheet(ui::Sheet::Screensaver); pump(300); capture("47_screensaver_wait");
+  {
+    start(p1);
+    Settings st = g_h->panel.settings();
+    st.screensaver_min = 125;
+    g_h->panel.apply_settings(st);
+    ui::open_sheet(ui::Sheet::Screensaver);
+    pump(300);
+    capture("48_screensaver_wait_night");
+  }
 
   // Both dogs out (Mike, 2026-10-25: it happens now).
   {
