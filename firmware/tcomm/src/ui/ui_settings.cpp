@@ -96,7 +96,16 @@ void tile_value(int id, char *out, size_t n) {
       break;
     }
     case kNight: snprintf(out, n, "%s (%u)", night_level_name(g_set.night_level), (unsigned)night_backlight(g_set.night_level)); break;
-    case kScreen: snprintf(out, n, "%s", g_set.screen_off_overnight ? "Off overnight" : "Stays on, dim"); break;
+    case kScreen:  // MIKE (2026-11-05): dim at night, dark 10 PM to 6 AM when it's off overnight
+      if (g_set.screen_off_overnight) {
+        char a[16], b[16];
+        format_time12(a, sizeof(a), g_set.screen_off_start_min * 60);
+        format_time12(b, sizeof(b), g_set.screen_off_end_min * 60);
+        snprintf(out, n, "Off %s-%s", a, b);
+      } else {
+        snprintf(out, n, "Stays on, dim");
+      }
+      break;
     case kSaver: {
       char t[24];
       saver_text(t, sizeof(t), g_set.screensaver_min, false);

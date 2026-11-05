@@ -75,6 +75,12 @@ Pixel* appRevealBegin(App* app, int x, int y);
 // The renderer's time split for the frame log (render/renderer.h RenderProfile): set a microsecond
 // clock, then read and reset the sums. Without a clock everything reads zero.
 void appSetClock(App* app, uint32_t (*us)());
+// Small palette steps (the mood creeping through a sky change, a weather tint) shown a few strips a
+// frame instead of the whole frame at once, so the scene doesn't stall for a full redraw (render/
+// renderer.h spread_per_frame). 0, the default: at once, and every frame equals a full redraw.
+void appSetPaletteSpread(App* app, int strips_per_frame);
+// False while a spread palette step is still reaching the strips (for tests and logs).
+bool appPaletteSettled(const App* app);
 RenderProfile appProfile(App* app);
 bool appRevealStep(App* app, Surface& fb, float dt);
 

@@ -48,6 +48,10 @@ struct WeatherTint {
   float overcast;   // desaturates and flattens the sky toward a gray-blue
   float fog;        // lifts far layers toward the horizon color
   float night_dim;  // 1 = night rule in force: clamp bright slots, dim overall
+  // How much the night dim scales the colours (all but the small lights) at night_dim 1: 0 means 0.55,
+  // the PC preview's look. The panel's backlight already dims at night, and on it 0.55 left only the
+  // stream readable (Mike, 2026-11-05), so the panel asks for more; the caps below hold either way.
+  float night_gain;
 };
 
 // Night rule limits (brief section 11: no large bright areas, no pure white),

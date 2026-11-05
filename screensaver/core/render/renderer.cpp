@@ -15,6 +15,9 @@ bool Renderer::init(const HostAlloc& alloc, Pixel* strip) {
   memset(cache, 0, (size_t)SS_WIDTH * SS_HEIGHT * sizeof(Pixel));
   memset(&palette, 0, sizeof palette);
   cache_valid = false;
+  spread_next = false;
+  spread_mask = 0;
+  spread_pos = 0;
   markAllDirty();
   return true;
 }
@@ -26,9 +29,17 @@ void Renderer::shutdown(const HostAlloc& alloc) {
   dirty_mask = 0;
 }
 
-void Renderer::setPalette(const Palette& p) {
+void Renderer::setPalette(const Palette& p, bool spread) {
   palette = p;
+  if (spread && spread_per_frame > 0 && cache_valid) {
+    // The strips keep the old colours until the cache rebuild hands them to the spread.
+    cache_valid = false;
+    spread_next = true;
+    return;
+  }
   cache_valid = false;
+  spread_next = false;
+  spread_mask = 0;
   markAllDirty();
 }
 
@@ -79,10 +90,39 @@ int Renderer::render(Surface& fb, const SceneDraw& scene) {
   };
 
   if (!cache_valid) {
-    Surface full{cache, SS_WIDTH, SS_HEIGHT, SS_WIDTH, 0};
-    if (scene.draw_static) scene.draw_static(scene.user, full, palette);
+    if (spread_next) {
+      // A spread step: the cache keeps the old colours and is repainted band by band below.
+      spread_mask = (uint16_t)((1u << SS_STRIP_COUNT) - 1);
+      spread_next = false;
+    } else {
+      Surface full{cache, SS_WIDTH, SS_HEIGHT, SS_WIDTH, 0};
+      if (scene.draw_static) scene.draw_static(scene.user, full, palette);
+      markAllDirty();
+      lap(prof.static_us);
+    }
     cache_valid = true;
-    markAllDirty();
+  }
+
+  // The spread: this frame's share of the bands still in the old colours, going on round the frame
+  // from where it got to (top first for a step on its own). Each band of the cache is repainted (the
+  // static layers clip to the band, as the build-up's do to a strip) and its strip composited full
+  // width. Other dirty strips copy only their changed columns, as always, from cache bands that may
+  // still be in the old colours: a fraction of a mood step off, for a few frames.
+  if (spread_mask) {
+    int budget = spread_per_frame > 0 ? spread_per_frame : SS_STRIP_COUNT;
+    for (int k = 0; k < SS_STRIP_COUNT && budget > 0; ++k) {
+      const int i = (spread_pos + k) % SS_STRIP_COUNT;
+      const uint16_t bit = (uint16_t)(1u << i);
+      if (!(spread_mask & bit)) continue;
+      const int y0 = i * SS_STRIP_ROWS;
+      Surface band{cache + (size_t)y0 * SS_WIDTH, SS_WIDTH, SS_STRIP_ROWS, SS_WIDTH, y0};
+      if (scene.draw_static) scene.draw_static(scene.user, band, palette);
+      markDirtyRows(y0, y0 + SS_STRIP_ROWS);
+      full_mask = (uint16_t)(full_mask | bit);
+      spread_mask = (uint16_t)(spread_mask & ~bit);
+      spread_pos = (uint8_t)((i + 1) % SS_STRIP_COUNT);
+      --budget;
+    }
     lap(prof.static_us);
   }
 

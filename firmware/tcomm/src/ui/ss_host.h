@@ -57,6 +57,14 @@ void screensaver_set_idle(uint32_t seconds);
 uint32_t screensaver_idle();
 void screensaver_set_mood(float mood);     // 0 night .. 5 dusk (palette.h) in place of the clock's; < 0: the clock's again
 void screensaver_set_scene(int family);    // the next loop's: 0 its own pick, 1 evening, 2 morning, 3 midday, 4 lookout
+// The scene weather by hand (0 clear, 1 rain, 2 snow, 3 wind, 4 heat, 5 fog, 6 chill, 7 storm), with
+// the tint such a reading brings; -1 back to the outside reading. The loop's weather is planned at
+// its start, so start a new one (ss seed N) to see it.
+void screensaver_set_weather(int code);
+// The night scene's brightness (palette.h WeatherTint::night_gain): 1.6 to begin with; 0 is the PC
+// preview's look (0.55), which on the panel's night backlight leaves only the stream readable.
+void screensaver_set_night_gain(float gain);
+float screensaver_night_gain();
 
 // One line each, for serial: frame stats since the last call; the inputs in use. Starts, stops and
 // each reveal's timing go to the panel's log (board::elog).

@@ -90,8 +90,16 @@ uint32_t g_stopped_at = 0;
 bool g_stopped_once = false;
 float g_mood_override = -1.f;
 uint8_t g_scene = 0;
+int g_weather_set = -1;             // ss weather N: a scene weather by hand (testing); -1 the outside reading's
+// The night scene's brightness (palette.h WeatherTint::night_gain). The PC look (0.55) left only the
+// stream readable on the panel at its night backlight (Mike, 2026-11-05); 1.6 brings the scene to
+// about the panel's own night tiles. ss nightgain N changes it until restart, in tenths.
+float g_night_gain = 1.6f;
+constexpr int kPaletteSpread = 1;   // background bands a frame for a small palette step (appSetPaletteSpread): ~16 ms more a frame for 15 frames, not one 110 ms stall
+int g_pal_seen = 0;                 // appPaletteRebuilds when last looked (it restarts at 0 each loop)
 float g_mood = 3.f;
 bool g_mood_known = false;
+int g_phase_seen = -1;              // the sky phase the mood was last worked out in
 uint32_t g_mood_at = 0, g_inputs_at = 0;
 uint16_t g_shakes = 0;
 bool g_shakes_known = false;
@@ -100,6 +108,8 @@ uint32_t g_seed = 0;
 // Stats since the last screensaver_stats call.
 struct Stats {
   uint32_t frames, ticks, strips, dropped;
+  uint32_t palettes;                // palette changes (each rebuilds the cache)
+  int64_t palette_worst_us;         // the slowest frame that had one
   int64_t tick_us, render_us, worst_us;
   int64_t since_us;
 };
@@ -174,7 +184,16 @@ ss::Inputs buildInputs(const tc::View &v) {
   in.have_outside = sw.have_outside;
   in.weather.overcast = sw.overcast;
   in.weather.fog = sw.fog;
+  if (g_weather_set >= 0) {   // by hand, with the tint a reading of that kind would bring (as sim/soak_main.cpp)
+    static const float kTint[8][2] = {{0.00f, 0.00f}, {0.75f, 0.15f}, {0.60f, 0.25f}, {0.25f, 0.00f},
+                                      {0.00f, 0.05f}, {0.35f, 0.80f}, {0.45f, 0.10f}, {0.95f, 0.20f}};
+    in.weather_code = g_weather_set;
+    in.have_outside = true;
+    in.weather.overcast = kTint[g_weather_set][0];
+    in.weather.fog = kTint[g_weather_set][1];
+  }
   in.weather.night_dim = 0.f;
+  in.weather.night_gain = g_night_gain;
   const tc::FloorView &f = v.floor[(int)tc::other_floor(v.me)];
   in.other_status = f.no_signal ? 5 : (int)f.status;
   in.dog_out = (int)v.dog.out;
@@ -461,10 +480,17 @@ void frame(lv_timer_t *) {
   }
   const int64_t t1 = esp_timer_get_time();
   ss::Surface fb{static_cast<ss::Pixel *>(g_fb), SS_WIDTH, SS_HEIGHT, SS_WIDTH, 0};
+  const int pal = ss::appPaletteRebuilds(g_app);   // after the ticks: the palette this frame draws with
+  const int new_pal = pal >= g_pal_seen ? pal - g_pal_seen : pal;
+  g_pal_seen = pal;
   const int strips = ss::appRender(g_app, fb);
   const int64_t t2 = esp_timer_get_time();
   if (g_copy) copyPump(lv_disp_get_default());   // a slice of the main screen's changes into its copy
   const int64_t t3 = esp_timer_get_time();
+  if (new_pal > 0) {
+    g_st.palettes += (uint32_t)new_pal;
+    if (t3 - t0 > g_st.palette_worst_us) g_st.palette_worst_us = t3 - t0;
+  }
   g_st.frames++;
   g_st.ticks += (uint32_t)n;
   g_st.strips += (uint32_t)strips;
@@ -516,6 +542,8 @@ bool screensaver_start(uint32_t seed) {
   }
   if (!g_copy) board::elog("screensaver: no room for the main screen's copy; a touch draws it first");
   ss::appSetClock(g_app, clockUs);
+  ss::appSetPaletteSpread(g_app, kPaletteSpread);   // the clock's mood steps and tints without a full-frame stall
+  g_pal_seen = ss::appPaletteRebuilds(g_app);
   ss::appInvalidate(g_app);
   g_seed = seed;
   g_touch = g_dark_stop = false;
@@ -553,6 +581,10 @@ void screensaver_service(const tc::View &v, const tc::Settings &s, const tc::Wal
       screensaver_doorbell();
       board::elog("screensaver: doorbell from the other floor, the hiker answers");
     }
+  }
+  if ((int)v.phase != g_phase_seen) {   // a new phase (or one forced, or let go): the mood at once
+    g_phase_seen = (int)v.phase;
+    g_mood_known = false;
   }
   if (!g_mood_known || now - g_mood_at >= kMoodMs) {
     g_mood = phaseMood(v, s, w, utc_offset);
@@ -605,6 +637,17 @@ void screensaver_set_scene(int family) {
   refreshInputsSoon();
 }
 
+void screensaver_set_night_gain(float gain) {
+  g_night_gain = gain < 0.f ? 0.f : (gain > 4.f ? 4.f : gain);
+  refreshInputsSoon();
+}
+float screensaver_night_gain() { return g_night_gain; }
+
+void screensaver_set_weather(int code) {
+  g_weather_set = code < 0 || code > 7 ? -1 : code;
+  refreshInputsSoon();
+}
+
 int screensaver_stats(char *buf, size_t n) {
   const int64_t now = esp_timer_get_time();
   const Stats s = g_st;
@@ -623,14 +666,16 @@ int screensaver_stats(char *buf, size_t n) {
   return snprintf(buf, n,
                   "screensaver: %s; %.1f s: %lu frames (%.1f fps), %lu ticks, %lu dropped; tick %.2f ms, draw %.2f ms, "
                   "worst %.1f ms per frame; %.2f strips a frame, %.0f%% of their width copied; draw split: copy in %.2f, "
-                  "layers %.2f, copy out %.2f, cache %.2f ms; main screen copy %s (%lu areas, %lu px, %lu ms redrawn); fast block %s; "
+                  "layers %.2f, copy out %.2f, cache %.2f ms; %lu palette changes (slowest such frame %.1f ms); "
+                  "main screen copy %s (%lu areas, %lu px, %lu ms redrawn); fast block %s; "
                   "free heap %u, free PSRAM %u (largest %u)",
                   g_app ? "running" : "stopped", (double)secs, (unsigned long)s.frames,
                   secs > 0.f ? (double)(s.frames / secs) : 0.0, (unsigned long)s.ticks, (unsigned long)s.dropped,
                   (double)(s.tick_us / f / 1000.f), (double)(s.render_us / f / 1000.f), (double)(s.worst_us / 1000.f),
                   (double)(s.strips / f), p.strips ? (double)(100.f * p.px / (p.strips * strip_px)) : 0.0,
                   (double)(p.copy_in_us / f / 1000.f), (double)(p.draw_us / f / 1000.f), (double)(p.copy_out_us / f / 1000.f),
-                  (double)(p.static_us / f / 1000.f), g_copy ? "on" : "off", (unsigned long)copy_refr,
+                  (double)(p.static_us / f / 1000.f), (unsigned long)s.palettes, (double)(s.palette_worst_us / 1000.f),
+                  g_copy ? "on" : "off", (unsigned long)copy_refr,
                   (unsigned long)copy_px, (unsigned long)(copy_us / 1000), g_lent ? "LVGL's (internal)" : "PSRAM",
                   (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
                   (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
@@ -644,11 +689,13 @@ int screensaver_inputs(char *buf, size_t n) {
   else snprintf(state, sizeof state, "stopped");
   return snprintf(buf, n,
                   "screensaver inputs: %s; mood %.2f (%s); scene weather %d%s, overcast %.2f, fog %.2f; other floor %d "
-                  "(5 = no signal); dogs %d; night %s; next loop %s; starts on its own %s after %lu s (%s; idle now %lu s)",
+                  "(5 = no signal); dogs %d; night %s (night gain %.1f); next loop %s; starts on its own %s after %lu s (%s; idle now %lu s)",
                   state, (double)in.mood, g_mood_override >= 0.f ? "set by hand" : "the clock",
-                  in.weather_code, in.have_outside ? " from the outside reading" : " (no reading: its own pick)",
+                  in.weather_code,
+                  g_weather_set >= 0 ? " set by hand" : (in.have_outside ? " from the outside reading" : " (no reading: its own pick)"),
                   (double)in.weather.overcast, (double)in.weather.fog, in.other_status, in.dog_out,
-                  in.night_mode ? "yes" : "no", kScene[g_scene], g_auto ? "on" : "off", (unsigned long)(screensaver_idle()),
+                  in.night_mode ? "yes" : "no", (double)(g_night_gain > 0.f ? g_night_gain : 0.55f), kScene[g_scene],
+                  g_auto ? "on" : "off", (unsigned long)(screensaver_idle()),
                   g_idle_set_ms ? "set by hand until restart" : "Settings > SCREENSAVER",
                   (unsigned long)(g_idle_now / 1000));
 }

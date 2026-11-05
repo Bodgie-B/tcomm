@@ -542,10 +542,15 @@ static void command(char *s) {
     Serial.println("gear (as a tap on the gear: Settings rolls down or up) | knock (the other floor rings, as if by radio)");
     Serial.println("update (restart into the Wi-Fi updater, as Settings > Update over Wi-Fi does)");
     Serial.println("timesync (ask the internet for the time now; the result shows in log and radio)");
+    Serial.println("phase N (the sky as if it were 0 night, 1 dawn, 2 morning, 3 midday, 4 golden hour, 5 dusk: the palette, "
+                   "the backlight and the screensaver follow; 6 = the clock again)");
     Serial.println("screensaver (on by itself after 10 min without a touch): ss (on or off now, no reveal) | ss seed N | "
                    "ss touch X Y (as a touch there: the reveal) | ss scene F (0 any, 1 evening, 2 morning, 3 midday, 4 lookout)");
-    Serial.println("  ss mood N (0 night .. 5 dusk; -1 the clock's) | ss bell (the hiker's reaction only; knock rings for real) | "
+    Serial.println("  ss mood N (0 night .. 5 dusk, or hundredths: 304 = 3.04; -1 the clock's) | ss bell (the hiker's reaction only; knock rings for real) | "
                    "ss auto 0/1 | ss idle N (seconds until restart; 0 = the Settings value) | ss inputs | ss stats | ss log (stats every 5 s)");
+    Serial.println("  ss weather N (0 clear, 1 rain, 2 snow, 3 wind, 4 heat, 5 fog, 6 chill, 7 storm; -1 the outside reading; "
+                   "from the next loop: ss seed N) | ss nightgain N (the night scene's brightness in tenths, 16 = 1.6; "
+                   "0 = the PC look; until restart)");
     return;
   }
   if (!strcmp(s, "bench")) {
@@ -618,7 +623,17 @@ static void command(char *s) {
   else if (!strcmp(s, "update")) board::restart_into_updater();
   else if (!strcmp(s, "timesync")) Serial.println(board::time_sync_start() ? "time: asking" : "time: can't ask now");
   else if (!strcmp(s, "knock")) knock_from_other_floor();
-  else if (!strcmp(s, "ss")) {
+  else if (cmd_int(s, "phase", v) && v >= 0 && v <= 6) {
+    g_ctrl.force_phase(v);   // the controller's test hook: 6 (or anything past 5) follows the clock
+    static const char *const kPhase[7] = {"night", "dawn", "morning", "midday", "golden hour", "dusk", "the clock's"};
+    Serial.printf("sky: %s\n", kPhase[v]);
+  } else if (cmd_int(s, "ss nightgain", v)) {
+    ui::screensaver_set_night_gain((float)v / 10.f);
+    Serial.printf("screensaver: night gain %.1f\n", (double)ui::screensaver_night_gain());
+  } else if (cmd_int(s, "ss weather", v)) {
+    ui::screensaver_set_weather(v);
+    Serial.printf("screensaver: weather %d%s (from the next loop)\n", v < 0 || v > 7 ? -1 : v, v < 0 || v > 7 ? ", the outside reading's" : "");
+  } else if (!strcmp(s, "ss")) {
     if (ui::screensaver_running()) {
       ui::screensaver_stop();
       Serial.println("screensaver: stopped");
@@ -632,7 +647,7 @@ static void command(char *s) {
     ui::screensaver_set_scene(v);
     Serial.printf("screensaver: scene %d from the next start\n", v);
   } else if (!strcmp(s, "ss bell")) ui::screensaver_doorbell();
-  else if (cmd_int(s, "ss mood", v)) ui::screensaver_set_mood((float)v);
+  else if (cmd_int(s, "ss mood", v)) ui::screensaver_set_mood(v >= 100 ? (float)v / 100.f : (float)v);   // 304: 3.04
   else if (cmd_touch(s, v, t[0])) ui::screensaver_touch(v, t[0]);
   else if (cmd_int(s, "ss auto", v)) {
     ui::screensaver_set_auto(v != 0);

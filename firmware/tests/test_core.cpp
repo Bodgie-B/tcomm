@@ -838,9 +838,47 @@ static void test_mail() {
   ss.screen_off_overnight = true;
   BacklightInputs bi;
   bi.mode = Mode::Night;
+  bi.minute_of_day = 23 * 60;
   CHECK(backlight_for(ss, bi) == kBacklightOff);
   bi.mail_wake = true;
   CHECK(backlight_for(ss, bi) == night_backlight(ss.night_level));
+
+  // MIKE (2026-11-05): off overnight means dim at night until 10 PM, dark 10 PM to 6 AM by the clock.
+  {
+    BacklightInputs n;
+    n.mode = Mode::Night;
+    const uint8_t dim = night_backlight(ss.night_level);
+    n.minute_of_day = 21 * 60 + 30;
+    CHECK(backlight_for(ss, n) == dim);           // 9:30 PM: dim
+    n.minute_of_day = 22 * 60;
+    CHECK(backlight_for(ss, n) == kBacklightOff);  // 10 PM: dark
+    n.minute_of_day = 3 * 60;
+    CHECK(backlight_for(ss, n) == kBacklightOff);  // 3 AM
+    n.minute_of_day = 5 * 60 + 59;
+    CHECK(backlight_for(ss, n) == kBacklightOff);  // 5:59 AM
+    n.minute_of_day = 6 * 60;
+    CHECK(backlight_for(ss, n) == dim);           // 6 AM, still night: dim again
+    n.mode = Mode::Evening;                       // summer: dawn before 6 AM, still dark by the clock
+    n.minute_of_day = 5 * 60 + 30;
+    CHECK(backlight_for(ss, n) == kBacklightOff);
+    n.mode = Mode::Night;
+    n.minute_of_day = 23 * 60;
+    n.touched_recently = true;                    // a touch: full light, as always
+    CHECK(backlight_for(ss, n) == ss.backlight_day);
+    n.touched_recently = false;
+    n.doorbell_wake = true;                       // a knock wakes it at the night level
+    CHECK(backlight_for(ss, n) == dim);
+    n.doorbell_wake = false;
+    n.minute_of_day = -1;                         // no clock: dim, never dark
+    n.clock_unknown = true;
+    CHECK(backlight_for(ss, n) == dim);
+    Settings on = ss;
+    on.screen_off_overnight = false;              // the option off: dim all night
+    BacklightInputs m;
+    m.mode = Mode::Night;
+    m.minute_of_day = 23 * 60;
+    CHECK(backlight_for(on, m) == dim);
+  }
 
   // Marked while downstairs can't hear: it gets there once the panels hear each other again.
   p.cut = true;

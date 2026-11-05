@@ -54,6 +54,17 @@ struct Renderer {
   // Strips that copy in full width whenever they're dirty this frame (fullWidthRows): a layer that
   // reads its neighbours' pixels, like the heat shimmer shifting rows sideways, needs the whole row.
   uint16_t full_mask;
+  // A small palette change spread over frames (setPalette with spread, when spread_per_frame > 0):
+  // the cache is repainted in the new colours spread_per_frame bands (strips) a frame, top to bottom,
+  // each band's strip composited as it's done, instead of the whole cache in one frame (on the panel
+  // the whole cache is about 110 ms). Until it finishes the frame is a mix of the two palettes, a
+  // fraction of a mood step apart. 0 (the default, and the PC tests): all at once, so a frame always
+  // equals a full redraw.
+  uint8_t spread_per_frame;
+  bool spread_next;             // the next cache rebuild spreads instead of marking every strip
+  uint16_t spread_mask;         // strips still showing the previous palette
+  uint8_t spread_pos;           // the band the spread goes on from: round the frame, so a new step mid-spread
+                                // still reaches every band within SS_STRIP_COUNT / spread_per_frame frames
   uint32_t (*clock_us)();       // the host's microsecond clock for the profile, or nullptr
   RenderProfile prof;
   bool cache_valid;
@@ -65,13 +76,16 @@ struct Renderer {
   void shutdown(const HostAlloc& alloc);
 
   // New palette: the cache is rebuilt on the next frame and every strip is
-  // marked dirty.
-  void setPalette(const Palette& p);
+  // marked dirty. spread: a small change the eye won't follow strip by strip
+  // (a mood or weather-tint step): spread it as above if spread_per_frame > 0.
+  void setPalette(const Palette& p, bool spread = false);
 
   // Same palette, different static content (build-up phase boundary): rebuild
   // the cache on the next frame and mark every strip dirty.
   void invalidateCache() {
     cache_valid = false;
+    spread_next = false;
+    spread_mask = 0;
     markAllDirty();
   }
 

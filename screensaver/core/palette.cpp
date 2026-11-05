@@ -301,8 +301,9 @@ void computePalette(float mood, const WeatherTint& w, float flash, Palette& out)
   // still read when everything around them is dimmed.
   const float nd = clamp01(w.night_dim);
   if (nd > 0.f) {
-    const float sAll = lerp(1.f, 0.55f, nd);
-    const float sLight = lerp(1.f, 0.85f, nd);
+    const float g = w.night_gain > 0.f ? w.night_gain : 0.55f;
+    const float sAll = lerp(1.f, g, nd);
+    const float sLight = lerp(1.f, g > 0.85f ? g : 0.85f, nd);   // the lights never dimmer than the rest
     const float capAll = 255.f * lerp(1.f, NIGHT_LUM_MAX, nd);
     const float capHi = 255.f * lerp(1.f, NIGHT_HIGHLIGHT_MAX, nd);
     for (int s = 0; s < SLOT_COUNT; ++s) {

@@ -1086,6 +1086,7 @@ void Controller::build_view() {
   bi.mode = v.mode;
   bi.touched_recently = touched_;  // cleared in tick once touch_wake_ms has passed
   bi.clock_unknown = !w.valid && forced_phase_ > 5;
+  bi.minute_of_day = w.valid ? minutes_of_day((int64_t)w.utc + p_.utc_offset(w.utc)) : -1;  // the dark hours go by the clock
   bi.doorbell_wake = v.banner.kind != BannerKind::None;
   bi.mail_wake = mail_wake_;
   bi.clean_screen = clean_screen_;
