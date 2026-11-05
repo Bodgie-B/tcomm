@@ -64,6 +64,13 @@ void screensaver_set_weather(int code);
 // The night scene's brightness (palette.h WeatherTint::night_gain): 1.6 to begin with; 0 is the PC
 // preview's look (0.55), which on the panel's night backlight leaves only the stream readable.
 void screensaver_set_night_gain(float gain);
+// The Lookout (stage 10): 0 plays it in the window round the real sunset, once an evening (the
+// default); 1 on now, every loop; 2 off. Until restart.
+void screensaver_set_lookout(int mode);
+// How fast a medium palette step (the Lookout's sunset) washes down the screen: bands a frame; 0, at
+// once, is the default (Mike's choice). Until restart.
+void screensaver_set_spread_medium(int bands);
+int screensaver_spread_medium();
 float screensaver_night_gain();
 
 // One line each, for serial: frame stats since the last call; the inputs in use. Starts, stops and

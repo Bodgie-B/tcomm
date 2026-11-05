@@ -29,4 +29,13 @@ struct Sky {
 //   golden sunset-120 .. sunset-10      dusk   sunset-10 .. sunset+60
 Sky sky_at(int64_t utc, int32_t utc_offset_s, float lat, float lon);
 
+// The screensaver's Lookout plays only around the real sunset (screensaver brief section 7):
+// PROPOSED window from 30 minutes before today's sunset to 15 minutes after. False with no real
+// sunset (polar day or night: the 6 PM fallback is not a sunset).
+constexpr int kLookoutBeforeMin = 30;
+constexpr int kLookoutAfterMin = 15;
+bool in_lookout_window(int64_t utc, int32_t utc_offset_s, float lat, float lon);
+// Today's sunset in UTC seconds, or 0 when there is none.
+int64_t sunset_today(int64_t utc, int32_t utc_offset_s, float lat, float lon);
+
 }  // namespace tc

@@ -550,7 +550,8 @@ static void command(char *s) {
                    "ss auto 0/1 | ss idle N (seconds until restart; 0 = the Settings value) | ss inputs | ss stats | ss log (stats every 5 s)");
     Serial.println("  ss weather N (0 clear, 1 rain, 2 snow, 3 wind, 4 heat, 5 fog, 6 chill, 7 storm; -1 the outside reading; "
                    "from the next loop: ss seed N) | ss nightgain N (the night scene's brightness in tenths, 16 = 1.6; "
-                   "0 = the PC look; until restart)");
+                   "0 = the PC look; until restart) | ss lookout N (0 round the real sunset, 1 on, 2 off) | "
+                   "ss spread N (bands a frame for a medium palette step; 0 = at once, the default)");
     return;
   }
   if (!strcmp(s, "bench")) {
@@ -627,6 +628,13 @@ static void command(char *s) {
     g_ctrl.force_phase(v);   // the controller's test hook: 6 (or anything past 5) follows the clock
     static const char *const kPhase[7] = {"night", "dawn", "morning", "midday", "golden hour", "dusk", "the clock's"};
     Serial.printf("sky: %s\n", kPhase[v]);
+  } else if (cmd_int(s, "ss spread", v)) {
+    ui::screensaver_set_spread_medium(v);
+    Serial.printf("screensaver: a medium palette step washes down %d bands a frame\n", ui::screensaver_spread_medium());
+  } else if (cmd_int(s, "ss lookout", v)) {
+    ui::screensaver_set_lookout(v);
+    static const char *const kLook[3] = {"round the real sunset, once an evening", "on (every loop)", "off"};
+    Serial.printf("screensaver: the Lookout %s\n", kLook[v == 1 || v == 2 ? v : 0]);
   } else if (cmd_int(s, "ss nightgain", v)) {
     ui::screensaver_set_night_gain((float)v / 10.f);
     Serial.printf("screensaver: night gain %.1f\n", (double)ui::screensaver_night_gain());

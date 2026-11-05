@@ -29,10 +29,13 @@ void Renderer::shutdown(const HostAlloc& alloc) {
   dirty_mask = 0;
 }
 
-void Renderer::setPalette(const Palette& p, bool spread) {
+void Renderer::setPalette(const Palette& p, int spread_bands) {
   palette = p;
-  if (spread && spread_per_frame > 0 && cache_valid) {
-    // The strips keep the old colours until the cache rebuild hands them to the spread.
+  if (spread_bands > 0 && cache_valid) {
+    // The strips keep the old colours until the cache rebuild hands them to the spread. A step
+    // during a spread goes on at the faster of the two speeds.
+    const uint8_t bands = (uint8_t)(spread_bands > SS_STRIP_COUNT ? SS_STRIP_COUNT : spread_bands);
+    spread_per_frame = spread_mask && spread_per_frame > bands ? spread_per_frame : bands;
     cache_valid = false;
     spread_next = true;
     return;

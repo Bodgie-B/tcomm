@@ -369,9 +369,19 @@ static void test_sky() {
   CHECK(sky_at(day + 21 * 3600, -4 * 3600, 38.9f, -77.0f).phase == Phase::Night);
   Sky noon = sky_at(day + 12 * 3600 + 45 * 60, -4 * 3600, 38.9f, -77.0f);
   CHECK(noon.p > 0.4f && noon.p < 0.6f && !noon.moon);
+  // The screensaver's Lookout window: 30 minutes before that sunset to 15 minutes after.
+  CHECK(sunset_today(day + 12 * 3600, -4 * 3600, 38.9f, -77.0f) == t.set);
+  CHECK(!in_lookout_window(t.set - 31 * 60, -4 * 3600, 38.9f, -77.0f));
+  CHECK(in_lookout_window(t.set - 30 * 60, -4 * 3600, 38.9f, -77.0f));
+  CHECK(in_lookout_window(t.set, -4 * 3600, 38.9f, -77.0f));
+  CHECK(in_lookout_window(t.set + 14 * 60 + 59, -4 * 3600, 38.9f, -77.0f));
+  CHECK(!in_lookout_window(t.set + 15 * 60, -4 * 3600, 38.9f, -77.0f));
+  CHECK(!in_lookout_window(day + 12 * 3600, -4 * 3600, 38.9f, -77.0f));
+  CHECK(!in_lookout_window(day + 3 * 3600, -4 * 3600, 38.9f, -77.0f));
   // Far north in midsummer: no sunset. Falls back instead of failing.
   CHECK(!sun_times(2026, 6, 21, 0, 78.0f, 15.0f).ok);
   CHECK(sky_at(seconds_from_civil(2026, 6, 21, 12, 0, 0), 0, 78.0f, 15.0f).phase != Phase::Night);
+  CHECK(!in_lookout_window(seconds_from_civil(2026, 6, 21, 18, 0, 0), 0, 78.0f, 15.0f));  // no sunset, no Lookout
 }
 
 static void write_wav(const std::string &path, const int16_t *s, size_t n) {

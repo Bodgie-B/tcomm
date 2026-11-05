@@ -34,7 +34,8 @@ static const HostAlloc kAlloc = {hostAlloc, hostFree, nullptr};
 static Pixel g_fa[SS_WIDTH * SS_HEIGHT], g_fb[SS_WIDTH * SS_HEIGHT];
 
 // One run: returns the number of spread steps seen.
-static int run(uint64_t seed, int family, float mood0, int every, int ticks, int per_frame) {
+static int run(uint64_t seed, int family, float mood0, int every, int ticks, int per_frame, float step = 0.04f,
+               int medium = 0) {
   Inputs in;
   memset(&in, 0, sizeof in);
   in.mood = mood0;
@@ -46,12 +47,12 @@ static int run(uint64_t seed, int family, float mood0, int every, int ticks, int
   App* b = appStart(mb, kAlloc, seed, in);
   CHECK(a && b, "appStart");
   if (!a || !b) return 0;
-  appSetPaletteSpread(a, per_frame);
+  appSetPaletteSpread(a, per_frame, medium);
   Surface sa{g_fa, SS_WIDTH, SS_HEIGHT, SS_WIDTH, 0}, sb{g_fb, SS_WIDTH, SS_HEIGHT, SS_WIDTH, 0};
   int prev = appPaletteRebuilds(a), spreads = 0, last_spread = -1, longest = 0, mismatches = 0, whole = 0;
   for (int t = 0; t < ticks; ++t) {
     if (t > 0 && t % every == 0) {
-      in.mood += 0.04f;
+      in.mood += step;
       if (in.mood >= 6.f) in.mood -= 6.f;
       appSetInputs(a, in);
       appSetInputs(b, in);
@@ -82,7 +83,8 @@ static int run(uint64_t seed, int family, float mood0, int every, int ticks, int
   CHECK(mismatches == 0, "seed %llu family %d: %d settled frames differ", (unsigned long long)seed, family, mismatches);
   // SS_STRIP_COUNT bands at per_frame a frame: settled that many frames after the latest step, even
   // when steps come faster than that (the morning fog lifting).
-  const int frames = (SS_STRIP_COUNT + per_frame - 1) / per_frame;
+  const int speed = step > 0.15f ? medium : per_frame;   // a medium step (the Lookout's) at its own speed
+  const int frames = (SS_STRIP_COUNT + speed - 1) / speed;
   CHECK(longest < frames, "seed %llu family %d: still spreading %d frames after the latest step (%d a frame)", (unsigned long long)seed, family, longest, per_frame);
   CHECK(whole * 4 <= spreads, "seed %llu family %d: %d of %d spread steps redrew every strip at once", (unsigned long long)seed, family, whole, spreads);
   appStop(a, kAlloc);
@@ -98,6 +100,8 @@ int main() {
   spreads += run(3, 1, 1.2f, 150, 6000, 1);    // morning: its fog lifting steps the palette too (the panel's 1 a frame)
   spreads += run(64, 2, 2.6f, 120, 6000, 1);   // midday
   spreads += run(5, 0, 5.6f, 150, 6000, 2);    // evening across dusk into night
+  spreads += run(16, 3, 4.0f, 200, 6000, 1, 0.2f, 3);   // medium steps, as the Lookout's sunset (the panel's 3 a frame)
+  spreads += run(62, 0, 4.0f, 250, 6000, 1, 0.24f, 5);  // and at 5 a frame
   CHECK(spreads >= 100, "only %d spread steps across the runs", spreads);
   // Off (the default): a palette step redraws every strip, as before.
   {

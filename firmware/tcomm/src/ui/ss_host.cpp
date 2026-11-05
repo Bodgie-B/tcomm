@@ -95,7 +95,17 @@ int g_weather_set = -1;             // ss weather N: a scene weather by hand (te
 // stream readable on the panel at its night backlight (Mike, 2026-11-05); 1.6 brings the scene to
 // about the panel's own night tiles. ss nightgain N changes it until restart, in tenths.
 float g_night_gain = 1.6f;
+// Stage 10: the Lookout around the real sunset, once an evening (sky.h in_lookout_window).
+int g_lookout_set = 0;              // ss lookout N: 0 the clock's window, 1 on now, 2 off
+bool g_lookout_now = false;         // what the next loop reads (Inputs::lookout_window)
+int32_t g_today = -1;               // the local day number, for once an evening
+int32_t g_lookout_day = -1;         // the day a Lookout last began
+int g_sunset_min = -1;              // today's sunset in local minutes, for ss inputs
 constexpr int kPaletteSpread = 1;   // background bands a frame for a small palette step (appSetPaletteSpread): ~16 ms more a frame for 15 frames, not one 110 ms stall
+// And for a medium one, the Lookout's sunset steps: at once (0), as the brief has them. Mike watched
+// them wash down at 1, 3 and 5 bands a frame and chose instant (2026-11-05), the brief pause and all.
+// ss spread N changes it until restart.
+int g_spread_medium = 0;
 int g_pal_seen = 0;                 // appPaletteRebuilds when last looked (it restarts at 0 each loop)
 float g_mood = 3.f;
 bool g_mood_known = false;
@@ -165,9 +175,8 @@ float phaseMood(const tc::View &v, const tc::Settings &s, const tc::WallTime &w,
   return m;
 }
 
-// Everything the scene takes from the panel (ss_app.h Inputs). Stage 9 (night) and 10 (the Lookout
-// at the real sunset) fill night_dim and lookout_window; until then the core's own night rule
-// follows night_mode and the Lookout comes up only when the loop picks it.
+// Everything the scene takes from the panel (ss_app.h Inputs). night_dim stays 0: the core's night
+// rule follows night_mode, with the panel's night gain; lookout_window comes from screensaver_service.
 ss::Inputs buildInputs(const tc::View &v) {
   ss::Inputs in;
   memset(&in, 0, sizeof in);   // ss_app.h: zero all of it first
@@ -199,7 +208,7 @@ ss::Inputs buildInputs(const tc::View &v) {
   in.dog_out = (int)v.dog.out;
   in.chip = true;
   in.night_mode = v.mode == tc::Mode::Night;
-  in.lookout_window = false;
+  in.lookout_window = g_lookout_now;
   in.spine_force = g_scene;
   return in;
 }
@@ -449,6 +458,20 @@ void beginReveal() {
   revealFrame();
 }
 
+// A loop began: a Lookout counts as this evening's (one an evening; screensaver_service). One forced
+// for testing (ss lookout 1, ss scene 4) doesn't use up the real one.
+void noteLoop() {
+  if (!g_app || ss::appSpineFamily(g_app) != 3) return;   // scene/spine.h SF_LOOKOUT
+  if (g_lookout_set != 0 || g_scene == 4) return;
+  if (g_lookout_day != g_today) {
+    if (g_sunset_min >= 0)
+      board::elog("screensaver: the Lookout, sunset at %d:%02d", g_sunset_min / 60, g_sunset_min % 60);
+    else
+      board::elog("screensaver: the Lookout");
+  }
+  g_lookout_day = g_today;
+}
+
 void frame(lv_timer_t *) {
   if (!g_app) return;
   if (g_rv.on) {
@@ -470,7 +493,7 @@ void frame(lv_timer_t *) {
   if (g_backlog_us < kTickUs) return;
   int n = 0;
   while (g_backlog_us >= kTickUs && n < kMaxCatchUp) {   // the simulation never skips a tick; drawing may
-    ss::appTick(g_app);
+    if (ss::appTick(g_app)) noteLoop();
     g_backlog_us -= kTickUs;
     ++n;
   }
@@ -542,7 +565,8 @@ bool screensaver_start(uint32_t seed) {
   }
   if (!g_copy) board::elog("screensaver: no room for the main screen's copy; a touch draws it first");
   ss::appSetClock(g_app, clockUs);
-  ss::appSetPaletteSpread(g_app, kPaletteSpread);   // the clock's mood steps and tints without a full-frame stall
+  ss::appSetPaletteSpread(g_app, kPaletteSpread, g_spread_medium);   // palette steps without a full-frame stall
+  noteLoop();                                       // the first loop may be the Lookout
   g_pal_seen = ss::appPaletteRebuilds(g_app);
   ss::appInvalidate(g_app);
   g_seed = seed;
@@ -593,6 +617,17 @@ void screensaver_service(const tc::View &v, const tc::Settings &s, const tc::Wal
   }
   if (!g_in_ready || now - g_inputs_at >= kInputsMs) {
     g_inputs_at = now;
+    // Stage 10, the Lookout: in the window round today's real sunset (sky.h), until one has begun
+    // this evening. The scene reads it when a loop begins.
+    if (w.valid) {
+      g_today = (int32_t)(((int64_t)w.utc + utc_offset) / 86400);
+      const int64_t set = tc::sunset_today(w.utc, utc_offset, s.latitude, s.longitude);
+      g_sunset_min = set ? (int)(((set + utc_offset) % 86400) / 60) : -1;
+    } else {
+      g_today = g_sunset_min = -1;
+    }
+    const bool window = w.valid && tc::in_lookout_window(w.utc, utc_offset, s.latitude, s.longitude);
+    g_lookout_now = g_lookout_set == 1 || (g_lookout_set == 0 && window && g_lookout_day != g_today);
     const ss::Inputs in = buildInputs(v);
     if (!g_in_ready || memcmp(&in, &g_in, sizeof in) != 0) {
       g_in = in;
@@ -634,6 +669,17 @@ void screensaver_set_mood(float mood) {
 
 void screensaver_set_scene(int family) {
   g_scene = (uint8_t)(family < 0 || family > 4 ? 0 : family);
+  refreshInputsSoon();
+}
+
+void screensaver_set_spread_medium(int bands) {
+  g_spread_medium = bands < 0 ? 0 : (bands > SS_STRIP_COUNT ? SS_STRIP_COUNT : bands);
+  if (g_app) ss::appSetPaletteSpread(g_app, kPaletteSpread, g_spread_medium);
+}
+int screensaver_spread_medium() { return g_spread_medium; }
+
+void screensaver_set_lookout(int mode) {
+  g_lookout_set = mode == 1 || mode == 2 ? mode : 0;
   refreshInputsSoon();
 }
 
@@ -687,14 +733,23 @@ int screensaver_inputs(char *buf, size_t n) {
   char state[32];
   if (g_app) snprintf(state, sizeof state, "running, seed %lu", (unsigned long)g_seed);
   else snprintf(state, sizeof state, "stopped");
+  char look[96];
+  if (g_lookout_set) {
+    snprintf(look, sizeof look, "%s (set by hand)", g_lookout_set == 1 ? "on" : "off");
+  } else {
+    char set[16] = "none";
+    if (g_sunset_min >= 0) snprintf(set, sizeof set, "%d:%02d", g_sunset_min / 60, g_sunset_min % 60);
+    snprintf(look, sizeof look, "%s (sunset %s; window %d min before to %d after; %s tonight)", in.lookout_window ? "on" : "off",
+             set, tc::kLookoutBeforeMin, tc::kLookoutAfterMin, g_lookout_day == g_today && g_today >= 0 ? "played" : "not played");
+  }
   return snprintf(buf, n,
                   "screensaver inputs: %s; mood %.2f (%s); scene weather %d%s, overcast %.2f, fog %.2f; other floor %d "
-                  "(5 = no signal); dogs %d; night %s (night gain %.1f); next loop %s; starts on its own %s after %lu s (%s; idle now %lu s)",
+                  "(5 = no signal); dogs %d; night %s (night gain %.1f); lookout %s; next loop %s; starts on its own %s after %lu s (%s; idle now %lu s)",
                   state, (double)in.mood, g_mood_override >= 0.f ? "set by hand" : "the clock",
                   in.weather_code,
                   g_weather_set >= 0 ? " set by hand" : (in.have_outside ? " from the outside reading" : " (no reading: its own pick)"),
                   (double)in.weather.overcast, (double)in.weather.fog, in.other_status, in.dog_out,
-                  in.night_mode ? "yes" : "no", (double)(g_night_gain > 0.f ? g_night_gain : 0.55f), kScene[g_scene],
+                  in.night_mode ? "yes" : "no", (double)(g_night_gain > 0.f ? g_night_gain : 0.55f), look, kScene[g_scene],
                   g_auto ? "on" : "off", (unsigned long)(screensaver_idle()),
                   g_idle_set_ms ? "set by hand until restart" : "Settings > SCREENSAVER",
                   (unsigned long)(g_idle_now / 1000));

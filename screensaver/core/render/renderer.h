@@ -54,12 +54,12 @@ struct Renderer {
   // Strips that copy in full width whenever they're dirty this frame (fullWidthRows): a layer that
   // reads its neighbours' pixels, like the heat shimmer shifting rows sideways, needs the whole row.
   uint16_t full_mask;
-  // A small palette change spread over frames (setPalette with spread, when spread_per_frame > 0):
-  // the cache is repainted in the new colours spread_per_frame bands (strips) a frame, top to bottom,
-  // each band's strip composited as it's done, instead of the whole cache in one frame (on the panel
-  // the whole cache is about 110 ms). Until it finishes the frame is a mix of the two palettes, a
-  // fraction of a mood step apart. 0 (the default, and the PC tests): all at once, so a frame always
-  // equals a full redraw.
+  // A palette step spread over frames (setPalette with spread_bands > 0): the cache is repainted in
+  // the new colours spread_per_frame bands (strips) a frame, each band's strip composited as it's
+  // done, instead of the whole cache in one frame (on the panel the whole cache is about 110 ms).
+  // Until it finishes the frame is a mix of the two palettes, a fraction of a mood step apart.
+  // spread_per_frame is the spread in progress's speed (the faster of its steps'). With no spread
+  // asked for (the default, and the PC tests) everything is at once: a frame equals a full redraw.
   uint8_t spread_per_frame;
   bool spread_next;             // the next cache rebuild spreads instead of marking every strip
   uint16_t spread_mask;         // strips still showing the previous palette
@@ -76,9 +76,9 @@ struct Renderer {
   void shutdown(const HostAlloc& alloc);
 
   // New palette: the cache is rebuilt on the next frame and every strip is
-  // marked dirty. spread: a small change the eye won't follow strip by strip
-  // (a mood or weather-tint step): spread it as above if spread_per_frame > 0.
-  void setPalette(const Palette& p, bool spread = false);
+  // marked dirty. spread_bands > 0: a step the eye won't follow band by band (a
+  // mood or weather-tint step): spread it as above, that many bands a frame.
+  void setPalette(const Palette& p, int spread_bands = 0);
 
   // Same palette, different static content (build-up phase boundary): rebuild
   // the cache on the next frame and mark every strip dirty.

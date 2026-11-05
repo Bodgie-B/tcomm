@@ -38,6 +38,8 @@ struct App {
 
   uint32_t events_seen;   // drained events; ignored until later stages
   uint16_t pal_rebuilds;  // computeAppPalette calls this loop (appPaletteRebuilds)
+  uint8_t spread_small;   // bands a frame for a small palette step, and a medium one (appSetPaletteSpread; 0 at once)
+  uint8_t spread_medium;
 
   // SS_FAST_BYTES: the strip buffer, then the rasterizer's scratch. Lent by the
   // host (HostAlloc::fast) or, when it lends none, taken from alloc_large.
@@ -56,10 +58,14 @@ namespace {
 
 constexpr float kMoodEps = 1.0f / 48.0f;
 constexpr float kWeatherEps = 0.02f;
-// Steps this small may be spread (computeAppPalette): the panel's clock moves the mood 1/25 of a
-// step a minute through a sky change; a forced phase or a new reading is a jump, shown at once.
+// Steps this small may be spread (computeAppPalette, at the host's speeds, appSetPaletteSpread):
+// small, the panel's clock moving the mood 1/25 of a step a minute through a sky change; medium,
+// the Lookout's sunset (4.0 to 5.9 in 8 to 10 steps). A forced phase or a new reading is a jump,
+// shown at once.
 constexpr float kSpreadMood = 0.15f;
 constexpr float kSpreadTint = 0.12f;
+constexpr float kSpreadMoodMedium = 0.35f;
+constexpr float kSpreadTintMedium = 0.25f;
 
 void drawStatic(void* user, Surface& frame, const Palette& pal) {
   const App* a = static_cast<const App*>(user);
@@ -99,10 +105,10 @@ float sceneMood(const App* a) { return a->world.mood_override >= 0.f ? a->world.
 // `force`: the loop's geometry changed (loop start), so the cache is rebuilt
 // even when the palette came out the same; otherwise a palette byte for byte
 // the one in use costs nothing (an input step that lands on the same 565
-// colours). `spread`: a small step (mood or weather tint) the renderer may
-// show a few strips a frame (Renderer::spread_per_frame; off unless the host
+// colours). `spread_bands`: a step (mood or weather tint) the renderer may
+// show that many bands a frame (Renderer::spread_per_frame; 0 unless the host
 // turns it on with appSetPaletteSpread).
-void computeAppPalette(App* a, bool force, bool spread = false) {
+void computeAppPalette(App* a, bool force, int spread_bands = 0) {
   float flash = 0.f;
   WeatherTint w = sceneWeather(a, &flash);
   a->pal_weather = w;
@@ -116,7 +122,7 @@ void computeAppPalette(App* a, bool force, bool spread = false) {
   a->pal_night = a->in.night_mode;
   if (!force && memcmp(&p, &a->pal, sizeof p) == 0) return;
   a->pal = p;
-  a->renderer.setPalette(a->pal, spread && !force);   // a cache rebuild; every strip now, or spread
+  a->renderer.setPalette(a->pal, force ? 0 : spread_bands);   // a cache rebuild; every strip now, or spread
   if (a->pal_rebuilds < 0xFFFF) ++a->pal_rebuilds;
 }
 
@@ -204,15 +210,18 @@ bool appTick(App* a) {
       w.night_gain != a->pal_weather.night_gain ||   // the host's setting: rare, every change counts
       flash != a->pal_flash ||   // the flash moves in a few fixed steps: every step counts
       a->in.night_mode != a->pal_night) {
-    // A small step may be spread over a few frames; lightning, the night rule switching on or off
-    // and a new night gain change the whole frame at once.
-    const bool small = flash == a->pal_flash && a->in.night_mode == a->pal_night &&
-                       w.night_gain == a->pal_weather.night_gain &&
-                       moodDistance(sceneMood(a), a->pal_mood) <= kSpreadMood &&
-                       fabsf(w.overcast - a->pal_weather.overcast) <= kSpreadTint &&
-                       fabsf(w.fog - a->pal_weather.fog) <= kSpreadTint &&
-                       fabsf(w.night_dim - a->pal_weather.night_dim) <= kSpreadTint;
-    computeAppPalette(a, false, small);
+    // A small or medium step may be spread over a few frames; lightning, the night rule switching
+    // on or off and a new night gain change the whole frame at once.
+    int bands = 0;
+    if (flash == a->pal_flash && a->in.night_mode == a->pal_night && w.night_gain == a->pal_weather.night_gain) {
+      const float dm = moodDistance(sceneMood(a), a->pal_mood);
+      float dt = fabsf(w.overcast - a->pal_weather.overcast);
+      if (fabsf(w.fog - a->pal_weather.fog) > dt) dt = fabsf(w.fog - a->pal_weather.fog);
+      if (fabsf(w.night_dim - a->pal_weather.night_dim) > dt) dt = fabsf(w.night_dim - a->pal_weather.night_dim);
+      if (dm <= kSpreadMood && dt <= kSpreadTint) bands = a->spread_small;
+      else if (dm <= kSpreadMoodMedium && dt <= kSpreadTintMedium) bands = a->spread_medium;
+    }
+    computeAppPalette(a, false, bands);
   }
 
   // The doorbell reaction holds the story still (react.h): no beat or minor
@@ -261,8 +270,10 @@ void appSetClock(App* app, uint32_t (*us)()) { app->renderer.clock_us = us; }
 
 bool appPaletteSettled(const App* app) { return !app->renderer.spread_next && app->renderer.spread_mask == 0; }
 
-void appSetPaletteSpread(App* app, int strips_per_frame) {
-  app->renderer.spread_per_frame = (uint8_t)(strips_per_frame < 0 ? 0 : (strips_per_frame > SS_STRIP_COUNT ? SS_STRIP_COUNT : strips_per_frame));
+void appSetPaletteSpread(App* app, int small_per_frame, int medium_per_frame) {
+  auto clampBands = [](int n) { return (uint8_t)(n < 0 ? 0 : (n > SS_STRIP_COUNT ? SS_STRIP_COUNT : n)); };
+  app->spread_small = clampBands(small_per_frame);
+  app->spread_medium = clampBands(medium_per_frame);
 }
 
 RenderProfile appProfile(App* app) {

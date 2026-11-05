@@ -80,4 +80,15 @@ Sky sky_at(int64_t utc, int32_t off, float lat, float lon) {
   return s;
 }
 
+int64_t sunset_today(int64_t utc, int32_t off, float lat, float lon) {
+  Civil c = civil_from_seconds(utc + off);
+  SunTimes t = sun_times(c.year, c.month, c.day, off, lat, lon);
+  return t.ok ? t.set : 0;
+}
+
+bool in_lookout_window(int64_t utc, int32_t off, float lat, float lon) {
+  const int64_t set = sunset_today(utc, off, lat, lon);
+  return set != 0 && utc >= set - kLookoutBeforeMin * 60 && utc < set + kLookoutAfterMin * 60;
+}
+
 }  // namespace tc
