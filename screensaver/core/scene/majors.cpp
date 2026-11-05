@@ -22,6 +22,13 @@
 #include "../render/renderer.h"
 #include "../ss_app.h"
 #include "director.h"
+#include "day_archery.h"
+#include "day_bike.h"
+#include "day_boomerang.h"
+#include "day_kite.h"
+#include "day_ropes.h"
+#include "day_slackline.h"
+#include "fetch.h"
 #include "landscape.h"
 #include "memory.h"
 #include "script.h"
@@ -139,6 +146,7 @@ float shapeReach(uint8_t sh) {
     case SH_DEADFISH: return 11.f;
     case SH_PERCH: return 8.f;
     case SH_CHIP: return 7.f;
+    case SH_STICK: return fetchStickReach();
     default: return 12.f;
   }
 }
@@ -385,6 +393,7 @@ void drawShape(const Glyph& g, Surface& s, const Rect& clip, const Palette& pal)
       capX(s, X, -3.4f, -3.6f, -2.6f, -6.0f, 1.1f, c, clip);
       break;
     }
+    case SH_STICK: fetchStickDraw(g, s, clip, pal); break;
     case SH_BEAR: {     // round head, two round ears, a snout; the jaw opens by k (a roar)
       drawForearm(s, X, c, clip);
       fillCircle(s, X(0.f, 0.f), 6.f * g.scale, c, clip);
@@ -3654,6 +3663,11 @@ constexpr uint8_t kOut = 1 | 2 | 4, kTent = 8;
 constexpr uint8_t kEve = 1u << SF_EVENING, kMorn = 1u << SF_MORNING, kMid = 1u << SF_MIDDAY;
 constexpr uint8_t kDay = kEve | kMorn | kMid;
 
+// PROPOSED weights of the bike, the archery, the slackline and the ropes course (the other daytime majors weigh 0.6 to
+// 1.5, the kite and the boomerang 1.0). The ropes course is the longest piece (about 100 s) and fits the loop less
+// often, so it weighs a little less.
+constexpr float kBikeW = 1.0f, kArcheryW = 1.0f, kSlackW = 1.0f, kRopesW = 0.8f;
+
 struct MajorDef {
   const char* name;
   uint8_t seconds[2];    // per variant (0 and 1; others use 0's)
@@ -3694,8 +3708,27 @@ const MajorDef kMajors[MJ_COUNT] = {
     // nearly always brings it.
     {"rain_shelter", {44, 44}, 6.f, 2 | 4, kDay, beginShelter, tickShelter, {kShelter, kShelter},
      {N(kShelter), N(kShelter)}},
+    // fetch (fetch.cpp): three variants and the seconds come from fetchScript and fetchSeconds, the
+    // two script slots here are unused. Midday only. PROPOSED weight 1.5: about one midday loop in
+    // three plays it with no dog out (the other daytime majors weigh 0.6 to 1.5, bathe 1.5 at midday).
+    {"fetch", {50, 50}, 1.5f, kOut, kMid, fetchBegin, fetchTick, {nullptr, nullptr}, {0, 0}},
+    // kite and boomerang (day_kite.cpp, day_boomerang.cpp): three variants each; the script and the seconds
+    // come from kiteScript / boomScript and kiteSeconds / boomSeconds, the script slots here are unused.
+    // Midday only. PROPOSED weight 1.0 each, the same footing as most of Mark's (0.6 to 1.5): over 600 midday
+    // loops (60 seeds of ten, memory kept) the kite came up in 123, the boomerang in 118, fetch in 142 (no dog
+    // out; it was about one in three before these went in and test_dog still wants 35 of 150) and each of
+    // Mark's in 76 to 125. A weight of 1.5 each took the fetch under that and test_memory_sets' trials with it.
+    {"kite", {45, 45}, 1.0f, kOut, kMid, kiteMajorBegin, kiteMajorTick, {nullptr, nullptr}, {0, 0}},
+    {"boomerang", {25, 25}, 1.0f, kOut, kMid, boomMajorBegin, boomMajorTick, {nullptr, nullptr}, {0, 0}},
+    // bike, archery, slackline and ropes (day_bike.cpp, day_archery.cpp, day_slackline.cpp, day_ropes.cpp): the
+    // scripts and the seconds come from their own functions, the script slots here are unused. Midday only.
+    // PROPOSED weights: kBikeW and the three after it, above.
+    {"bike", {60, 60}, kBikeW, kOut, kMid, bikeMajorBegin, bikeMajorTick, {nullptr, nullptr}, {0, 0}},
+    {"archery", {60, 60}, kArcheryW, kOut, kMid, archeryMajorBegin, archeryMajorTick, {nullptr, nullptr}, {0, 0}},
+    {"slackline", {80, 80}, kSlackW, kOut, kMid, slackMajorBegin, slackMajorTick, {nullptr, nullptr}, {0, 0}},
+    {"ropes", {90, 90}, kRopesW, kOut, kMid, ropesMajorBegin, ropesMajorTick, {nullptr, nullptr}, {0, 0}},
 };
-static_assert(MJ_COUNT == 17, "a row per major");
+static_assert(MJ_COUNT == 24, "a row per major");
 
 // The script for a major and variant (stargaze: one table per star count).
 void scriptOf(int id, int var, const Step*& s, uint8_t& n) {
@@ -3705,6 +3738,34 @@ void scriptOf(int id, int var, const Step*& s, uint8_t& n) {
     const int k = (var < 5 ? 5 : (var > 8 ? 8 : var)) - 5;
     s = kS[k];
     n = kN[k];
+    return;
+  }
+  if (id == MJ_FETCH) {   // three variants and flags in the byte (fetch.h)
+    s = fetchScript((uint8_t)var, n);
+    return;
+  }
+  if (id == MJ_KITE) {   // three variants and a no-show flag in the byte (day_kite.h)
+    s = kiteScript((uint8_t)var, n);
+    return;
+  }
+  if (id == MJ_BOOMERANG) {   // three variants in the byte (day_boomerang.h)
+    s = boomScript((uint8_t)var, n);
+    return;
+  }
+  if (id == MJ_BIKE) {   // three variants and a no-show flag in the byte (day_bike.h, and the three after it)
+    s = bikeScript((uint8_t)var, n);
+    return;
+  }
+  if (id == MJ_ARCHERY) {
+    s = archeryScript((uint8_t)var, n);
+    return;
+  }
+  if (id == MJ_SLACKLINE) {
+    s = slackScript((uint8_t)var, n);
+    return;
+  }
+  if (id == MJ_ROPES) {
+    s = ropesScript((uint8_t)var, n);
     return;
   }
   const int v = var == 1 ? 1 : 0;
@@ -3789,6 +3850,12 @@ void majorEnd(SceneCtx& ctx) {
   w.fx.stomp = 0.f;     // (the stream majors' walk and waterline; their scripts end with both off)
   w.fx.wade = false;
   w.hiker.hat_on = true;              // an overrun must not leave him hatless or holding the rod
+  if (m.id == MJ_KITE) kiteMajorEnd(w);              // the kite hidden, whatever the script did
+  else if (m.id == MJ_BOOMERANG) boomMajorEnd(w);    // the boomerang away (in the pine it stays)
+  else if (m.id == MJ_BIKE) bikeMajorEnd(w);         // the bike, the bow, the line, the course: gone, the day union zero
+  else if (m.id == MJ_ARCHERY) archeryMajorEnd(w);
+  else if (m.id == MJ_SLACKLINE) slackMajorEnd(w);
+  else if (m.id == MJ_ROPES) ropesMajorEnd(w);
   if (w.hiker.carry == CARRY_ROD) hikerCarry(w.hiker, CARRY_NONE);
   m.on = false;
   w.busy = false;
@@ -3811,8 +3878,17 @@ int majorSeconds(int id, int var) {
     return 30 + (int)(kStarGap * (float)n + kRecountGap * (float)n + 0.5f);
   }
   if (id == MJ_FISHING_LOG) return kMajors[id].seconds[0] + var;
+  if (id == MJ_FETCH) return fetchSeconds((uint8_t)var);
+  if (id == MJ_KITE) return kiteSeconds((uint8_t)var);
+  if (id == MJ_BOOMERANG) return boomSeconds((uint8_t)var);
+  if (id == MJ_BIKE) return bikeSeconds((uint8_t)var);
+  if (id == MJ_ARCHERY) return archerySeconds((uint8_t)var);
+  if (id == MJ_SLACKLINE) return slackSeconds((uint8_t)var);
+  if (id == MJ_ROPES) return ropesSeconds((uint8_t)var);
   return kMajors[id].seconds[var == 1 ? 1 : 0];
 }
+
+bool majorKept(int id, int var) { return id == MJ_FETCH && ((uint8_t)var & FETCH_FORCED) != 0; }
 
 Beat majorBeat(const LoopPlan& p, int i) {
   const int id = p.major[i];
@@ -3837,6 +3913,19 @@ void majorsPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem, const Majo
   // The storm's set piece: only for a storm the OUTSIDE data says is there
   // (weather.h; a random storm leaves the plan as it would have been).
   if (!weatherPlannedStorm(in)) base[MJ_RAIN_SHELTER] = 0.f;
+  // The kite and the boomerang are daytime: neither at night. The kite also stays out of a rain, snow or
+  // storm the OUTSIDE data says is there (a random weather is drawn after the plan, so this is all the plan
+  // can know; the kite's begin hook handles the rest: day_kite.h). The boomerang cannot be thrown while it
+  // is still stuck in the camp pine from the last loop or the one before (memory.h boom_stuck).
+  {
+    const uint8_t wk = in.have_outside ? weatherKindForCode(in.weather_code) : (uint8_t)WX_CLEAR;
+    if (night || wk == WX_RAIN || wk == WX_SNOW || wk == WX_STORM) base[MJ_KITE] = 0.f;
+    if (night || mem.boom_stuck != 0) base[MJ_BOOMERANG] = 0.f;
+    // The bike, the archery, the slackline and the ropes course: the same gate as the kite (a random weather that turns
+    // up after the plan sends them to their no-show script, like the kite's: day.h dayNoShowScript).
+    if (night || wk == WX_RAIN || wk == WX_SNOW || wk == WX_STORM)
+      base[MJ_BIKE] = base[MJ_ARCHERY] = base[MJ_SLACKLINE] = base[MJ_ROPES] = 0.f;
+  }
   // Midday (the heat of the day, a stream to hand): bathing comes up more often.
   if (slots.family == SF_MIDDAY) base[MJ_BATHE] *= 2.5f;
   // The ring buffer: anything picked in the last MEMORY_RING picks is much
@@ -3860,7 +3949,7 @@ void majorsPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem, const Majo
   const int want = 2 + rng.weighted(kHowMany, 3);
   uint8_t free_slots = slots.open;
   int n = 0;
-  uint32_t have = 0;
+  MajorSet have = 0;
   uint8_t pick[SPINE_MAJOR_MAX] = {}, slot[SPINE_MAJOR_MAX] = {}, var[SPINE_MAJOR_MAX] = {};
   for (int k = 0; k < SPINE_MAJOR_MAX; ++k) {
     float wt[MJ_COUNT];
@@ -3880,14 +3969,19 @@ void majorsPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem, const Majo
         if (isFishing(pick[j]) && isFishing(i)) wt[i] = 0.f;   // one rod: at most one fishing major a loop
       }
       // A set of majors one of the last loops played (so far, as a prefix) only if nothing else fits.
-      if (n > 0 && i != MJ_RAIN_SHELTER && memoryRecentSet(mem, (uint32_t)(have | (1u << i)))) wt[i] *= 1e-4f;
+      // rain_shelter is in the rule like the rest (its bit is 1u << 16; MajorSet is 32 bits wide).
+      if (n > 0 && memoryRecentSet(mem, (MajorSet)(have | (1u << i)))) wt[i] *= 1e-4f;
     }
     float sum = 0.f;
     for (float x : wt) sum += x;
-    const int id = rng.weighted(wt, MJ_COUNT);
+    int id = rng.weighted(wt, MJ_COUNT);
     const uint32_t r_slot = rng.next();
     const uint32_t r_var = rng.next();
-    if (k >= want || sum <= 0.f) continue;
+    // A dog is out (the house's badge, read at loop start like the rest of the inputs): a midday loop
+    // plays the fetch, first among its picks. The draws above are taken as always; only the pick moves.
+    const bool house_dog = k == 0 && in.dog_out != 0 && slots.family == SF_MIDDAY;
+    if (house_dog) id = MJ_FETCH;
+    if (k >= want || (sum <= 0.f && !house_dog)) continue;
     // Past the first two, a pick is optional: never one held back by the ring
     // or the recent sets (only that one was left, say for S4).
     if (k >= 2 && wt[id] < 1e-3f) continue;
@@ -3914,8 +4008,15 @@ void majorsPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem, const Majo
     if (id == MJ_STARGAZE) v = (uint8_t)(5u + r_var % 4u);
     if (id == MJ_FISHING_LOG) v = (uint8_t)(8u + r_var % 5u);   // seconds the scene sits empty
     if (id == MJ_BATHE) v = (uint8_t)(2u + r_var % 2u);         // dead fish that float past
+    if (id == MJ_FETCH) v = fetchPlanVar(r_var, in.dog_out, house_dog);   // variant, a second dog, forced
+    if (id == MJ_KITE) v = kitePlanVar(r_var);                           // serene, the kite wins, it won't fly
+    if (id == MJ_BOOMERANG) v = boomPlanVar(r_var);                      // the catch, the eagle, stuck in the pine
+    if (id == MJ_BIKE) v = bikePlanVar(r_var);                           // through the stream, the rock, the wheelie
+    if (id == MJ_ARCHERY) v = archeryPlanVar(r_var);                     // two misses and a bullseye, into the tree, the split arrow
+    if (id == MJ_SLACKLINE) v = slackPlanVar(r_var);                     // falls and tries again, across
+    if (id == MJ_ROPES) v = ropesPlanVar(r_var);                         // all three, the bridge and the swing, the swing and the net
     pick[n] = (uint8_t)id;
-    have = (uint32_t)(have | (1u << id));
+    have = (MajorSet)(have | (1u << id));
     slot[n] = (uint8_t)s;
     var[n] = v;
     ++n;

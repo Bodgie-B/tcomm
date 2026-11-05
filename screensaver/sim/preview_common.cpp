@@ -35,6 +35,7 @@ Inputs previewInputsFromOptions(const PreviewOptions& o) {
   in.have_outside = o.weather_given;
   in.other_status = o.status;
   in.dog_out = o.dog;
+  in.chip = o.chip;
   in.night_mode = o.night;
   in.lookout_window = o.lookout;
   in.spine_force = (uint8_t)o.spine;
@@ -50,13 +51,17 @@ bool previewInit(PreviewState& st, uint64_t seed, const Inputs& in) {
   memset(&st, 0, sizeof st);
   st.alloc.alloc_large = hostAlloc;
   st.alloc.free_large = hostFree;
+  // Lend the fast block as the panel will (it lends LVGL's draw buffer).
+  st.alloc.fast = malloc(SS_FAST_BYTES);
   st.app_mem = malloc(SS_APP_BYTES);
   st.fb = (uint16_t*)calloc((size_t)SS_WIDTH * SS_HEIGHT, sizeof(uint16_t));
-  if (!st.app_mem || !st.fb) {
+  if (!st.app_mem || !st.fb || !st.alloc.fast) {
     free(st.app_mem);
     free(st.fb);
+    free(st.alloc.fast);
     st.app_mem = nullptr;
     st.fb = nullptr;
+    st.alloc.fast = nullptr;
     return false;
   }
   st.surface.pixels = st.fb;
@@ -78,8 +83,10 @@ void previewShutdown(PreviewState& st) {
   st.app = nullptr;
   free(st.app_mem);
   free(st.fb);
+  free(st.alloc.fast);
   st.app_mem = nullptr;
   st.fb = nullptr;
+  st.alloc.fast = nullptr;
 }
 
 static void logBeatChange(PreviewState& st) {
@@ -254,7 +261,8 @@ void previewUsage(const char* prog, FILE* to) {
           "  --spine NAME        evening morning midday lookout: play that spine family whatever the\n"
           "                      inputs say (--spine lookout --mood 4 is the Lookout's reference run)\n"
           "  --status N          other floor status 0..5\n"
-          "  --dog N             0 none, 1 Lucy, 2 Copper\n"
+          "  --dog N             0 none, 1 Lucy, 2 Copper, 3 both\n"
+          "  --chip              draw the status chip and dog badges (the panel always does)\n"
           "  --frames N          frames to write (default 100)\n"
           "  --fps N             render fps; ticks per frame = %d / fps (default 25)\n"
           "  --every N           render one frame every N ticks (N >= 1; overrides --fps)\n"
@@ -264,6 +272,9 @@ void previewUsage(const char* prog, FILE* to) {
           "                      (seed, length, plan with spine variants and majors, memory) and exit\n"
           "  --out DIR           output directory for frame_%%05d.ppm (default ./frames)\n"
           "  --doorbell-at TICK  post a doorbell when the tick counter reaches TICK\n"
+          "  --reveal-at TICK    touch at that tick: the reveal plays, then the run ends\n"
+          "  --reveal-xy X Y     where the touch lands (default 400 240)\n"
+          "  --main FILE         800x480 P6 PPM of the main screen for the reveal (default: a test card)\n"
           "  --mood-sweep A B    change mood linearly from A to B over the frames\n"
           "  --help              this text\n",
           prog, SS_TICK_HZ);
@@ -343,6 +354,8 @@ void previewParseArgs(int argc, char** argv, PreviewOptions& o) {
     } else if (!strcmp(a, "--dog")) {
       need(1);
       o.dog = (int)parseInt(prog, a, argv[++i]);
+    } else if (!strcmp(a, "--chip")) {
+      o.chip = true;
     } else if (!strcmp(a, "--frames")) {
       need(1);
       o.frames = (int)parseInt(prog, a, argv[++i]);
@@ -368,6 +381,17 @@ void previewParseArgs(int argc, char** argv, PreviewOptions& o) {
     } else if (!strcmp(a, "--out")) {
       need(1);
       o.out_dir = argv[++i];
+    } else if (!strcmp(a, "--reveal-at")) {
+      need(1);
+      o.reveal_at = parseInt(prog, a, argv[++i]);
+      if (o.reveal_at < 0) bad(prog, "must be >= 0", a);
+    } else if (!strcmp(a, "--reveal-xy")) {
+      need(2);
+      o.reveal_x = (int)parseInt(prog, a, argv[++i]);
+      o.reveal_y = (int)parseInt(prog, a, argv[++i]);
+    } else if (!strcmp(a, "--main")) {
+      need(1);
+      o.main_ppm = argv[++i];
     } else if (!strcmp(a, "--doorbell-at")) {
       need(1);
       o.doorbell_at = parseInt(prog, a, argv[++i]);

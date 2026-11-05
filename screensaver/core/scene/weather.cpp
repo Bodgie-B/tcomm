@@ -383,7 +383,7 @@ void stepHug(World& w) {
 void stepOverlay(World& w) {
   Weather& x = w.weather;
   Hiker& h = w.hiker;
-  const uint32_t t = w.tick;
+  const uint32_t t = storyTick(w);   // deadlines wait out a doorbell freeze
   switch (x.gag) {
     case WG_HAT: stepHat(w); break;
     case WG_FAN: stepFan(w); break;
@@ -451,7 +451,7 @@ void stepOverlay(World& w) {
 void stepAboutHim(World& w) {
   Weather& x = w.weather;
   Hiker& h = w.hiker;
-  const uint32_t t = w.tick;
+  const uint32_t t = storyTick(w);   // deadlines wait out a doorbell freeze
   const bool still = w.fx.on && h.visible && !h.walking;
   if (x.breath.t >= 0.f) {
     x.breath.t += kDt;
@@ -547,7 +547,7 @@ void weatherPlan(World& w, uint64_t loop_seed, const Inputs& in, uint32_t loop_t
 void weatherStep(World& w) {
   Weather& x = w.weather;
   if (!buildDone(w.build)) return;
-  const uint32_t t = w.tick;
+  const uint32_t t = storyTick(w);   // deadlines wait out a doorbell freeze
   if (!x.live) {   // the build just ended: the weather's clocks start now
     x.live = true;
     const float g = x.rng.range(3.f, 9.f);
@@ -707,6 +707,7 @@ void weatherStep(World& w) {
   }
 
   stepBits(w);
+  if (w.react.active) return;   // his doorbell reaction: the gags about him wait with the story (react.h)
   stepAboutHim(w);
   stepOverlay(w);
 }
@@ -725,14 +726,14 @@ void weatherStrike(World& w) {
   x.flash = 1.f;
   x.flash_q = 2;
   if (x.flashes < 0xFFFF) ++x.flashes;
-  const uint32_t soon = w.tick + ticksOf(45.f);   // the next natural one keeps its distance
+  const uint32_t soon = storyTick(w) + ticksOf(45.f);   // the next natural one keeps its distance
   if (x.next_flash < soon) x.next_flash = soon;
 }
 
 void weatherEaseRain(World& w, float k, float hold) {
   Weather& x = w.weather;
   x.k_to = k;
-  x.ease_until = w.tick + ticksOf(hold);
+  x.ease_until = storyTick(w) + ticksOf(hold);
 }
 
 float weatherTint(const World& w, WeatherTint& t) {

@@ -35,6 +35,9 @@ variant seen over the seeds is cut as clips/<family>_<beat>_<letter>.mp4 (the be
 plus --pad-seconds either side), and clips/<family>_overview.mp4 is the whole first loop at
 8x. Fillers, majors and minors are not cut (the evening runs have them). Rows carry
 "family". Seeds are tried in order until every beat has all its variants (FAMILY_BEATS).
+--family morning_stay cuts the morning where the camp stays up (wake, coffee, pee, breakfast, wash,
+tidy, day_hike): the preview runs --spine morning, and only loops whose plan says stay=1 are cut
+(Mark's break-camp loops, which --family morning wants, are skipped, and the other way round).
 --family lookout cuts the Lookout (no variants): the preview runs with --spine lookout
 --weather clear at mood 4; the first seed gives one clip per beat, clips/lookout_<beat>.mp4
 (build, approach, trail_pause, reveal, climb, explore, settle, fade: the beat's window plus
@@ -72,8 +75,13 @@ SKIP_BEATS = {"pause"}
 FAMILY_BEATS = {
     "morning": {"wake": 3, "coffee": 3, "bag_down": 2, "break_camp": 3, "douse": 2, "leave": 3},
     "midday": {"return": 3, "lunch": 2, "wade": 3, "nap": 3, "map": 2, "afternoon": 2},
+    # The morning where the camp stays up (core/scene/morning_stay.cpp): the same spine as "morning" (the preview's
+    # --spine morning picks either per loop; the plan line says stay=1), cut as morning_stay_<beat>_<letter>.
+    "morning_stay": {"wake": 3, "coffee": 4, "pee": 1, "breakfast": 3, "wash": 1, "tidy": 2, "day_hike": 1},
 }
-FAMILY_MOOD = {"morning": 1.5, "midday": 3.0, "lookout": 4.0}
+FAMILY_MOOD = {"morning": 1.5, "morning_stay": 1.5, "midday": 3.0, "lookout": 4.0}
+# The spine the preview is asked for, per clip family.
+FAMILY_SPINE = {"morning_stay": "morning"}
 # The Lookout has no variants (so it is not in FAMILY_BEATS): one clip per beat, in beat order.
 # Speed is the ticks per frame at 12.5 fps (2 = real time, 8 = 4x).
 LOOKOUT_BEATS = ["build", "approach", "trail_pause", "reveal", "climb", "explore", "settle",
@@ -219,6 +227,8 @@ def run_preview(args, seed, every, frames, skip, outdir, log_beats, extra=(), mo
     if night:
         cmd.append("--night")
     cmd += list(extra)
+    if getattr(args, "dog", 0):   # Inputs::dog_out: a midday loop then plays the fetch (--family midday --dog 3)
+        cmd += ["--dog", str(args.dog)]
     cmd += ["--every", str(every), "--frames", str(frames), "--out", outdir]
     if skip:
         cmd += ["--skip", str(skip)]
@@ -430,7 +440,8 @@ def run_family(args, seeds, st, work, clips_dir):
     """--family: every beat x variant of the morning or midday spine, plus the overview."""
     fam = args.family
     wanted = FAMILY_BEATS[fam]
-    extra = ["--spine", fam, "--weather", "clear"]
+    spine = FAMILY_SPINE.get(fam, fam)
+    extra = ["--spine", spine, "--weather", "clear"]
     pad = int(round(args.pad_seconds * TICKS_PER_SECOND))
     overview = "%s_overview" % fam
     for seed in seeds:
@@ -443,16 +454,18 @@ def run_family(args, seeds, st, work, clips_dir):
             print("seed %d: %s" % (seed, e), file=sys.stderr)
             st.failed = True
             continue
-        if info["family"] != fam:
+        if info["family"] != spine:
             print("seed %d: the preview played the %s spine, not the %s (is it built?)" % (
-                seed, info["family"], fam), file=sys.stderr)
+                seed, info["family"], spine), file=sys.stderr)
             st.failed = True
             continue
+        if spine == "morning" and (info["plan"].get("stay", 0) == 1) != (fam == "morning_stay"):
+            continue   # the loop picked the other morning (the plan line says stay=1 for the camp-stays one)
         st.plans[:] = [p for p in st.plans
                        if not (p.get("seed") == seed and bool(p.get("night")) == bool(args.night)
                                and p.get("family", "evening") == fam)]
         st.plans.append(dict(info, seed=seed, mood=args.mood_eff, night=bool(args.night),
-                             weather="clear"))
+                             weather="clear", family=fam))
         seen = set()
         for tick, beat, nxt in beat_windows(beats, end_tick):
             if beat not in wanted or beat in seen or nxt <= tick:
@@ -800,6 +813,8 @@ def main():
                          "major_rain_shelter, morning_fog_lift)")
     ap.add_argument("--weather-seed", type=int, default=3,
                     help="--weather-clips: the seed of every clip but major_rain_shelter (default 3)")
+    ap.add_argument("--dog", type=int, default=0, choices=[0, 1, 2, 3],
+                    help="dogs out (the preview's --dog): 1 Lucy, 2 Copper, 3 both; a midday loop then always plays fetch")
     ap.add_argument("--keep", action="store_true", help="keep the frame work dir")
     ap.add_argument("--force", action="store_true",
                     help="re-cut names already in the manifest")

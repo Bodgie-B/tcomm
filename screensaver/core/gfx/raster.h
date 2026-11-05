@@ -6,14 +6,29 @@
 // [x, x+1) x [y, y+1). All drawing is clipped to `clip` intersected with the
 // surface bounds, and nothing outside is touched.
 //
-// There is no allocation. The rasterizer uses a fixed static scratch sized for
-// SS_WIDTH, so it is not reentrant across threads (the screensaver draws from
-// one task).
+// There is no allocation. The rasterizer uses a fixed scratch sized for
+// SS_WIDTH, lent by the caller through rasterSetScratch, so it is not
+// reentrant across threads (the screensaver draws from one task).
 #pragma once
 
 #include "surface.h"
 
 namespace ss {
+
+// Scratch for the shape fills: rasterScratchBytes() of 4-byte aligned memory
+// whose coverage row starts zeroed (rasterResetScratch; every fill leaves that
+// row zeroed again). The app's is the
+// tail of its SS_FAST_BYTES block, zeroed by appStart; appRender sets it for
+// its own drawing and puts the caller's back, so several apps (the tests) can
+// run side by side. Until one is set, polygons, ellipses, circles and capsules
+// draw nothing; the span and rectangle fills don't need it. Returns the
+// scratch it replaces.
+size_t rasterScratchBytes();
+void* rasterSetScratch(void* mem);
+// Zero the part of a scratch block that must start zeroed (the coverage row,
+// about 3 KB; the rest is rewritten before it's read). appStart and appRender
+// call it, so a stray write into a lent block spoils one frame at most.
+void rasterResetScratch(void* mem);
 
 // Fill a polygon (non-zero winding). `pts` may be convex or concave, clockwise
 // or counter-clockwise, self-intersecting. n <= SS_MAX_POLY_POINTS.

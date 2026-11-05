@@ -3,6 +3,7 @@
 
 #include <stdio.h>
 
+#include "day_boomerang.h"
 #include "world.h"
 
 namespace ss {
@@ -25,6 +26,8 @@ void memoryBeginLoop(World& w, Rng& rng) {
   // from the end of the build-up (the arrival beat sets it: during the build
   // the ground it stands on is not there yet).
   w.tent.bite = m.mouse_hole;
+  // The boomerang still in the camp pine (the last loop's, or the one before's): back in this loop's tree.
+  if (m.boom_stuck != 0) boomRestoreStuck(w);
 }
 
 void memoryEndLoop(World& w) {
@@ -32,6 +35,7 @@ void memoryEndLoop(World& w) {
   if (w.plan.family == SF_LOOKOUT) return;
   m.cairn_n = w.cairn.n;
   if (m.mouse_tent_runs >= 2) m.mouse_hole = true;
+  if (m.boom_stuck != 0) --m.boom_stuck;   // stuck 2: this loop and the next; 1: gone after this one
 }
 
 void memoryNoteMouseTent(Memory& m) {
@@ -48,7 +52,7 @@ void memoryPushMajor(Memory& m, uint8_t id) {
   m.ring[MEMORY_RING - 1] = id;
 }
 
-void memoryPushSet(Memory& m, uint32_t set) {
+void memoryPushSet(Memory& m, MajorSet set) {
   if (m.sets_n < MEMORY_SETS) {
     m.sets[m.sets_n++] = set;
     return;
@@ -57,7 +61,7 @@ void memoryPushSet(Memory& m, uint32_t set) {
   m.sets[MEMORY_SETS - 1] = set;
 }
 
-bool memoryRecentSet(const Memory& m, uint32_t set) {
+bool memoryRecentSet(const Memory& m, MajorSet set) {
   for (int i = 0; i < m.sets_n; ++i)
     if (m.sets[i] == set) return true;
   return false;
@@ -109,6 +113,11 @@ int memoryFormat(const Memory& m, char* buf, size_t n) {
     put(majorName(m.ring[i]));
   }
   if (m.ring_n == 0) put("none");
+  if (m.boom_stuck != 0) {   // only while it is up there, so the line is what it was when no boomerang sticks
+    char b[24];
+    snprintf(b, sizeof b, " boom=%u", (unsigned)m.boom_stuck);
+    put(b);
+  }
   return k;
 }
 

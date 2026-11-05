@@ -86,14 +86,20 @@ const KindInfo kKinds[CR_COUNT] = {
      kAlways | bit(CA_MOVE) | bit(CA_RUN) | bit(CA_SIT) | bit(CA_LOOK) | bit(CA_SNIFF) | bit(CA_EAT) |
          bit(CA_STARTLE),
      CA_MOVE, 7, 5.f, 8.f, 0.f, 0.f},
+    // Dog: 9 primitives (four legs, tail, body, head, ear, nose) and up to 2 for what it carries. PROPOSED sizes:
+    // the brief's "about 34 px long, 24 px tall"; strides are px per gait cycle (a trot, a gallop).
+    {"dog", 36.f, 25.f,
+     kAlways | bit(CA_MOVE) | bit(CA_RUN) | bit(CA_SIT) | bit(CA_LOOK) | bit(CA_SNIFF) | bit(CA_SHAKE) | bit(CA_HOP) |
+         bit(CA_CARRY) | bit(CA_LIE) | bit(CA_BOW),
+     CA_MOVE, 11, 24.f, 38.f, 0.f, 16.f},
 };
 
 const char* const kActionNames[CA_COUNT] = {"idle",  "move",  "run",      "sit",     "look", "sniff",
                                             "reach", "climb", "shake",    "hop",     "blink", "headturn",
-                                            "startle", "eat", "carry",    "rear"};
+                                            "startle", "eat", "carry",    "rear",    "lie",  "bow"};
 
 // Nose-up rotation of the body when fully reared (sit, stand) and climbing.
-constexpr float kRearAng[CR_COUNT] = {1.15f, 1.2f, 0.f, 0.f, 1.1f, 0.f, 0.f, 1.5f, 1.0f};
+constexpr float kRearAng[CR_COUNT] = {1.15f, 1.2f, 0.f, 0.f, 1.1f, 0.f, 0.f, 1.5f, 1.0f, 0.72f};
 
 bool isGait(CritterAction a) { return a == CA_MOVE || a == CA_RUN || a == CA_HOP; }
 bool oneShot(CritterAction a) { return a == CA_HOP || a == CA_HEADTURN || a == CA_STARTLE; }
@@ -112,6 +118,7 @@ constexpr CritterPose idleOf(int k) {
     case CR_BIRD: p.hind[0] = p.hind[1] = 0.15f; break;
     case CR_BEAR: p.fore[0] = 0.04f; p.fore[1] = -0.06f; p.hind[0] = -0.04f; p.hind[1] = 0.06f; break;
     case CR_MOUSE: p.hind[0] = p.hind[1] = 0.4f; p.fore[0] = p.fore[1] = 0.1f; break;
+    case CR_DOG: p.fore[0] = 0.04f; p.fore[1] = -0.06f; p.hind[0] = -0.04f; p.hind[1] = 0.06f; p.head = 0.2f; p.tail = 0.15f; break;
     default: break;
   }
   return p;
@@ -202,6 +209,24 @@ constexpr CritterPose poseFor(int k, int a) {
         case CA_EAT: p.head = -0.3f; p.pitch = -0.15f; break;
         case CA_CARRY: p.head = 0.1f; break;
         case CA_STARTLE: p.pitch = 0.25f; p.head = 0.2f; p.squash = 0.1f; p.fore[0] = 0.35f; break;
+        default: break;
+      }
+      break;
+    case CR_DOG:
+      // Dog: rear tilts the whole body nose-up about the hip (sit); crouch lowers the hips (sit, lie); the
+      // play-bow is rear < 0 (chest down, rump up). Tail 0 hangs, 1 stands up.
+      switch (a) {
+        case CA_SIT: p.rear = 1.f; p.crouch = 1.f; p.hind[0] = 1.2f; p.hind[1] = 1.05f; p.fore[0] = -0.04f; p.fore[1] = 0.1f;
+          p.head = -0.4f; p.tail = 0.8f; break;
+        case CA_LIE: p.crouch = 1.f; p.hind[0] = 1.4f; p.hind[1] = 1.25f; p.fore[0] = 1.45f; p.fore[1] = 1.3f;
+          p.head = 0.2f; p.tail = 0.75f; break;
+        case CA_BOW: p.rear = -0.55f; p.hind[0] = 0.05f; p.hind[1] = -0.05f; p.fore[0] = 1.25f; p.fore[1] = 1.1f;
+          p.head = 0.6f; p.tail = 1.0f; break;
+        case CA_LOOK: p.head = 0.5f; p.fore[0] = 0.12f; p.tail = 0.5f; p.squash = 0.03f; break;
+        case CA_SNIFF: p.head = -0.55f; p.look = 2.f; p.crouch = 0.15f; p.fore[0] = 0.3f; p.fore[1] = 0.15f; p.tail = 0.2f; break;
+        case CA_SHAKE: p.crouch = 0.1f; p.head = -0.05f; p.tail = 0.3f; p.fore[0] = 0.2f; p.fore[1] = -0.2f;
+          p.hind[0] = -0.2f; p.hind[1] = 0.2f; break;
+        case CA_CARRY: p.head = 0.3f; p.tail = 0.8f; break;
         default: break;
       }
       break;
@@ -399,6 +424,20 @@ void addGait(Look& L, const Critter& c, CritterAction a, float ph, float w) {
     }
     return;
   }
+  if (a == CA_MOVE && k == CR_DOG) {   // trot: a diagonal pair at a time (near fore with far hind)
+    const float amp = 0.44f;
+    const float off[4] = {0.f, 0.5f, 0.5f, 0.f};   // hind0, fore0, hind1, fore1
+    float* legs[4] = {&p.hind[0], &p.fore[0], &p.hind[1], &p.fore[1]};
+    float* lifts[4] = {&L.lift_h[0], &L.lift_f[0], &L.lift_h[1], &L.lift_f[1]};
+    for (int i = 0; i < 4; ++i) {
+      *legs[i] += w * amp * sinT(ph - off[i]);
+      *lifts[i] += w * 2.6f * pos(cosT(ph - off[i]));
+    }
+    p.lift += w * 0.9f * (0.5f - 0.5f * cosT(2.f * ph));   // two light bounces a cycle
+    p.head += w * 0.05f * sinT(2.f * ph);
+    p.tail += w * 0.18f * sinT(ph);
+    return;
+  }
   if (a == CA_MOVE && k == CR_RACCOON) {   // waddle: near legs opposite, body rocks
     p.hind[0] += w * 0.45f * sinT(ph);
     p.hind[1] -= w * 0.45f * sinT(ph);
@@ -421,6 +460,7 @@ void addGait(Look& L, const Critter& c, CritterAction a, float ph, float w) {
     case CR_RACCOON: amp = 0.7f; air = 3.f; break;
     case CR_DEER: amp = 0.95f; air = 10.f; pitchAmp = 0.12f; break;
     case CR_BEAR: amp = 0.6f; air = 5.f; pitchAmp = 0.06f; break;
+    case CR_DOG: amp = 0.95f; air = 6.f; pitchAmp = 0.1f; break;
     default: break;
   }
   const float s = sinT(ph), cc = cosT(ph);
@@ -492,7 +532,7 @@ void addLoop(Look& L, const Critter& c, CritterAction a, float ph, float w) {
     }
     case CA_SHAKE: {
       const float s = sinT(ph);
-      L.shiver = w * (k == CR_BEAR ? 1.5f : 0.9f) * s;
+      L.shiver = w * (k == CR_DOG ? 2.2f : (k == CR_BEAR ? 1.5f : 0.9f)) * s;
       p.squash += w * 0.03f * sinT(2.f * ph);
       p.tail += w * 0.35f * s;
       p.head += w * 0.08f * s;
@@ -557,9 +597,13 @@ enum PrimKind : uint8_t { PRIM_CAP, PRIM_ELLIPSE, PRIM_POLY };
 constexpr int kMaxPrims = 12;
 constexpr int kMaxPolyPts = 16;
 
+// How a primitive is coloured: its palette slot, or (the dog) a fur colour mixed from slots.
+enum Tint : uint8_t { TINT_NONE = 0, TINT_FUR, TINT_FUR_DARK };
+
 struct Prim {
   uint8_t kind;
   Slot slot;
+  uint8_t tint;   // Tint: not TINT_NONE overrides the slot
   uint8_t n;
   float w, h;   // capsule width; ellipse radii
   Vec2 p[kMaxPolyPts];
@@ -591,6 +635,7 @@ Prim* push(Prims& ps, PrimKind k, Slot slot) {
   Prim* p = &ps.v[ps.n++];
   p->kind = k;
   p->slot = slot;
+  p->tint = TINT_NONE;
   p->n = 0;
   p->w = p->h = 0.f;
   return p;
@@ -639,6 +684,10 @@ void carryItem(Prims& ps, uint8_t item, Vec2 m, float ang) {
       break;
     }
     case CC_BAR: cap(ps, at(f, -0.5f, 0.9f), at(f, 5.5f, 0.9f), 2.2f); break;
+    case CC_STICK:   // held through the mouth, an end out behind the jaw and the far end past the nose, a touch up
+      cap(ps, at(f, -6.5f, 1.9f), at(f, 13.f, -1.6f), 2.3f, TRUNK);
+      cap(ps, at(f, -6.f, 1.f), at(f, 12.5f, -2.5f), 0.9f, ACTOR_LIGHT);
+      break;
     default: break;
   }
 }
@@ -1047,6 +1096,94 @@ void buildBird(const Critter& c, const Look& L, Prims& ps) {
   if (c.carry != CC_NONE) carryItem(ps, c.carry == CC_SHOE ? (uint8_t)CC_CRUMB : c.carry, at(H, 4.6f, -0.8f), P.head);
 }
 
+// ---- dog --------------------------------------------------------------------------------------
+
+// A retriever-ish camp dog, side on, in fur colours. Everything is in the body
+// frame B: origin at the hip joint, x toward the head, y down, rotated nose-up
+// by `th`. Legs are fixed-length capsules from a root at hip height (fore
+// legs lengthen as it sits up); the far pair is drawn darker behind the body.
+// One long muzzle with a dark nose, one floppy ear and a tail that wags are
+// what make it a dog at a glance. PROPOSED proportions, UNVERIFIED on the panel.
+constexpr float kDogLeg = 10.f;
+constexpr float kDogK = 0.88f;   // drawn at 88% of these units: about 36 px long and 25 px tall
+const float kDogBody[12][2] = {{-3.7f, -6.6f}, {2.6f, -7.4f}, {9.6f, -8.2f}, {13.0f, -7.6f}, {15.0f, -4.4f}, {14.8f, 0.2f},
+                               {12.6f, 3.2f},  {7.8f, 2.8f},  {3.5f, 0.8f},   {-0.9f, 1.4f},  {-4.4f, -0.2f}, {-5.2f, -3.6f}};
+// Head frame: origin at the neck joint, muzzle along +x.
+const float kDogHead[13][2] = {{-3.0f, -3.5f}, {0.5f, -5.4f}, {4.0f, -5.2f}, {5.8f, -3.6f}, {9.5f, -3.0f}, {12.5f, -2.4f}, {13.4f, -0.6f},
+                               {12.4f, 1.4f},  {9.0f, 2.4f},  {4.5f, 3.2f},  {1.0f, 4.8f},  {-2.5f, 5.8f}, {-4.5f, 1.0f}};
+const float kDogEar[6][2] = {{-0.4f, -4.8f}, {3.4f, -4.4f}, {4.4f, -0.6f}, {2.4f, 3.6f}, {-0.9f, 2.8f}, {-2.0f, -1.0f}};
+constexpr float kDogHeadK = 1.12f;   // the head is drawn a little big: it is what reads
+
+Prim* capT(Prims& ps, Vec2 a, Vec2 b, float w, Tint t) {
+  cap(ps, a, b, w);
+  Prim* p = ps.n > 0 ? &ps.v[ps.n - 1] : nullptr;
+  if (p) p->tint = t;
+  return p;
+}
+
+void buildDog(const Critter& c, const Look& L, Prims& ps) {
+  const CritterPose& P = L.p;
+  const float th = P.pitch + P.rear * kRearAng[CR_DOG];
+  const float low = clamp01(P.crouch);
+  const float hipH = kDogLeg * (1.f - 0.65f * low);
+  const Xf B = xf(Vec2{-6.5f, -hipH}, th);
+  const float lf = kDogLeg * (1.f + 0.55f * clamp01(P.rear));   // sitting up, the fore legs run to the ground
+  // Far legs first (behind the body), then the tail.
+  auto legAt = [&](float x, float y, float ang, float len, float w, float lift, Tint t) {
+    const Vec2 root = at(B, x, y);
+    Vec2 foot = add(root, mul(dirA(ang), len));
+    foot.y -= lift;
+    capT(ps, root, foot, w, t);
+    contact(ps, foot.y + 0.5f * w);
+    return foot;
+  };
+  const float wide = 1.f + 0.7f * low;   // a sitting or lying haunch is thick
+  legAt(-1.4f, 0.f, P.hind[1], kDogLeg, 2.8f * wide, L.lift_h[1], TINT_FUR_DARK);
+  legAt(13.5f, 0.5f, P.fore[1], lf, 2.6f, L.lift_f[1], TINT_FUR_DARK);
+  {
+    const float a = -0.6f - 1.6f * (P.tail + c.tail_add) + 0.4f * th;
+    const Vec2 root = at(B, -4.6f, -4.2f);
+    capT(ps, root, add(root, mul(dirA(a), 8.5f)), 3.0f, TINT_FUR);
+  }
+  polyIn(ps, B, kDogBody, 12, true);
+  ps.v[ps.n - 1].tint = TINT_FUR;
+  ps.belly = maxX(ps.v[ps.n - 1]);
+  legAt(-2.5f, 0.f, P.hind[0], kDogLeg, 3.2f * wide, L.lift_h[0], TINT_FUR);
+  ps.paw = legAt(12.2f, 0.5f, P.fore[0], lf, 2.9f, L.lift_f[0], TINT_FUR);
+  ps.has_paw = true;
+  // Head, ear and nose: the head's own points scaled by kDogHeadK about the neck joint.
+  const Xf H0 = xf(at(B, 13.2f + P.look, -6.6f), th + P.head);
+  const Xf H{H0.o, H0.c * kDogHeadK, H0.s * kDogHeadK};
+  polyIn(ps, H, kDogHead, 13, false);
+  ps.v[ps.n - 1].tint = TINT_FUR;
+  {
+    const Xf E = xf(at(H, 1.2f, -3.8f), 0.4f * (th + P.head));   // the ear hangs, turning only a little with the head
+    const Xf Es{E.o, E.c * kDogHeadK, E.s * kDogHeadK};
+    polyIn(ps, Es, kDogEar, 6, false);
+    ps.v[ps.n - 1].tint = TINT_FUR_DARK;
+  }
+  ellipse(ps, at(H, 12.6f, -0.9f), 1.55f, 1.55f);
+  ps.mouth = at(H, 10.5f, 1.2f);
+  ps.has_mouth = true;
+  // What it carries: a stick crosswise in the mouth, or a branch by one end,
+  // the rest trailing on the ground behind.
+  if (c.carry == CC_STICK) {
+    carryItem(ps, CC_STICK, ps.mouth, th + P.head);
+  } else if (c.carry == CC_BRANCH) {
+    const Vec2 a = at(H, 11.5f, -0.2f);
+    const float gy = ps.low;   // the ground so far (a paw's underside)
+    const Vec2 b{a.x - 100.f, gy - 2.1f};
+    cap(ps, a, b, 4.2f, TRUNK);
+    const Vec2 m = Vec2{lerp(a.x, b.x, 0.45f), lerp(a.y, b.y, 0.45f)};
+    cap(ps, m, Vec2{m.x - 9.f, m.y - 14.f}, 2.3f, TRUNK);
+    // The branch is on the far side of the dog: its two primitives go to the front of the draw order.
+    const Prim t0 = ps.v[ps.n - 2], t1 = ps.v[ps.n - 1];
+    for (int i = ps.n - 1; i >= 2; --i) ps.v[i] = ps.v[i - 2];
+    ps.v[0] = t0;
+    ps.v[1] = t1;
+  }
+}
+
 // ---- build + finish ----------------------------------------------------------
 
 void build(const Critter& c, Prims& ps) {
@@ -1064,6 +1201,7 @@ void build(const Critter& c, Prims& ps) {
     case CR_FROG: buildFrog(c, L, ps); break;
     case CR_OWL: buildOwl(c, L, ps); break;
     case CR_BIRD: buildBird(c, L, ps); break;
+    case CR_DOG: buildDog(c, L, ps); break;
     default: buildQuad(c, L, ps); break;
   }
   // Ground, climb onto the trunk line, squash about the ground, lift, shiver,
@@ -1072,7 +1210,7 @@ void build(const Critter& c, Prims& ps) {
   const float gy = -ps.low;
   const float gx = -clamp01(P.climb) * ps.belly;
   const float ys = 1.f + P.squash, xs = (1.f - 0.5f * P.squash) * L.sx;
-  const float S = c.scale * (c.kind == CR_BEAR ? kBearK : 1.f);
+  const float S = c.scale * (c.kind == CR_BEAR ? kBearK : (c.kind == CR_DOG ? kDogK : 1.f));
   const float fx = (c.facing < 0 ? -S : S);
   auto place = [&](Vec2& v) {
     const float x = (v.x + gx + L.shiver) * xs;
@@ -1118,6 +1256,15 @@ void primExtent(const Prim& p, float& x0, float& y0, float& x1, float& y1) {
 
 int g_last_prims = 0;
 
+// The dog's fur, mixed from palette slots so it has none of its own and goes
+// dim at night with the rest: TENT's rust pulled toward TRUNK's brown, a
+// warm mid-brown by day (tone 0), and mostly TRUNK for the darker second dog
+// (tone 1). The shade (ear, far legs) is that with ACTOR mixed in.
+Pixel furColor(const Palette& pal, uint8_t tone, bool shade) {
+  const Pixel base = tone == 0 ? mixRGB(pal[TENT], pal[TRUNK], 0.38f) : mixRGB(pal[TRUNK], pal[TENT], 0.2f);
+  return shade ? mixRGB(base, pal[ACTOR], 0.5f) : base;
+}
+
 void startAction(Critter& c, CritterAction a, float seconds) {
   c.from = compose(c).p;   // the figure on screen, motion included
   c.action = a;
@@ -1148,8 +1295,10 @@ void critterInit(Critter& c, CritterKind k, Vec2 feet, int facing) {
   c.speed_dial = 0.5f;
   c.jitter_dial = 0.5f;
   c.carry = CC_NONE;
+  c.tone = 0;
   c.fore_add = 0.f;
   c.head_add = 0.f;
+  c.tail_add = 0.f;
   c.action = CA_IDLE;
   c.blend_kind = BLEND_PLAIN;
   c.blending = false;
@@ -1372,12 +1521,14 @@ void critterDraw(const Critter& c, Surface& s, const Palette& pal, const Rect& c
   if (!c.visible) return;
   Prims ps;
   build(c, ps);
+  const Pixel fur = c.kind == CR_DOG ? furColor(pal, c.tone, false) : pal[ACTOR];
+  const Pixel fur_dark = c.kind == CR_DOG ? furColor(pal, c.tone, true) : pal[ACTOR];
   for (int k = 0; k < ps.n; ++k) {
     const Prim& p = ps.v[k];
     float x0, y0, x1, y1;
     primExtent(p, x0, y0, x1, y1);
     if (x1 < (float)clip.x0 || x0 > (float)clip.x1 || y1 < (float)clip.y0 || y0 > (float)clip.y1) continue;
-    const Pixel col = pal[p.slot];
+    const Pixel col = p.tint == TINT_FUR ? fur : (p.tint == TINT_FUR_DARK ? fur_dark : pal[p.slot]);
     switch (p.kind) {
       case PRIM_CAP: strokeCapsule(s, p.p[0], p.p[1], p.w, col, clip); break;
       case PRIM_ELLIPSE:

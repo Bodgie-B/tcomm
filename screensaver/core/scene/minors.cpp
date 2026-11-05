@@ -82,6 +82,16 @@ const Hiker* hikerIn(const World& w) { return w.fx.on && w.hiker.visible ? &w.hi
 
 bool hikerWalking(const World& w) { return w.fx.on && w.hiker.walking; }
 
+// He is off the frame beyond the edge `side` (-1 left, +1 right) and has set
+// off back in through it. The director only sees him once his bounds are in
+// frame, and leaves a critter already running out alone, so one leaving by
+// that edge can still be in his way when he arrives.
+bool hikerComingIn(const World& w, int side) {
+  const Hiker& h = w.hiker;
+  if (!w.fx.on || h.visible || !h.walking) return false;
+  return side < 0 ? h.feet.x < 0.f && h.facing > 0 : h.feet.x > (float)SS_WIDTH && h.facing < 0;
+}
+
 // Sitting still (by the fire, reading): a leaf can land on his hat, a bee on his nose.
 bool hikerSitting(const World& w) {
   const Hiker* h = hikerIn(w);
@@ -1238,7 +1248,7 @@ void finish(World& w) {
   }
   m.slot[0] = m.slot[1] = -1;
   m.cur = MN_NONE;
-  const uint32_t q = w.tick + ticksOf(kAfterMinor);
+  const uint32_t q = storyTick(w) + ticksOf(kAfterMinor);
   if (m.hold_tick < q) m.hold_tick = q;
 }
 
@@ -1259,7 +1269,7 @@ void pickAndStart(World& w) {
     }
   }
   if (sum <= 0.f) {
-    m.next_tick = w.tick + ticksOf(1.f);
+    m.next_tick = storyTick(w) + ticksOf(1.f);
     return;
   }
   const int id = m.rng.weighted(wt, MN_COUNT);
@@ -1277,18 +1287,18 @@ void pickAndStart(World& w) {
       if (m.bit[k] >= 0) freeBit(w, k);
     }
     m.slot[0] = m.slot[1] = -1;
-    m.next_tick = w.tick + ticksOf(1.f);
+    m.next_tick = storyTick(w) + ticksOf(1.f);
     return;
   }
   m.cur = (uint8_t)id;
-  m.last_start = w.tick;
+  m.last_start = storyTick(w);
   ++m.fired;
   if (m.fired_by[id] < 255) ++m.fired_by[id];
   m.ring[m.ring_i] = (uint8_t)id;
   m.ring_i = (uint8_t)((m.ring_i + 1) % MINOR_RING);
   if (m.ring_n < MINOR_RING) ++m.ring_n;
   const float gap = m.rng.range(kGapMin, kGapMax);
-  m.next_tick = w.tick + ticksOf(gap);
+  m.next_tick = storyTick(w) + ticksOf(gap);
 }
 
 }  // namespace
@@ -1345,7 +1355,7 @@ void minorsStep(World& w, Renderer& r) {
   // A beat other than a pause just ended: a breath before the next minor.
   if (m.beat_idx != m.prev_idx) {
     if (m.prev_idx >= 0 && !m.prev_pause) {
-      const uint32_t q = w.tick + ticksOf(kBeatHold);
+      const uint32_t q = storyTick(w) + ticksOf(kBeatHold);
       if (m.hold_tick < q) m.hold_tick = q;
     }
     m.prev_idx = m.beat_idx;
@@ -1380,6 +1390,9 @@ void minorsStep(World& w, Renderer& r) {
     if (m.cur != MN_NONE && m.stage == MINOR_ENDING) {
       for (int k = 0; k < 2; ++k) {   // at the edge: the director takes it out
         Critter* c = own(w, k);
+        // He has set off back in through the edge it is heading for: round it goes, out by the other.
+        if (c && m.leave_side[k] != 0 && hikerComingIn(w, m.leave_side[k]))
+          leave(w, k, -m.leave_side[k], m.leave_speed[k], (CritterAction)m.leave_gait[k]);
         if (c && m.leave_side[k] != 0 && critterArrived(*c)) {
           directorExit(w, m.slot[k], m.leave_side[k], m.leave_speed[k], (CritterAction)m.leave_gait[k]);
           m.leave_side[k] = 0;
@@ -1409,10 +1422,10 @@ void minorsStep(World& w, Renderer& r) {
   // The weather has him (weather.h: the wind took his hat, or he is fanning
   // himself with it): wait until he has it back on.
   if (w.weather.gag == WG_HAT || w.weather.gag == WG_FAN) return;
-  if (w.tick < m.hold_tick) return;
+  if (storyTick(w) < m.hold_tick) return;
   const bool moth_early = gate(w, MN_MOTH_LANTERN) && m.fired_by[MN_MOTH_LANTERN] == 0 &&
-                          (m.fired == 0 || w.tick >= m.last_start + ticksOf(kGapMin));
-  if (w.tick < m.next_tick && !moth_early) return;
+                          (m.fired == 0 || storyTick(w) >= m.last_start + ticksOf(kGapMin));
+  if (storyTick(w) < m.next_tick && !moth_early) return;
   pickAndStart(w);
 }
 

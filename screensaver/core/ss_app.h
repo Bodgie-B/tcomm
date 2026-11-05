@@ -20,7 +20,8 @@ struct Inputs {
   int weather_code;       // scene weather: 0 clear, 1 rain, 2 snow, 3 wind, 4 heat, 5 fog, 6 chill, 7 storm (scene/weather.cpp kCodeKinds)
   bool have_outside;      // false: no OUTSIDE reading for 15 min, pick random weather
   int other_status;       // 0 Open, 1 Busy, 2 Private, 3 Sleeping, 4 Away, 5 No signal
-  int dog_out;            // 0 none, 1 Lucy, 2 Copper
+  int dog_out;            // 0 none, 1 Lucy, 2 Copper, 3 both
+  bool chip;              // draw the status chip and dog badges (scene/chip.h); the panel: always
   bool night_mode;        // night rule in force (dim, no large bright areas)
   bool lookout_window;    // true inside the sunset window: play the Lookout spine
   // 0: the loop's spine family follows the inputs (scene/spine.h
@@ -32,10 +33,10 @@ struct Inputs {
 
 struct App;   // opaque to the host; defined in core/scene/app.cpp
 
-// Size of the App object so the host can place it in internal SRAM or PSRAM
-// without core allocating. Must be >= sizeof(App); checked at compile time in
-// app.cpp.
-#define SS_APP_BYTES (96 * 1024)
+// Size of the App object so the host can place it without core allocating
+// (PSRAM on the board: the per-pixel buffers are in the fast block, see
+// HostAlloc). Must be >= sizeof(App); checked at compile time in app.cpp.
+#define SS_APP_BYTES (32 * 1024)
 
 // Start the screensaver. `storage` is SS_APP_BYTES of host memory. `seed` picks
 // the first loop; later loops reseed from the loop's own RNG, so a first seed
@@ -56,6 +57,21 @@ int appRender(App* app, Surface& fb);
 
 // Force every strip dirty (after the host touched the framebuffer, or on resume).
 void appInvalidate(App* app);
+
+// The touch reveal (brief section 11). At the touch, appRevealBegin freezes the
+// scene where it is and hands back a full frame (SS_WIDTH x SS_HEIGHT, stride
+// SS_WIDTH, in large memory: the layer cache, which the frozen scene no longer
+// needs, so the reveal costs no extra PSRAM). The host fills it with the main
+// screen exactly as it should look. Then, once per frame, appRevealStep grows
+// a circle from (x, y) that shows the main screen through the scene, with a
+// thin ring at its edge, and returns true when the whole frame is the main
+// screen (about kRevealSeconds, scene/reveal.h). appTick and appRender do
+// nothing meanwhile. appRevealBegin also hands the fast block back
+// (HostAlloc::fast): core never touches it again, so the panel can use LVGL's
+// buffer to draw the main screen into the frame core returned. Afterwards the
+// host gives the screen back to its own UI and calls appStop.
+Pixel* appRevealBegin(App* app, int x, int y);
+bool appRevealStep(App* app, Surface& fb, float dt);
 
 // Introspection for the preview HUD and logs.
 const char* appBeatName(const App* app);

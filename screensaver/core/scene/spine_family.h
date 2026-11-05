@@ -53,6 +53,47 @@ int morningVariantCount(int beat);
 // Every tick (from spineCritterScenes): the fog lift and the morning's critters.
 void morningTick(World& w);
 
+// ---- the morning where the camp stays up (morning_stay.cpp) ---------------------------------
+// The other morning ("the camp stays up", MORNING_DAYTIME_PLAN.md section 4), picked per loop by
+// morningPlan (60 %, PROPOSED): LoopPlan::stay is 1. His wake and coffee, then the morning pee and
+// the raid, breakfast with the pancake flip, the wash at the stream, the tidy with the stuff sack,
+// and off on a day hike with the camp left standing. The morning's public functions above hand over
+// to these when the plan's `stay` is set.
+
+enum StayBeatId : uint8_t {
+  SY_WAKE = 0, SY_COFFEE, SY_PEE, SY_BREAKFAST, SY_WASH, SY_TIDY, SY_DAYHIKE, SY_COUNT
+};
+
+// The plan, drawn from `rng` (the stay's own stream: morningPlan keeps the loop rng's draws as
+// Mark's morning made them).
+void stayPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem);
+// After morningLayout: the shoes at the tent door, the places the stay's beats use.
+void stayLayout(World& w);
+void stayBuildTimeline(Timeline& tl, const LoopPlan& p);
+uint32_t stayLoopTicks(const LoopPlan& p);
+int stayFormatPlan(const LoopPlan& p, char* buf, size_t n);
+const char* stayBeatName(int beat);
+int stayVariantCount(int beat);
+// Every tick, from morningTick: the squirrel and the raccoon at the pine, the bird at the pan, the
+// animals back in the empty camp, and what his hand holds that World does not place.
+void stayTick(World& w);
+
+// What the stay takes from Mark's morning (spine_morning.cpp): his build beat, his wake (3
+// variants) and coffee (4: d, the boil-over, is the stay's alone) as scripts, seconds and begin and
+// end hooks, and a few of his actions.
+const Beat& morningBuildBeat();
+const Step* morningSharedScript(int beat, int variant, uint8_t& n);
+int morningSharedSeconds(int beat, int variant);
+void morningSharedBegin(SceneCtx& ctx, int beat);
+void morningSharedEnd(SceneCtx& ctx);
+void morningActRummage(World& w, float u);
+void morningActPotOff(World& w, float u);
+void morningActKick(World& w, float u);
+void morningActLastPuff(World& w, float u);
+void morningActPackLift(World& w, float u);
+void morningActPackOn(World& w, float u);
+void morningFireOut(World& w);
+
 // ---- midday (spine_midday.cpp) --------------------------------------------------------
 
 enum MiddayBeatId : uint8_t {

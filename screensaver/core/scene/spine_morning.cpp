@@ -485,6 +485,79 @@ void actGuardSip(World& w, float u) {
   if (u >= 1.f) fxRest(w);
 }
 
+// Coffee d (the camp-stays morning only; Mark's plan never draws it): the pot boils over. It heats
+// with a wisp or two, the lid rattles, steam bursts out (dinner b's Steam) and he jumps back; then
+// he pulls his sleeve down over his hand and takes it off the fire.
+void actHeating(World& w, float u) {
+  Steam& st = w.steam;
+  const Vec2 top = potOnFire(w);
+  const float s = u * 2.4f;
+  st.at = Vec2{top.x, top.y - 10.f};
+  st.n = 1;
+  st.t = u >= 1.f ? -1.f : s - 1.2f * floorf(s / 1.2f);   // a wisp every 1.2 s
+}
+// The lid chatters: the pot jumps a px at a time, faster as it goes, wisps coming quicker.
+void actPotRattle(World& w, float u) {
+  Steam& st = w.steam;
+  const Vec2 top = potOnFire(w);
+  const float s = u * 2.4f;
+  st.at = Vec2{top.x, top.y - 10.f};
+  st.n = 2;
+  st.t = u >= 1.f ? -1.f : s - 0.6f * floorf(s / 0.6f);
+  const float shake = floorf(0.5f + 1.4f * u * sinT(s * (3.f + 5.f * u)));   // whole px: it stays crisp
+  w.items[ITEM_POT].pos = Vec2{top.x + 0.f, top.y - fabsf(shake) * (u >= 1.f ? 0.f : 1.f)};
+  w.fx.head = 0.12f * envelope(u, 0.2f, 0.2f);   // leaning in to look
+  if (u >= 1.f) {
+    w.items[ITEM_POT].pos = top;
+    fxRest(w);
+  }
+}
+constexpr float kBoilCoffeeS = 2.4f;
+void actBoilOverCoffee(World& w, float u) {
+  const float s = u * kBoilCoffeeS;
+  Steam& st = w.steam;
+  const Vec2 top = potOnFire(w);
+  st.at = Vec2{top.x, top.y - 10.f};
+  st.n = w.plan.steam_n;
+  st.t = s;
+  w.items[ITEM_POT].pos.y = top.y - 1.2f * (0.5f + 0.5f * sinT(s * 5.f)) * (1.f - window(s, 0.f, 1.2f));
+  const float k = easeOutCubic(window(s, 0.15f, 0.35f)) * (1.f - easeInOut(window(s, 0.8f, 1.7f)));
+  w.fx.lean = -0.22f * k;
+  w.fx.head = -0.25f * k;
+  setArm(w, 0, 0.5f * k, 2.5f, 0.5f);
+  setArm(w, 1, 0.5f * k, 2.1f, 0.7f);
+  if (u >= 1.f) {
+    st.t = -1.f;
+    w.items[ITEM_POT].pos = top;
+    fxRest(w);
+  }
+}
+// The sleeve pulled down over his near hand (the far hand tugs it), then the pot lifted off the
+// fire and set down on the ground in front of the pit; a shake of the hand.
+constexpr float kSleeveS = 3.6f;
+void actSleeveOff(World& w, float u) {
+  Item& p = w.items[ITEM_POT];
+  const float s = u * kSleeveS;
+  const Vec2 top = potOnFire(w), dst = w.spine.camp.pot_down;
+  const float tug = plateau(s, 0.1f, 0.3f, 0.5f);
+  setArm(w, 1, tug, 1.0f, 2.1f + 0.2f * sinT(s * 4.f));   // the far hand at his near wrist
+  const float take = easeInOut(window(s, 1.0f, 1.5f));    // the near arm out to the handle
+  const float lift = easeInOut(window(s, 1.7f, 3.0f));
+  w.fx.reach_to = 1.25f;
+  w.fx.reach = take * (1.f - easeInOut(window(s, 3.0f, 3.3f)));
+  w.fx.lean = 0.1f * take * (1.f - lift);
+  w.fx.head = 0.1f * take;
+  p.on_fire = true;   // in front of the flames all the way, as it lands in front of them too
+  p.pos = Vec2{lerp(top.x, dst.x, lift), lerp(top.y, dst.y, lift) - 12.f * sinT(0.5f * lift)};
+  const float shake = plateau(s, 3.1f, 0.1f, 0.2f);   // the hand shaken
+  if (shake > 0.f) setArm(w, 0, shake, 0.4f + 0.5f * sinT(s * 9.f), 0.5f);
+  if (u >= 1.f) {
+    p.on_fire = false;
+    p.pos = dst;
+    fxRest(w);
+  }
+}
+
 // ---- bag_down -------------------------------------------------------------------------
 
 float bagGroundLine(const World& w) { return w.spine.camp.bag_work.y - 2.f - w.bag.tip.y - 14.9f; }
@@ -1035,13 +1108,16 @@ const Step kWakeC[] = {
 // Coffee, shared start: the pot out of the pack onto the pit, the fire
 // rekindled small; the mug out of the pack, filled; sits against the
 // reading rock, looking out.
-#define COFFEE_START                                                                                      \
+// (Two halves, so the stay's boil-over, coffee d, can put its boiling between them.)
+#define COFFEE_POT                                                                                        \
   FROM_REST, PACK_CROUCH, act(actRummage, 1.4f), doit(doPotUp), pose(POSE_CARRY, 0.6f, 0.1f),             \
       go(AT_BLOW, 30.f), face(LEFT), pose(POSE_CROUCH, 0.6f, 0.2f), act(actPotOnFire, 1.0f),              \
-      pose(POSE_BLOW, 0.7f, 0.2f), act(actRekindle, 4.5f), pose(POSE_CROUCH, 0.6f, 0.8f),                 \
-      pose(POSE_STAND, 0.6f, 0.1f), PACK_CROUCH, doit(doMugUp), pose(POSE_STAND, 0.6f, 0.1f),             \
+      pose(POSE_BLOW, 0.7f, 0.2f), act(actRekindle, 4.5f), pose(POSE_CROUCH, 0.6f, 0.8f)
+#define COFFEE_MUG                                                                                        \
+  pose(POSE_STAND, 0.6f, 0.1f), PACK_CROUCH, doit(doMugUp), pose(POSE_STAND, 0.6f, 0.1f),                 \
       go(AT_BLOW, 30.f), face(LEFT), pose(POSE_CROUCH, 0.6f, 0.1f), act(actPour, 1.6f),                   \
       pose(POSE_STAND, 0.6f, 0.1f), go(AT_READ, kStroll), face(RIGHT), pose(POSE_SIT, 0.9f, 0.4f)
+#define COFFEE_START COFFEE_POT, COFFEE_MUG
 // Shared end: the mug down beside him (by the rock), back to the fire.
 #define COFFEE_END doit(doMugDown), still(0.6f), pose(POSE_STAND, 0.8f, 0.3f), TO_SIT
 
@@ -1058,6 +1134,20 @@ const Step kCoffeeC[] = {
     still(1.0f),
     until(critGone),
     act(actGuardSip, kGuardSipS),
+    COFFEE_END,
+};
+// Coffee d (the stay's only): the pot boils over; the sleeve over his hand takes it off the fire.
+const Step kCoffeeD[] = {
+    COFFEE_POT,
+    pose(POSE_STAND, 0.6f, 0.2f),
+    act(actHeating, 2.4f),
+    act(actPotRattle, 2.4f),
+    act(actBoilOverCoffee, kBoilCoffeeS),
+    still(0.9f),
+    act(actSleeveOff, kSleeveS),
+    COFFEE_MUG,
+    act(actSipOne, kSipOneS),
+    still(2.0f),
     COFFEE_END,
 };
 
@@ -1240,6 +1330,8 @@ const Step kLeaveC[] = {
 #undef TO_SIT
 #undef PACK_CROUCH
 #undef WAKE_OUT
+#undef COFFEE_POT
+#undef COFFEE_MUG
 #undef COFFEE_START
 #undef COFFEE_END
 #undef BAG_START
@@ -1261,13 +1353,14 @@ struct Script {
 #define SCRIPT(a) Script{a, N(a)}
 #define NO_SCRIPT Script{nullptr, 0}
 
-const Script kScripts[MB_COUNT][3] = {
-    {SCRIPT(kWakeA), SCRIPT(kWakeB), SCRIPT(kWakeC)},
-    {SCRIPT(kCoffeeA), SCRIPT(kCoffeeB), SCRIPT(kCoffeeC)},
-    {SCRIPT(kBagDownA), SCRIPT(kBagDownB), NO_SCRIPT},
-    {SCRIPT(kCampA), SCRIPT(kCampB), SCRIPT(kCampC)},
-    {SCRIPT(kDouseA), SCRIPT(kDouseB), NO_SCRIPT},
-    {SCRIPT(kLeaveA), SCRIPT(kLeaveB), SCRIPT(kLeaveC)},
+// (A fourth slot for the stay's coffee d; morningVariantCount stops at 3, so Mark's plan never draws it.)
+const Script kScripts[MB_COUNT][4] = {
+    {SCRIPT(kWakeA), SCRIPT(kWakeB), SCRIPT(kWakeC), NO_SCRIPT},
+    {SCRIPT(kCoffeeA), SCRIPT(kCoffeeB), SCRIPT(kCoffeeC), SCRIPT(kCoffeeD)},
+    {SCRIPT(kBagDownA), SCRIPT(kBagDownB), NO_SCRIPT, NO_SCRIPT},
+    {SCRIPT(kCampA), SCRIPT(kCampB), SCRIPT(kCampC), NO_SCRIPT},
+    {SCRIPT(kDouseA), SCRIPT(kDouseB), NO_SCRIPT, NO_SCRIPT},
+    {SCRIPT(kLeaveA), SCRIPT(kLeaveB), SCRIPT(kLeaveC), NO_SCRIPT},
 };
 #undef SCRIPT
 #undef NO_SCRIPT
@@ -1275,13 +1368,13 @@ const Script kScripts[MB_COUNT][3] = {
 
 // Beat seconds per variant (whole seconds: the script plus room for the
 // longer walks on some seeds). Tuned with SS_SPINE_TRACE.
-const uint8_t kDurations[MB_COUNT][3] = {
-    {28, 30, 27},   // wake (c: the bird's visit)
-    {69, 68, 74},   // coffee (the pot, the fire, the mug, then the sitting)
-    {33, 41, 0},    // bag_down (the walks: bag pine, pack)
-    {46, 43, 41},   // break_camp
-    {26, 23, 0},    // douse
-    {46, 46, 55},   // leave (the walk out, then the last 2.5 s fade to black; +7 for the book pickup)
+const uint8_t kDurations[MB_COUNT][4] = {
+    {28, 30, 27, 0},   // wake (c: the bird's visit)
+    {69, 68, 74, 64},   // coffee (the pot, the fire, the mug, then the sitting; d: the stay's boil-over)
+    {33, 41, 0, 0},    // bag_down (the walks: bag pine, pack)
+    {46, 43, 41, 0},   // break_camp
+    {26, 23, 0, 0},    // douse
+    {46, 46, 55, 0},   // leave (the walk out, then the last 2.5 s fade to black; +7 for the book pickup)
 };
 
 const char* const kBeatNames[MB_COUNT] = {"wake", "coffee", "bag_down", "break_camp", "douse", "leave"};
@@ -1485,11 +1578,13 @@ int morningVariantCount(int beat) {
   return n;
 }
 
-void morningPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
+// Mark's plan: break camp and leave. Untouched but for its `again` (a variant the last morning
+// played is a quarter as likely only when that morning was Mark's: the stay keeps its own memory).
+static void breakCampPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
   // One rng call per statement: argument evaluation order differs between
   // compilers, and the board must replay the PC preview.
   // Variants: a variant the last morning played is a quarter as likely.
-  const bool again = mem.last_family == SF_MORNING && mem.loop_count > 1;
+  const bool again = mem.last_family == SF_MORNING && !mem.last_stay && mem.loop_count > 1;
   p.n_fbeats = MB_COUNT;
   for (int b = 0; b < 8; ++b) p.fvar[b] = 0;
   for (int b = 0; b < MB_COUNT; ++b) {
@@ -1557,6 +1652,27 @@ void morningPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
   p.fog_t1 = ticksThroughPause(p, MB_COFFEE);
 }
 
+// The morning's variant pick: the camp stays up (morning_stay.cpp) with probability kStayShare
+// (PROPOSED 0.6, Mike's call), else Mark's break camp. The pick is drawn from a stream of its own,
+// seeded from the loop rng's state WITHOUT drawing from it, and Mark's plan always runs on the loop
+// rng (on scratch copies when the stay is picked): the loop rng takes exactly the draws it took before
+// the stay existed, so every loop seed and every break-camp plan is what it was.
+constexpr float kStayShare = 0.6f;
+constexpr uint64_t kStayStream = 0x57A7C0FFEEull;
+void morningPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
+  Rng pick;
+  pick.seed(rng.state, kStayStream);
+  const bool stay = pick.chance(kStayShare);
+  if (!stay) {
+    breakCampPlan(p, rng, in, mem);
+    return;
+  }
+  LoopPlan scratch = p;
+  Memory scratch_mem = mem;
+  breakCampPlan(scratch, rng, in, scratch_mem);   // only to move the loop rng as it always moved
+  stayPlan(p, pick, in, mem);
+}
+
 void morningLayout(World& w) {
   CampLayout& c = w.spine.camp;
   const LoopPlan& p = w.plan;
@@ -1593,9 +1709,11 @@ void morningLayout(World& w) {
   }
   w.fog_extra = 0.05f * (float)p.fog_steps;
   w.memory.cairn_n = p.cairn_start;
+  if (p.stay) stayLayout(w);
 }
 
 void morningBuildTimeline(Timeline& tl, const LoopPlan& p) {
+  if (p.stay) return stayBuildTimeline(tl, p);
   tl.add(kMorningBuild);
   for (int b = 0; b < MB_COUNT; ++b) {
     tl.add(Beat{kBeatNames[b], (float)beatSeconds(p, b), kBegin[b], b == MB_LEAVE ? leaveUpdate : beatUpdate, beatEnd});
@@ -1616,6 +1734,7 @@ void morningBuildTimeline(Timeline& tl, const LoopPlan& p) {
 }
 
 uint32_t morningLoopTicks(const LoopPlan& p) {
+  if (p.stay) return stayLoopTicks(p);
   const uint32_t build = (uint32_t)ceilf(SS_BUILD_SECONDS * (float)SS_TICK_HZ - 1e-3f);
   const int rest = busySeconds(p) - (int)(SS_BUILD_SECONDS + 0.5f) + spinePauseSeconds(p, MB_COUNT - 1);
   return build + (uint32_t)rest * SS_TICK_HZ;
@@ -1623,6 +1742,7 @@ uint32_t morningLoopTicks(const LoopPlan& p) {
 
 int morningFormatPlan(const LoopPlan& p, char* buf, size_t n) {
   if (!buf || n == 0) return 0;
+  if (p.stay) return stayFormatPlan(p, buf, n);
   int k = snprintf(buf, n, "family=morning");
   auto put = [&](const char* str) {
     if (k < 0 || (size_t)k >= n) return;
@@ -1656,12 +1776,40 @@ void morningTick(World& w) {
   // The fog lifts from the end of the build to the end of the coffee's pause,
   // eased, in 0.05 steps (each a palette change: a cache rebuild).
   float k = 1.f;
-  if (w.tick >= p.fog_t1) k = 0.f;
-  else if (w.tick > p.fog_t0) k = 1.f - easeInOut((float)(w.tick - p.fog_t0) / (float)(p.fog_t1 - p.fog_t0));
+  const uint32_t t = storyTick(w);
+  if (t >= p.fog_t1) k = 0.f;
+  else if (t > p.fog_t0) k = 1.f - easeInOut((float)(t - p.fog_t0) / (float)(p.fog_t1 - p.fog_t0));
   const float steps = ceilf((float)p.fog_steps * k - 1e-3f);
   w.fog_extra = 0.05f * maxf(0.f, steps);
   critTick(w);
   flyTick(w);
+  if (p.stay) stayTick(w);
 }
+
+// ---- what the camp-stays morning (morning_stay.cpp) shares of Mark's ---------------------------
+// Its first two beats are his wake and coffee (coffee has a fourth variant, d, for it alone), and its
+// build is his; a few of his actions are the stay's too.
+
+const Beat& morningBuildBeat() { return kMorningBuild; }
+const Step* morningSharedScript(int beat, int variant, uint8_t& n) {
+  n = 0;
+  if (beat < 0 || beat >= MB_COUNT || variant < 0 || variant > 3) return nullptr;
+  n = kScripts[beat][variant].n;
+  return kScripts[beat][variant].steps;
+}
+int morningSharedSeconds(int beat, int variant) {
+  return beat >= 0 && beat < MB_COUNT && variant >= 0 && variant < 4 ? kDurations[beat][variant] : 0;
+}
+void morningSharedBegin(SceneCtx& ctx, int beat) {
+  if (beat >= 0 && beat < MB_COUNT) kBegin[beat](ctx);
+}
+void morningSharedEnd(SceneCtx& ctx) { beatEnd(ctx); }
+void morningActRummage(World& w, float u) { actRummage(w, u); }
+void morningActPotOff(World& w, float u) { actPotOff(w, u); }
+void morningActKick(World& w, float u) { actKick(w, u); }
+void morningActLastPuff(World& w, float u) { actLastPuff(w, u); }
+void morningActPackLift(World& w, float u) { actPackLift(w, u); }
+void morningActPackOn(World& w, float u) { actPackOn(w, u); }
+void morningFireOut(World& w) { fireOut(w); }
 
 }  // namespace ss

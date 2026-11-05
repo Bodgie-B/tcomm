@@ -10,9 +10,12 @@
 #include "../anim/rng.h"
 #include "../render/renderer.h"
 #include "ambient.h"
+#include "boomerang.h"
 #include "buildup.h"
 #include "critters.h"
+#include "day.h"
 #include "hiker.h"
+#include "kite.h"
 #include "landscape.h"
 #include "lookout.h"
 #include "lookout_land.h"
@@ -51,7 +54,13 @@ struct FirePit {
 // critter).
 enum ActorKind : uint8_t {
   ACT_FIRE = 0, ACT_TUFT, ACT_HIKER, ACT_TENT, ACT_PACK, ACT_BAG, ACT_CAIRN, ACT_ITEM, ACT_FGPINE, ACT_LEAF,
-  ACT_CRITTER, ACT_BIT, ACT_MAJOR, ACT_WXBIT
+  ACT_CRITTER, ACT_BIT, ACT_MAJOR, ACT_WXBIT,
+  // The daytime majors' flyers (day_kite.h, day_boomerang.h): the kite with its line, the boomerang
+  // (flying, in his hand, or stuck in the camp pine) and the eagle. Sorted just after the hiker.
+  ACT_KITE, ACT_BOOM, ACT_EAGLE,
+  // The bike, the archery, the slackline or the ropes course (day.h): idx is the part (DAY_PARTS),
+  // each sorted at the y dayPartY gives.
+  ACT_DAY
 };
 struct ActorRef {
   uint8_t kind;
@@ -63,8 +72,10 @@ struct ActorRef {
 // stops adding at the cap (tufts are added before the critters, so a full
 // list drops critters at the far left first, never the hiker or props).
 // A major's glyphs (up to GLYPH_MAX 28: kept stars and fireflies) come last;
-// 88 holds them all; the weather's bits (WX_BITS 4) on top.
-#define WORLD_ACTOR_MAX 95
+// 88 holds them all; the weather's bits (WX_BITS 4) on top; the kite, the
+// boomerang and the eagle (3) on top of those: the stuck boomerang stays in
+// the camp pine into the next loop, so it can meet the evening's 28 glyphs.
+#define WORLD_ACTOR_MAX 104   // 98 and the morning stay's four items (pan, cake, brush, sack), and the day pieces' second part (day.h)
 
 // Critters in the scene: slots the director (director.h) hands out.
 #define CRITTER_MAX 8
@@ -120,6 +131,17 @@ struct HikerFx {
   float wet_y;
 };
 
+// The hiker's doorbell reaction (react.h). While `active` the story holds
+// still; his facing and pose offsets go back as they were when it ends.
+struct DoorbellReact {
+  bool active;
+  bool hands_full;   // carrying something: a hop and a look, no wave
+  bool look_only;    // the bow up (archery): he only looks round
+  int facing;        // his facing at the bell
+  int ticks;         // since the bell
+  HikerFx fx;        // his pose offsets at the bell
+};
+
 // Previous bounds per element, so a move dirties both where it was and where it is.
 struct WorldDirty {
   Rect cloud[2];
@@ -134,10 +156,18 @@ struct WorldDirty {
   Bit bit_s[BITS_MAX];
   Rect tent, pack, bag, cairn;
   Rect item[ITEM_COUNT];
-  Rect steam, skip, leaf;
+  Rect steam, skip, leaf, rustle;
   Steam steam_s;
   Skip skip_s;
   Leaf leaf_s;
+  Rustle rustle_s;
+  // The daytime majors' union as it was last tick (dayTrack marks what changed between it and the
+  // live one: the kite's kiteDirty, the bike's bikeDirty and splashDirty, and so on), the
+  // boomerang and the eagle (their bounds, while drawn; boomerangSame, eagleSame).
+  DayState day_s;
+  Boomerang boom_s;
+  Eagle eagle_s;
+  Rect boom, eagle;
   float fade;
   Tent tent_s;                     // prop state last tick (a prop that did not change marks nothing)
   PackProp pack_s;
@@ -164,6 +194,7 @@ struct World {
   FirePit fire;
   Hiker hiker;
   HikerFx fx;
+  DoorbellReact react;
   Rect hiker_rect;   // what the hiker (and his armload) covers this tick, clipped to the frame; empty when hidden
   Rect hiker_full;   // the same, unclipped (for checks that he stays in frame)
   Tent tent;
@@ -174,6 +205,7 @@ struct World {
   Steam steam;       // the pot boiling over (dinner b)
   Skip skip;         // a skipped stone and its rings (skip_stone filler)
   Leaf leaf;         // the leaf that lands on his knee (stream_listen filler)
+  Rustle rustle;     // the big pine shaking where he went in behind it (the morning stay's pee)
   Critter critters[CRITTER_MAX];
   CritterSlot crit[CRITTER_MAX];
   Rect critter_rect[CRITTER_MAX];   // this tick's bounds; empty when hidden or free
@@ -183,6 +215,12 @@ struct World {
   // minors wait. Set and cleared by those beats' begin and end hooks.
   bool busy;
   MajorState major;  // the surprise major running now, and its glyphs (majors.h)
+  // The daytime majors' own pieces. day: the kite, the bike, the archery, the slackline or the ropes
+  // course, whichever runs (a union: day.h), none (DAY_NONE, all zero) otherwise. boom: the boomerang
+  // (day_boomerang.h), hidden unless its major runs but for the one stuck in the camp pine
+  // (Memory::boom_stuck puts it back at loop start), so it is not in the union.
+  DayState day;
+  BoomFlight boom;
   Minors minors;     // the minor-effect layer (minors.h)
   // Whole-frame fade to ACTOR (near black): 0 none, 1 black. The close ends
   // on 1; the build beat brings the next loop up from it.
@@ -203,7 +241,14 @@ struct World {
   ActorRef actors[WORLD_ACTOR_MAX];
   WorldDirty dirty;
   uint32_t tick;     // ticks since loop start
+  uint32_t frozen;   // ticks of this loop the doorbell reaction held the story (react.h)
 };
+
+// The story's clock: ticks since loop start, less the doorbell freezes. Every
+// deadline the story keeps (the minors' gaps, the weather's gags and gusts, the
+// morning's fog lift) runs on this, so a bell delays them instead of using them
+// up; the ambient animation (rain, the tent's breathing) runs on World::tick.
+inline uint32_t storyTick(const World& w) { return w.tick - w.frozen; }
 
 struct SceneCtx {
   App* app;

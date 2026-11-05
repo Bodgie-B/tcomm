@@ -5,7 +5,9 @@
 #include <string.h>
 
 #include "../anim/ease.h"
+#include "day_boomerang.h"
 #include "director.h"
+#include "react.h"
 
 namespace ss {
 
@@ -40,6 +42,12 @@ inline void unite(Rect& r, const Rect& b) {
 
 inline int16_t baseY(float y) { return (int16_t)floorf(y); }
 
+// The boomerang is drawn (and marks dirty strips) once the build is done: the camp pine it may be
+// stuck in is not there before, and a stuck one is set at loop start (Memory::boom_stuck).
+inline bool boomDrawn(const World& w) { return w.boom.boom.on && buildDone(w.build); }
+inline Rect boomBounds(const World& w) { return boomDrawn(w) ? boomerangBounds(w.boom.boom) : Rect{0, 0, 0, 0}; }
+inline Rect eagleBoundsOf(const World& w) { return w.boom.eagle.on ? eagleBounds(w.boom.eagle) : Rect{0, 0, 0, 0}; }
+
 // Ground actors far to near by base y; insertion sort keeps equal y in list order.
 // Every push goes through `add`, which stops at WORLD_ACTOR_MAX.
 struct ActorList {
@@ -71,6 +79,17 @@ void sortActors(World& w) {
   if (h.visible) {
     L.add(ACT_HIKER, 0, baseY(h.feet.y));
     addPines(L, w, w.hiker_rect, 0);
+  }
+  {   // The daytime majors' flyers go in right after him: the kite's line leaves his hand, the boomerang
+      // sits in it, the eagle clears his head. A boomerang stuck in the camp pine sorts at the trunk's foot.
+    const int16_t air = held_y > (int16_t)(w.fire.pos.y + 7.f) ? held_y : (int16_t)(w.fire.pos.y + 7.f);
+    if (w.day.kind == DAY_KITE && w.day.kite.mode != KITE_HIDDEN) L.add(ACT_KITE, 0, air);
+    if (boomDrawn(w)) L.add(ACT_BOOM, 0, w.boom.phase == BP_STUCK ? (int16_t)(w.land.camp.base_y + 1) : air);
+    if (w.boom.eagle.on) L.add(ACT_EAGLE, 0, air);
+    for (int p = 0; p < DAY_PARTS; ++p) {   // the bike, the archery, the slackline, the ropes course (day.h)
+      int16_t y;
+      if (dayPartY(w, p, y)) L.add(ACT_DAY, (uint8_t)p, y);
+    }
   }
   if (w.tent.state != TENT_PACKED) L.add(ACT_TENT, 0, baseY(w.tent.pos.y));
   if (w.pack.shown && (!w.pack.held || h.visible)) L.add(ACT_PACK, 0, w.pack.held ? held_y : baseY(w.pack.pos.y));
@@ -124,7 +143,7 @@ void sortActors(World& w) {
 // The hiker's tick: the rig, then what the spine layers on it (feet on the
 // walk path, a hop while wading, pose offsets), the fire's rim light, what he
 // holds, and whether he is in frame.
-void stepHiker(World& w) {
+void stepHiker(World& w, bool frozen = false) {
   Hiker& h = w.hiker;
   HikerFx& fx = w.fx;
   if (!fx.on) {
@@ -135,7 +154,7 @@ void stepHiker(World& w) {
   const bool was_walking = h.walking;
   const bool lookout = w.plan.family == SF_LOOKOUT;
   if (lookout) lookoutHikerPre(w);   // his height from where he is on the hill, his pace from his height
-  hikerTick(h, SS_TICK_DT);
+  hikerTick(h, frozen ? 0.f : SS_TICK_DT);   // frozen (the doorbell reaction): recompose only
   if (h.walking && fx.path_on) {
     const float span = fx.path_x1 - fx.path_x0;
     const float u = span != 0.f ? clamp01((h.feet.x - fx.path_x0) / span) : 1.f;
@@ -144,6 +163,7 @@ void stepHiker(World& w) {
     h.feet.y = fx.path_y1;   // arrived this tick: the last step's y too
   }
   if (lookout) lookoutHikerPost(w);   // the climbing gait on the stairs
+  dayPose(w);   // the bike, the slackline walker and the ropes course pose him; the archer's draw bends his pose (day.h)
 
   HikerPose& P = h.pose;
   P.lean += fx.lean;
@@ -178,6 +198,7 @@ void stepHiker(World& w) {
   }
   // The weather's overlay (a hug, the hat fanned, a shiver), over all of it.
   weatherApplyPose(w, P, h.height);
+  reactPose(w, P);   // and his doorbell wave over that (react.h)
   // The waterline on him: none on the bank; deeper the further in he is.
   fx.wet_y = 0.f;
   if (fx.wade) {
@@ -199,7 +220,7 @@ void stepHiker(World& w) {
   for (int i = 0; i < ITEM_COUNT; ++i) {
     Item& it = w.items[i];
     if (!it.held || it.critter) continue;   // a critter's paw holds it (directorStep)
-    it.pos = i == ITEM_FORK || i == ITEM_FISH ? hikerHandPos(h, 0) : m;   // fork, fish stick: in his near hand
+    it.pos = i == ITEM_FORK || i == ITEM_FISH || i == ITEM_BRUSH ? hikerHandPos(h, 0) : m;   // fork, fish stick, toothbrush: in his near hand
     it.facing = (int8_t)h.facing;
     it.ground_y = h.feet.y;
   }
@@ -288,6 +309,7 @@ void worldBeginLoop(World& w, Rng& rng) {
   buildReset(w.build);
   ambientInit(w, rng);
   w.tick = 0;
+  w.frozen = 0;
 
   // Camp: layout from the pit and the landscape; nothing pitched, the hiker
   // waits off-frame until the arrival beat places him.
@@ -315,6 +337,7 @@ void worldBeginLoop(World& w, Rng& rng) {
   w.skip.t = -1.f;
   for (Vec2& p : w.skip.p) p = Vec2{0.f, 0.f};
   w.leaf = Leaf{false, Vec2{0.f, 0.f}, 0.f, 0.f};
+  w.rustle = Rustle{Vec2{0.f, 0.f}, -1.f};
   w.fade = 1.f;   // a loop opens from black; the build beat lifts it
 
   // Critter slots: all free, each with this loop's personality (one rng call
@@ -346,10 +369,15 @@ void worldBeginLoop(World& w, Rng& rng) {
   for (Rect& r : d.bit) r = kEmpty;
   for (int i = 0; i < BITS_MAX; ++i) d.bit_s[i] = w.bits[i];
   for (Rect& r : d.item) r = kEmpty;
-  d.steam = d.skip = d.leaf = kEmpty;
+  d.steam = d.skip = d.leaf = d.rustle = kEmpty;
   d.steam_s = w.steam;
   d.skip_s = w.skip;
   d.leaf_s = w.leaf;
+  d.rustle_s = w.rustle;
+  d.day_s = w.day;
+  d.boom_s = w.boom.boom;
+  d.eagle_s = w.boom.eagle;
+  d.boom = d.eagle = kEmpty;
   d.fade = w.fade;
   d.tent_s = w.tent;
   d.pack_s = w.pack;
@@ -429,11 +457,23 @@ void worldTick(World& w, Rng& rng, Renderer& r) {
   ++w.tick;
   for (Cloud& c : w.clouds) cloudStep(c);
   ambientStep(w, rng);
-  stepHiker(w);
-  spineCritterScenes(w);
-  minorsStep(w, r);
-  directorStep(w);
-  for (Bit& b : w.bits) bitStep(b, SS_TICK_DT);
+  if (w.react.active) {
+    // The doorbell reaction: he answers the bell while the camp holds still
+    // (critters, minors and the director wait with the beats; react.h).
+    reactStep(w);
+    stepHiker(w, true);
+    dayStep(w, true);         // the kite stands still (its line stays in his hand as he waves); so do the bow and the critter
+    boomWorldStep(w);         // the boomerang stays in his hand
+    ++w.frozen;
+  } else {
+    stepHiker(w);
+    dayStep(w, false);         // after him: the kite's line leaves the hand he has now; the bow and string, the critter on the line
+    boomWorldStep(w);
+    spineCritterScenes(w);
+    minorsStep(w, r);
+    directorStep(w);
+    for (Bit& b : w.bits) bitStep(b, SS_TICK_DT);
+  }
   // The shadow in the lit tent breathes: rises up to 2 px and sinks, every 4.8 s.
   // (Whole pixels, so it dirties the tent four times a breath, not every tick.)
   // Frightened (shadow_jitter > 0) it holds its breath and trembles instead.
@@ -522,6 +562,7 @@ void worldTick(World& w, Rng& rng, Renderer& r) {
   track(r, d.steam, steamBounds(w.steam), !steamSame(w.steam, d.steam_s));
   track(r, d.skip, skipBounds(w.skip), !skipSame(w.skip, d.skip_s));
   track(r, d.leaf, leafBounds(w.leaf), !leafSame(w.leaf, d.leaf_s));
+  track(r, d.rustle, rustleBounds(w.rustle), !rustleSame(w.rustle, d.rustle_s));
   d.tent_s = w.tent;
   d.pack_s = w.pack;
   d.bag_s = w.bag;
@@ -529,7 +570,15 @@ void worldTick(World& w, Rng& rng, Renderer& r) {
   d.steam_s = w.steam;
   d.skip_s = w.skip;
   d.leaf_s = w.leaf;
+  d.rustle_s = w.rustle;
   majorsTrack(w.major, r);
+  // The daytime pieces: the kite, the bike, the archery, the slackline or the ropes course mark what their own
+  // dirty functions say differs between last tick and now (dayTrack); the boomerang and the eagle their bounds.
+  dayTrack(w, r);
+  track(r, d.boom, boomBounds(w), !boomerangSame(w.boom.boom, d.boom_s));
+  track(r, d.eagle, eagleBoundsOf(w), !eagleSame(w.boom.eagle, d.eagle_s));
+  d.boom_s = w.boom.boom;
+  d.eagle_s = w.boom.eagle;
   weatherTrack(w, r);
 }
 
@@ -620,6 +669,10 @@ void worldDrawDynamic(const World& w, Surface& strip, const Rect& clip, const Pa
       case ACT_CRITTER: critterDraw(w.critters[a.idx], strip, pal, clip); break;
       case ACT_BIT: bitDraw(w.bits[a.idx], strip, clip, pal); break;
       case ACT_WXBIT: bitDraw(w.weather.bit[a.idx], strip, clip, pal); break;
+      case ACT_KITE: kiteDraw(w.day.kite, strip, clip, pal); break;
+      case ACT_DAY: dayPartDraw(w, a.idx, strip, clip, pal); break;
+      case ACT_BOOM: boomerangDraw(w.boom.boom, strip, clip, pal); break;
+      case ACT_EAGLE: eagleDraw(w.boom.eagle, strip, clip, pal); break;
       case ACT_MAJOR:
         if (w.major.g[a.idx].kind == GL_WATER) worldDrawWater(w, strip, clip.clipped(glyphBounds(w.major.g[a.idx])), pal);
         else glyphDraw(w.major.g[a.idx], strip, clip, pal);
@@ -638,6 +691,7 @@ void worldDrawDynamic(const World& w, Surface& strip, const Rect& clip, const Pa
   // 6. Smoke above the fire, and steam off a pot boiling over.
   ambientDrawSmoke(w, strip, clip, pal);
   steamDraw(w.steam, strip, clip, pal);
+  rustleDraw(w.rustle, strip, clip, pal);   // the big pine shaking (the morning stay)
 
   // 6b. Weather in front of everything: a breath puff, the fire's hiss, rain, snow.
   weatherDrawNear(w, strip, clip, pal);

@@ -9,8 +9,10 @@ Both panels get flashed: the new one, and then the first one again, because each
 listens to the MACs it was built with. The C6 gateway doesn't need flashing. It only ever sends to
 upstairs, and upstairs passes the weather and Lucy on to downstairs.
 
-Written 2026-10-31, before the second board arrived. The `mac` option of `fw.sh` and everything
-about two panels talking to each other are UNVERIFIED until this runs.
+Written 2026-10-31, before the second board arrived. Ran on 2026-11-02: `fw.sh mac` read the new
+board's MAC (a4:cb:8f:c7:22:ec) with esptool's usual serial exception after the reset, both panels
+were flashed over USB (the new one came up as COM7, the first as COM5), and `tools/two_panels.ps1`
+passed all 29 checks. Verified.
 
 ## Before you start
 
@@ -99,9 +101,10 @@ lines; when it rings, it waits 15 seconds for someone to tap a reply on the bann
 panels goes to `sim/out/two-panels/`. The clock comparison needs firmware from 2026-11-01 on,
 whose `info` prints the time.
 
-The script was tested against two pretend panels that answer in the firmware's formats (working,
-not hearing each other, losing touch partway, and one panel alone), not yet against two real
-ones: UNVERIFIED until the second panel arrives.
+The script was first tested against two pretend panels, then run on the real pair on 2026-11-02:
+29 passed, 0 failed (status, dogs, mail and the doorbell each way in about 0.1 s, clocks 0 s apart,
+calendars and the Outside tile matching, no dropped frames). The banner, the bell and the mail
+badge are LOOK lines for eyes; Mike tapped both replies and they arrived.
 
 The checks, by hand:
 

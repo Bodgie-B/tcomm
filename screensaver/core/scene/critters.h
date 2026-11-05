@@ -5,7 +5,10 @@
 // the chipmunk's upright tail, the squirrel's curled bushy tail, the frog's big
 // back legs, the deer's legs and ears, the raccoon's ringed tail, the owl's ear
 // tufts and eye discs, the bird's V wings, the bear's hump and round ears, the
-// mouse's round ear and thin tail.
+// mouse's round ear and thin tail, the dog's long muzzle, floppy ear and
+// wagging tail. The dog is the one kind drawn in fur colours (a warm brown
+// mixed from the TENT and TRUNK slots, so it goes dark at night like the rest;
+// see Critter::tone) instead of ACTOR.
 //
 // Conventions follow the hiker rig (hiker.h): plain data held by value, `feet`
 // is the ground point under the body (the talons on the branch for the owl,
@@ -35,16 +38,22 @@
 namespace ss {
 
 enum CritterKind : uint8_t {
-  CR_CHIPMUNK, CR_SQUIRREL, CR_FROG, CR_DEER, CR_RACCOON, CR_OWL, CR_BIRD, CR_BEAR, CR_MOUSE, CR_COUNT
+  CR_CHIPMUNK, CR_SQUIRREL, CR_FROG, CR_DEER, CR_RACCOON, CR_OWL, CR_BIRD, CR_BEAR, CR_MOUSE,
+  CR_DOG,   // the camp dog (the fetch major, fetch.h): trots, gallops, sits, lies, bows, shakes
+  CR_COUNT
 };
 
+// CA_LIE and CA_BOW are the dog's (flat on the ground, head up; the play-bow:
+// chest down, rump up, tail high); every other kind falls back to idle on them.
 enum CritterAction : uint8_t {
   CA_IDLE, CA_MOVE, CA_RUN, CA_SIT, CA_LOOK, CA_SNIFF, CA_REACH, CA_CLIMB, CA_SHAKE, CA_HOP, CA_BLINK,
-  CA_HEADTURN, CA_STARTLE, CA_EAT, CA_CARRY, CA_REAR, CA_COUNT
+  CA_HEADTURN, CA_STARTLE, CA_EAT, CA_CARRY, CA_REAR, CA_LIE, CA_BOW, CA_COUNT
 };
 
-// Items a critter can hold (small ACTOR shapes at the mouth or paws).
-enum CritterCarry : uint8_t { CC_NONE, CC_NUT, CC_CRUMB, CC_SHOE, CC_BAR, CC_COUNT };
+// Items a critter can hold (small ACTOR shapes at the mouth or paws). The dog's:
+// CC_STICK a fetch stick held crosswise in the mouth; CC_BRANCH a branch about
+// three times the dog's length, held by one end and dragged along the ground.
+enum CritterCarry : uint8_t { CC_NONE, CC_NUT, CC_CRUMB, CC_SHOE, CC_BAR, CC_STICK, CC_BRANCH, CC_COUNT };
 
 // The blended body state. Lengths in px at scale 1, angles in radians.
 // fore[]/hind[] are the near (0) and far (1) limbs, absolute from straight down,
@@ -72,11 +81,15 @@ struct Critter {
   float speed_dial;    // 0..1 per loop: timid slow mover .. quick; scales move speed and gait rate
   float jitter_dial;   // 0..1 per loop: calm .. fidgety; scales idle fidget size and rate
   uint8_t carry;       // CritterCarry
+  uint8_t tone;        // dog: 0 the camp dog's warm brown, 1 a darker brown (the second dog); others: unused
   // Offsets the caller lays over the drawn pose (not the blend, so a new action
   // never starts from them): radians added to the near fore limb (a bear's paw
   // reaching from the trunk) and to the head (+ up). Ease them back to 0.
+  // tail_add is the dog's wag: added to the pose's tail swing (+ up), set by
+  // whoever drives the dog from its own clock, so a held sit still wags.
   float fore_add;
   float head_add;
+  float tail_add;
 
   // ---- owned by critters.cpp ----
   CritterAction action;

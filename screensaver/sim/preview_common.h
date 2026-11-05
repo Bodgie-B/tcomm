@@ -20,6 +20,7 @@ struct PreviewOptions {
   int spine = 0;                // 0 auto; 1 + SpineFamily forces it (--spine evening|morning|midday|lookout)
   int status = 0;
   int dog = 0;
+  bool chip = false;            // --chip: draw the status chip and dog badges
   int frames = 100;
   int fps = 25;                 // render fps; ticks per frame = SS_TICK_HZ / fps
   int every = 0;                // >0: ticks per frame, overrides fps
@@ -28,6 +29,9 @@ struct PreviewOptions {
   int skip = 0;                 // ticks simulated before the first frame is written
   const char* out_dir = "frames";
   long long doorbell_at = -1;   // tick to post a doorbell at; -1 = never
+  long long reveal_at = -1;     // tick to touch at (the touch reveal); -1 = never
+  int reveal_x = 400, reveal_y = 240;
+  const char* main_ppm = nullptr;   // the main screen the reveal shows (800x480 P6); null: a test card
   bool sweep = false;
   float sweep_a = 0.0f, sweep_b = 0.0f;
 };

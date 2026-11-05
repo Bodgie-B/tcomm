@@ -40,13 +40,23 @@ enum MajorId : uint8_t {
   MJ_FISHING_SMALL, MJ_FISHING_LOG, MJ_FISHING_GOOD, MJ_BATHE,
   // The storm's (weather.h): only when a storm comes from the OUTSIDE data.
   MJ_RAIN_SHELTER,
+  // The camp dog and a game of fetch (fetch.h): midday only, and in every midday
+  // loop when Inputs::dog_out says Lucy or Copper is out.
+  MJ_FETCH,
+  // The kite and the boomerang with its eagle (day_kite.h, day_boomerang.h): midday only, by day;
+  // the kite never in a rain, snow or storm the data says is there, the boomerang not while one is
+  // still stuck in the camp pine.
+  MJ_KITE, MJ_BOOMERANG,
+  // The mountain bike, the archery, the slackline and the ropes course (day_bike.h, day_archery.h,
+  // day_slackline.h, day_ropes.h): midday only, by day, and never in a rain, snow or storm the data says
+  // is there. They share one union of state with the kite (day.h).
+  MJ_BIKE, MJ_ARCHERY, MJ_SLACKLINE, MJ_ROPES,
   MJ_COUNT
 };
-// Memory keeps a loop's majors as a 16-bit set (memory.h sets, spine.cpp):
-// ids 0..15 fit. rain_shelter (16) falls outside it, so the recent-set rule
-// does not see it (it is gated by the weather, not by variety); widening the
-// sets to 32 bits is an ask for memory.h's owner.
-static_assert(MJ_COUNT <= 32, "past 32 majors, Memory's sets must widen");
+// Memory keeps a loop's majors as a MajorSet (memory.h sets, spine.cpp): one
+// bit per id, 32 bits, so rain_shelter (16) is in the recent-set rule like the
+// rest. memory.h asserts that every id fits.
+static_assert(MJ_COUNT <= 32, "past 32 majors, Memory's MajorSet must widen");
 
 // ---- glyphs -----------------------------------------------------------------------
 
@@ -74,6 +84,7 @@ enum ShapeId : uint8_t {
   SH_DEADFISH,   // a small fish floating belly-up; scale grows from 0 as it surfaces
   SH_PERCH,      // a small bird side on, pos its feet: k 0 perched, 1 wings up (taking off, flying); t flap phase
   SH_CHIP,       // a chipmunk sitting up side on, pos its feet, tail curled up behind; k 0..1 head turned up
+  SH_STICK,      // fetch's stick (fetch.cpp draws it): pos its centre, rot turns, scale times 24 px long
   SH_COUNT
 };
 
@@ -121,6 +132,9 @@ struct MajorState {
 const char* majorName(int id);
 // Seconds a major's beat lasts with variant `var`.
 int majorSeconds(int id, int var);
+// A pick the loop-length fit must not drop (spineFitLength): a fetch planned because a
+// dog is out (Inputs::dog_out). fishing_good has its own rule there (dinner is planned round it).
+bool majorKept(int id, int var);
 // Where a family's majors can go: up to 4 slots, the spine beat each one
 // follows (LoopPlan::major_after), and which are open (bit k: slot k). The
 // pool's slot bits (majors.cpp kMajors) are slot indices, so they mean the

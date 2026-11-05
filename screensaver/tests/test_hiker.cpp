@@ -3,6 +3,7 @@
 // non-zero on failure. Writes inspection sheets to the current directory
 // (build/ under ctest): hiker_poses_day.ppm, hiker_poses_night.ppm,
 // hiker_walk.ppm, hiker_carry.ppm.
+#include "gfx/raster.h"
 #include "scene/hiker.h"
 
 #include <math.h>
@@ -425,6 +426,7 @@ static void sheetCarry(const char* path) {
 }
 
 int main() {
+  rasterSetScratch(calloc(1, rasterScratchBytes()));   // zeroed; these tests draw without appStart too
   testBoundsAndBudget();
   testMirror();
   testBlend();

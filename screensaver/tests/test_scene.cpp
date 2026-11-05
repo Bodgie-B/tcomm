@@ -7,6 +7,7 @@
 // dinner and theft hooks, none left at a loop's end), loop memory, props, and
 // inspection images. Plain executable; returns non-zero on failure. Writes
 // landscape_*.ppm and props_sheet.ppm in the current directory (run from build/).
+#include "gfx/raster.h"
 #include "ss_app.h"
 #include "scene/director.h"
 #include "scene/hiker.h"
@@ -39,7 +40,7 @@ static int g_fail = 0;
 
 static void* hostAlloc(size_t n) { return malloc(n); }
 static void hostFree(void* p) { free(p); }
-static const HostAlloc kAlloc = {hostAlloc, hostFree};
+static const HostAlloc kAlloc = {hostAlloc, hostFree, nullptr};   // no fast block lent: core takes one
 
 struct Rig {
   void* mem;
@@ -1517,6 +1518,7 @@ static void testStreamVignettes() {
 }
 
 int main() {
+  rasterSetScratch(calloc(1, rasterScratchBytes()));   // zeroed; these tests draw without appStart too
   testAppSize();
   testDeterminism();
   testDirtyStrips();

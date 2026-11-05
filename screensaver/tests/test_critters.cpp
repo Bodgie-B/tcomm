@@ -5,10 +5,11 @@
 // critters_day.ppm, critters_night.ppm, critters_gaits.ppm.
 //
 // Sheet layout (day and night): one row per kind in enum order (chipmunk,
-// squirrel, frog, deer, raccoon, owl, bird, bear, mouse), one column per
+// squirrel, frog, deer, raccoon, owl, bird, bear, mouse, dog), one column per
 // action in enum order (idle, move, run, sit, look, sniff, reach, climb,
-// shake, hop, blink, headturn, startle, eat, carry, rear); unsupported cells
+// shake, hop, blink, headturn, startle, eat, carry, rear, lie, bow); unsupported cells
 // stay empty. The same rows follow at scale 0.7.
+#include "gfx/raster.h"
 #include "scene/critters.h"
 
 #include <stdio.h>
@@ -68,6 +69,7 @@ static uint8_t itemFor(int k, int a) {
     case CR_CHIPMUNK: case CR_SQUIRREL: return CC_NUT;
     case CR_RACCOON: return a == CA_CARRY ? CC_SHOE : CC_BAR;
     case CR_BIRD: case CR_MOUSE: return CC_CRUMB;
+    case CR_DOG: return a == CA_CARRY ? CC_STICK : (a == CA_SIT ? CC_BRANCH : CC_NONE);   // the stick; the dragged branch
     default: return CC_NONE;
   }
 }
@@ -513,7 +515,7 @@ static void testSizes() {
         continue;
       }
       const int big = h > len ? h : len;
-      const float nominal[CR_COUNT] = {20.f, 28.f, 18.f, 50.f, 30.f, 24.f, 14.f, 60.f, 8.f};
+      const float nominal[CR_COUNT] = {20.f, 28.f, 18.f, 50.f, 30.f, 24.f, 14.f, 60.f, 8.f, 36.f};
       printf("  %-9s idle %2d px tall, %2d px long (nominal %2.0f, critterHeight %.0f), lowest row feet%+d\n", kn(k),
              h, len, (double)nominal[k], (double)critterHeight((CritterKind)k), bottom - (int)kFeetY);
       CHECK(h - critterHeight((CritterKind)k) <= 1.5f && critterHeight((CritterKind)k) - h <= 1.5f,
@@ -619,6 +621,7 @@ static void sheetGaits(const char* path) {
 }
 
 int main() {
+  rasterSetScratch(calloc(1, rasterScratchBytes()));   // zeroed; these tests draw without appStart too
   testBoundsAndBudget();
   testMirror();
   testBlend();

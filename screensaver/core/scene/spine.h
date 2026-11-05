@@ -97,6 +97,9 @@ struct LoopPlan {
   uint8_t family;
   uint8_t fvar[8];
   uint8_t n_fbeats;
+  // Morning: 1 plays the camp-stays-up variant (morning_stay.cpp, its beats in StayBeatId order in
+  // fvar), 0 Mark's break camp. The stay also uses away_s (his 12..18 s behind the tree).
+  uint8_t stay;
   // Morning: the fog it opens in (fog_steps x 0.05 added to the weather's fog),
   // held until tick fog_t0 and lifted to 0 by tick fog_t1 (the end of the
   // coffee beat's pause), in 0.05 steps.
@@ -198,6 +201,17 @@ struct SpineState {
   int8_t fbit;
   uint8_t fhold;
   float fk;
+  // The morning where the camp stays up (morning_stay.cpp): up to two critters (slots, -1 none) with a
+  // stage machine of their own (xstage, 0 none), its clock, flags and what the raid goes for
+  // (ItemId + 1). Mark's one-slot machine above keeps wake c and coffee c.
+  int8_t xcrit[2];
+  int8_t xbit[2];   // World::bits slots (leaves the pine drops), -1 none
+  uint8_t xstage;
+  uint8_t xbits;
+  uint8_t xloot;
+  uint8_t xstep;   // the second critter's stage (the raccoon) and its clock
+  float xt2;
+  float xt;
 };
 
 // Loop start: pick every variant, pause, filler and major from the loop RNG,

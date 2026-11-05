@@ -215,6 +215,71 @@ void capL(const Item& it, float x0, float y0, float x1, float y1, float w, Surfa
   strokeCapsule(s, itemPt(it, x0, y0), itemPt(it, x1, y1), w * it.size, c, clip);
 }
 
+// ---- the morning stay's props (ItemId PAN, CAKE, BRUSH, SACK; look UNVERIFIED) ----------
+
+// Pan: the bowl centred at x 0 (22 px across, 3.6 high), the handle out to +x, tilted by `angle`
+// turns about the handle's end so the bowl lifts. A pancake in it is a flat ellipse in TENT_LIT.
+constexpr float kPanGripX = 26.f, kPanGripY = -3.f;
+Vec2 panPt(const Item& it, float x, float y) {
+  const float dx = x - kPanGripX, dy = y - kPanGripY;
+  const float c = cosT(it.angle), s = sinT(it.angle);
+  return itemPt(it, kPanGripX + dx * c - dy * s, kPanGripY + dy * c + dx * s);
+}
+constexpr int kEllN = 10;
+// A flat ellipse of half sizes rx, ry at local (cx, cy), n points.
+void ellipsePts(const Item& it, bool pan, float cx, float cy, float rx, float ry, Vec2 out[kEllN]) {
+  for (int i = 0; i < kEllN; ++i) {
+    const float a = (float)i / (float)kEllN;
+    const float x = cx + rx * cosT(a), y = cy + ry * sinT(a);
+    out[i] = pan ? panPt(it, x, y) : itemPt(it, x, y);
+  }
+}
+// A free pancake: turned `angle` turns, `fill` how flat-on to us (the flip squeezes it edge-on).
+void cakePts(const Item& it, float rx, float ry, Vec2 out[kEllN]) {
+  const float c = cosT(it.angle), s = sinT(it.angle);
+  for (int i = 0; i < kEllN; ++i) {
+    const float a = (float)i / (float)kEllN;
+    const float x = rx * cosT(a), y = ry * sinT(a);
+    out[i] = Vec2{it.pos.x + x * c - y * s, it.pos.y + x * s + y * c};
+  }
+}
+inline float cakeRx(const Item& it) { return 7.5f * it.size; }
+inline float cakeRy(const Item& it) { return (0.7f + 2.4f * it.fill) * it.size; }
+
+// The stuff sack standing on the ground at pos (local px, base at y 0): its body, its mouth, and
+// up to three ellipses of sleeping bag coming out of the mouth.
+struct SackG {
+  float w, h;          // half width and height of the body
+  int n;               // bag ellipses
+  float cx[3], cy[3], rx[3], ry[3];
+};
+void sackGeom(const Item& it, SackG& g) {
+  const float fill = it.fill < 0.f ? 0.f : (it.fill > 1.f ? 1.f : it.fill);
+  const float sq = it.squash < 0.f ? 0.f : (it.squash > 1.f ? 1.f : it.squash);
+  const float pf = it.puff < 0.f ? 0.f : (it.puff > 1.f ? 1.f : it.puff);
+  g.h = (6.f + 15.f * fill) * (1.f - 0.5f * sq);
+  g.w = 6.5f + 2.5f * fill + 3.5f * sq;
+  g.n = 0;
+  if (pf > 0.02f) {   // the bulge, then all of it
+    g.cx[0] = 0.f;
+    g.cy[0] = -g.h - 2.f - 6.f * pf;
+    g.rx[0] = 3.5f + 8.f * pf;
+    g.ry[0] = 2.5f + 6.f * pf;
+    g.n = 1;
+    if (pf > 0.4f) {
+      g.cx[1] = -5.f * pf;
+      g.cy[1] = -g.h - 1.f - 3.f * pf;
+      g.rx[1] = 1.f + 5.f * pf;
+      g.ry[1] = 1.f + 3.5f * pf;
+      g.cx[2] = 5.5f * pf;
+      g.cy[2] = -g.h - 1.f - 2.f * pf;
+      g.rx[2] = 1.f + 5.f * pf;
+      g.ry[2] = 1.f + 3.f * pf;
+      g.n = 3;
+    }
+  }
+}
+
 // The hat off his head, standing on its brim (local px, base at y 0): the
 // brim, and the crown with its dent, as on the rig at 90 px.
 constexpr float kHatBrim[4] = {-9.f, -1.5f, 12.f, -1.5f};
@@ -472,9 +537,38 @@ Rect itemBounds(ItemId id, const Item& it) {
       }
       break;
     case ITEM_SHOE:
-      e.pt(itemPt(it, -6.f, -9.f));
+      e.pt(itemPt(it, it.alt ? -20.f : -6.f, -9.f));
       e.pt(itemPt(it, 7.f, 0.f));
       break;
+    case ITEM_PAN:
+      e.pt(panPt(it, -12.f, -3.6f), 1.5f);
+      e.pt(panPt(it, 12.f, 0.f), 1.5f);
+      e.pt(panPt(it, 26.f, -3.f), 1.5f);
+      if (it.fill > 0.5f) e.pt(panPt(it, 0.f, -6.f), 1.5f);
+      break;
+    case ITEM_CAKE:
+      if (it.alt) {
+        e.pt(itemPt(it, -14.f, -6.f));
+        e.pt(itemPt(it, 14.f, 10.f));
+      } else {
+        e.pt(it.pos, cakeRx(it) + 1.f);
+      }
+      break;
+    case ITEM_BRUSH:
+      e.pt(itemPt(it, -3.f, -5.f));
+      e.pt(itemPt(it, 11.f, 2.f));
+      break;
+    case ITEM_SACK: {
+      SackG g;
+      sackGeom(it, g);
+      e.pt(itemPt(it, -g.w - 1.f, -g.h - 4.f));
+      e.pt(itemPt(it, g.w + 1.f, 1.f));
+      for (int k = 0; k < g.n; ++k) {
+        e.pt(itemPt(it, g.cx[k] - g.rx[k], g.cy[k] - g.ry[k]));
+        e.pt(itemPt(it, g.cx[k] + g.rx[k], g.cy[k] + g.ry[k]));
+      }
+      break;
+    }
     case ITEM_WOOD:
       for (const auto& l : kLogs) {
         e.pt(itemPt(it, l[0], l[1]), 0.5f * kLogW * it.size);
@@ -543,7 +637,57 @@ void itemDraw(ItemId id, const Item& it, Surface& s, const Rect& clip, const Pal
       break;
     case ITEM_SHOE:
       fillShape(it, kShoe, s, pal[ACTOR], clip);
+      if (it.alt) {   // the pair: the other one lies beside it, a little behind
+        Item o = it;
+        o.pos = itemPt(it, -13.f, -1.f);
+        fillShape(o, kShoe, s, pal[ACTOR], clip);
+      }
       break;
+    case ITEM_PAN: {
+      const Vec2 bowl[4] = {panPt(it, -10.f, 0.f), panPt(it, 10.f, 0.f), panPt(it, 12.f, -3.6f), panPt(it, -12.f, -3.6f)};
+      fillPolygon(s, bowl, 4, pal[ACTOR], clip);
+      strokeCapsule(s, panPt(it, 12.f, -2.6f), panPt(it, 26.f, -3.f), 2.2f * it.size, pal[ACTOR], clip);
+      if (it.fill > 0.5f) {
+        Vec2 p[kEllN];
+        ellipsePts(it, true, 0.f, -3.9f, 8.5f, 1.7f, p);
+        fillPolygon(s, p, kEllN, pal[TENT_LIT], clip);
+      }
+      break;
+    }
+    case ITEM_CAKE: {
+      Vec2 p[kEllN];
+      if (it.alt) {   // draped over his hat: the top, and the two edges hanging down
+        ellipsePts(it, false, 0.f, 0.f, 10.f, 2.6f, p);
+        fillPolygon(s, p, kEllN, pal[TENT_LIT], clip);
+        fillEllipse(s, itemPt(it, -9.5f, 3.5f), 2.6f * it.size, 5.f * it.size, pal[TENT_LIT], clip);
+        fillEllipse(s, itemPt(it, 9.5f, 3.5f), 2.6f * it.size, 5.f * it.size, pal[TENT_LIT], clip);
+      } else {
+        cakePts(it, cakeRx(it), cakeRy(it), p);
+        if (it.fill > 0.2f) {   // its browned underside shows below the top
+          Vec2 q[kEllN];
+          for (int i = 0; i < kEllN; ++i) q[i] = Vec2{p[i].x, p[i].y + 1.2f * it.size};
+          fillPolygon(s, q, kEllN, mixRGB(pal[TENT], pal[ACTOR], 0.4f), clip);
+        }
+        fillPolygon(s, p, kEllN, pal[TENT_LIT], clip);
+      }
+      break;
+    }
+    case ITEM_BRUSH:
+      strokeCapsule(s, itemPt(it, -2.f, 0.f), itemPt(it, 8.f, -2.f), 1.5f * it.size, pal[ACTOR_LIGHT], clip);
+      strokeCapsule(s, itemPt(it, 6.5f, -2.1f), itemPt(it, 9.5f, -2.6f), 3.f * it.size, pal[ACTOR_LIGHT], clip);
+      break;
+    case ITEM_SACK: {
+      SackG g;
+      sackGeom(it, g);
+      const Vec2 body[6] = {itemPt(it, -g.w, 0.f),          itemPt(it, g.w, 0.f),           itemPt(it, 0.95f * g.w, -0.55f * g.h),
+                            itemPt(it, 0.6f * g.w, -g.h),   itemPt(it, -0.6f * g.w, -g.h),  itemPt(it, -0.95f * g.w, -0.55f * g.h)};
+      fillPolygon(s, body, 6, pal[ACTOR], clip);
+      for (int k = 0; k < g.n; ++k)
+        fillEllipse(s, itemPt(it, g.cx[k], g.cy[k]), g.rx[k] * it.size, g.ry[k] * it.size, pal[TENT], clip);
+      strokeCapsule(s, itemPt(it, -0.62f * g.w, -g.h), itemPt(it, 0.62f * g.w, -g.h), 2.2f * it.size, pal[ACTOR], clip);
+      if (it.alt && g.n == 0) fillCircle(s, itemPt(it, 0.f, -g.h - 1.5f), 2.2f * it.size, pal[ACTOR], clip);   // the knot
+      break;
+    }
     case ITEM_WOOD:
       for (const auto& l : kLogs) capL(it, l[0], l[1], l[2], l[3], kLogW, s, pal[TRUNK], clip);
       break;
@@ -599,12 +743,12 @@ void itemDraw(ItemId id, const Item& it, Surface& s, const Rect& clip, const Pal
 bool itemSame(const Item& a, const Item& b) {
   return sameV(a.pos, b.pos) && a.down == b.down && a.held == b.held && a.facing == b.facing && a.size == b.size &&
          a.ground_y == b.ground_y && a.on_fire == b.on_fire && a.critter == b.critter && a.angle == b.angle && a.grip == b.grip &&
-         a.squeeze == b.squeeze && a.alt == b.alt;
+         a.squeeze == b.squeeze && a.alt == b.alt && a.fill == b.fill && a.puff == b.puff && a.squash == b.squash;
 }
 
 const char* itemName(ItemId id) {
   static const char* const kNames[ITEM_COUNT] = {"mug", "book", "pot", "stick", "shoe", "wood", "fork",
-                                                  "rod", "hat", "fish"};
+                                                  "rod", "hat", "fish", "pan", "cake", "brush", "sack"};
   return id < ITEM_COUNT ? kNames[id] : "?";
 }
 
@@ -942,5 +1086,42 @@ void armloadDraw(const Hiker& h, float k, Surface& s, const Rect& clip, const Pa
     strokeCapsule(s, a, b, kArmloadW * h.height, pal[ACTOR], clip);
   }
 }
+
+// ---- the rustle ---------------------------------------------------------------------------
+
+namespace {
+constexpr int kSprays = 6, kFlecks = 3;
+// Where each needle spray sits against the pine's edge point (dx, dy), and each lit fleck inside it.
+const float kSprayAt[kSprays][2] = {{-1.f, -21.f}, {2.f, -12.f}, {0.f, -3.f}, {3.f, 6.f}, {0.f, 14.f}, {2.f, 21.f}};
+const float kFleckAt[kFlecks][2] = {{-9.f, -15.f}, {-6.f, -2.f}, {-10.f, 12.f}};
+
+// How hard it shakes: in over a third of a second, out over the last second.
+float rustleAmp(const Rustle& r) { return easeOutCubic(window(r.t, 0.f, 0.35f)) * (1.f - easeInOut(window(r.t, RUSTLE_S - 1.2f, RUSTLE_S))); }
+Vec2 rustleJit(const Rustle& r, float amp, int i, float sx, float sy) {
+  return Vec2{amp * sx * sinT(r.t * 6.1f + 0.37f * (float)i), amp * sy * sinT(r.t * 4.7f + 0.61f * (float)i)};
+}
+}  // namespace
+
+Rect rustleBounds(const Rustle& r) {
+  if (r.t < 0.f || r.t >= RUSTLE_S) return kEmpty;
+  return Rect{(int)floorf(r.at.x) - 16, (int)floorf(r.at.y) - 30, (int)ceilf(r.at.x) + 20, (int)ceilf(r.at.y) + 30};
+}
+
+void rustleDraw(const Rustle& r, Surface& dst, const Rect& clip, const Palette& pal) {
+  if (!overlaps(rustleBounds(r), clip)) return;
+  const float amp = rustleAmp(r);
+  for (int i = 0; i < kSprays; ++i) {   // twig sprays: a needle triangle pointing out of the edge
+    const Vec2 j = rustleJit(r, amp, i, 1.6f, 1.1f);
+    const Vec2 o{r.at.x + kSprayAt[i][0] + j.x, r.at.y + kSprayAt[i][1] + j.y};
+    const Vec2 tri[3] = {Vec2{o.x - 5.f, o.y - 3.2f}, Vec2{o.x + 7.f + 1.5f * j.x, o.y + 0.8f * j.y}, Vec2{o.x - 5.f, o.y + 3.2f}};
+    fillPolygon(dst, tri, 3, pal[FOLIAGE_DARK], clip);
+  }
+  for (int i = 0; i < kFlecks; ++i) {   // lit flecks inside the dark foliage, flickering
+    const Vec2 j = rustleJit(r, amp, i + kSprays, 1.4f, 1.f);
+    fillEllipse(dst, Vec2{r.at.x + kFleckAt[i][0] + j.x, r.at.y + kFleckAt[i][1] + j.y}, 2.3f, 1.3f, pal[FOLIAGE], clip);
+  }
+}
+
+bool rustleSame(const Rustle& a, const Rustle& b) { return a.at.x == b.at.x && a.at.y == b.at.y && a.t == b.t; }
 
 }  // namespace ss

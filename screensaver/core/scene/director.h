@@ -32,7 +32,10 @@ void directorRelease(World& w, int slot);
 void directorScatter(World& w, Vec2 from, float radius);
 // Called each tick (directorStep does it): while the hiker walks, critters
 // whose bounds come within ~80 px of his scatter; CF_SHY critters scatter at
-// any move of his (walking, or getting up from sitting or lying).
+// any move of his (walking, or getting up from sitting or lying). While he
+// stands (or crouches) still, one within ~12 px of his bounds scatters too: his
+// bounds grow when he sets off, and a startled critter stands for 0.3 s first.
+// Sitting or lying still he scatters nothing.
 void directorAvoidHiker(World& w);
 
 // The one clamp for move targets. Keeps the critter's whole figure inside the

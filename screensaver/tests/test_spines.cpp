@@ -33,7 +33,7 @@ static int g_fail = 0;
 
 static void* hostAlloc(size_t n) { return malloc(n); }
 static void hostFree(void* p) { free(p); }
-static const HostAlloc kAlloc = {hostAlloc, hostFree};
+static const HostAlloc kAlloc = {hostAlloc, hostFree, nullptr};   // no fast block lent: core takes one
 
 struct Rig {
   void* mem = nullptr;
@@ -75,12 +75,12 @@ static bool beatIs(const App* a, const char* name) { return strcmp(appBeatName(a
 
 // Captured before the spine families went in (ss_preview --loops 10 --mood 4).
 static const char* const kEvening1[10] = {
-    "loop=0 seed=1 length=650s plan=arrival=2 setup=1 firewood=1 fire=0 dinner=0 foodbag=0 bear=1 close=0 fillers=cloud_watch,stream_listen majors=pinecone,map_chase memory=loop=1 cairn=0 shoe=1 stolen=shoe hole=1 rod=0 brave=chipmunk,frog,deer,bear,mouse ring=pinecone,map_chase",
-    "loop=1 seed=1027777925 length=638s plan=arrival=2 setup=1 firewood=1 fire=1 dinner=3 foodbag=2 bear=1 close=1 fillers=mug_sunset majors=echo,fishing_good,squirrel_splash memory=loop=2 cairn=0 shoe=1 stolen=mug hole=0 rod=0 brave=chipmunk,frog,deer,bear,mouse ring=pinecone,map_chase,echo,fishing_good,squirrel_splash",
-    "loop=2 seed=2322246646 length=650s plan=arrival=1 setup=2 firewood=2 fire=2 dinner=0 foodbag=0 bear=1 close=1 fillers=skip_stone,cairn majors=ants_cookie,fish_leap,shadow_theater memory=loop=3 cairn=6 shoe=1 stolen=mug hole=0 rod=0 brave=chipmunk,frog,deer,raccoon,owl,bear,mouse ring=pinecone,map_chase,echo,fishing_good,squirrel_splash,ants_cookie,fish_leap,shadow_theater",
-    "loop=3 seed=1541821764 length=595s plan=arrival=1 setup=0 firewood=0 fire=1 dinner=2 foodbag=0 bear=0 close=2 fillers=skip_stone majors=deer_stick,fishing_small,ranger_ridge memory=loop=4 cairn=5 shoe=1 stolen=mug hole=0 rod=1 brave=chipmunk,frog,deer,raccoon,owl,bear,mouse ring=fishing_good,squirrel_splash,ants_cookie,fish_leap,shadow_theater,deer_stick,fishing_small,ranger_ridge",
-    "loop=4 seed=1409978845 length=604s plan=arrival=1 setup=0 firewood=0 fire=0 dinner=1 foodbag=2 bear=1 close=0 fillers=read majors=ants_cookie,bathe,echo memory=loop=5 cairn=4 shoe=1 stolen=book hole=0 rod=1 brave=chipmunk,deer,raccoon,owl,bear ring=fish_leap,shadow_theater,deer_stick,fishing_small,ranger_ridge,ants_cookie,bathe,echo",
-    "loop=5 seed=1956810847 length=611s plan=arrival=0 setup=0 firewood=0 fire=2 dinner=1 foodbag=2 bear=1 close=2 fillers=mug_sunset majors=ranger_ridge,map_chase,fishing_log memory=loop=6 cairn=3 shoe=1 stolen=mug hole=0 rod=1 brave=chipmunk,deer,raccoon,owl,bear ring=fishing_small,ranger_ridge,ants_cookie,bathe,echo,ranger_ridge,map_chase,fishing_log",
+    "loop=0 seed=1 length=650s plan=arrival=2 setup=1 firewood=1 fire=0 dinner=0 foodbag=0 bear=1 close=0 fillers=cloud_watch,stream_listen majors=pinecone,map_chase memory=loop=1 cairn=0 shoe=1 stolen=shoe hole=1 rod=0 brave=chipmunk,frog,deer,bear,mouse,dog ring=pinecone,map_chase",
+    "loop=1 seed=1027777925 length=638s plan=arrival=2 setup=1 firewood=1 fire=1 dinner=3 foodbag=2 bear=1 close=1 fillers=mug_sunset majors=echo,fishing_good,squirrel_splash memory=loop=2 cairn=0 shoe=1 stolen=mug hole=0 rod=0 brave=chipmunk,frog,deer,bear,mouse,dog ring=pinecone,map_chase,echo,fishing_good,squirrel_splash",
+    "loop=2 seed=2322246646 length=650s plan=arrival=1 setup=2 firewood=2 fire=2 dinner=0 foodbag=0 bear=1 close=1 fillers=skip_stone,cairn majors=ants_cookie,fish_leap,shadow_theater memory=loop=3 cairn=6 shoe=1 stolen=mug hole=0 rod=0 brave=chipmunk,frog,deer,raccoon,owl,bear,mouse,dog ring=pinecone,map_chase,echo,fishing_good,squirrel_splash,ants_cookie,fish_leap,shadow_theater",
+    "loop=3 seed=1541821764 length=595s plan=arrival=1 setup=0 firewood=0 fire=1 dinner=2 foodbag=0 bear=0 close=2 fillers=skip_stone majors=deer_stick,fishing_small,ranger_ridge memory=loop=4 cairn=5 shoe=1 stolen=mug hole=0 rod=1 brave=chipmunk,frog,deer,raccoon,owl,bear,mouse,dog ring=fishing_good,squirrel_splash,ants_cookie,fish_leap,shadow_theater,deer_stick,fishing_small,ranger_ridge",
+    "loop=4 seed=1409978845 length=604s plan=arrival=1 setup=0 firewood=0 fire=0 dinner=1 foodbag=2 bear=1 close=0 fillers=read majors=ants_cookie,bathe,echo memory=loop=5 cairn=4 shoe=1 stolen=book hole=0 rod=1 brave=chipmunk,deer,raccoon,owl,bear,dog ring=fish_leap,shadow_theater,deer_stick,fishing_small,ranger_ridge,ants_cookie,bathe,echo",
+    "loop=5 seed=1956810847 length=611s plan=arrival=0 setup=0 firewood=0 fire=2 dinner=1 foodbag=2 bear=1 close=2 fillers=mug_sunset majors=ranger_ridge,map_chase,fishing_log memory=loop=6 cairn=3 shoe=1 stolen=mug hole=0 rod=1 brave=chipmunk,deer,raccoon,owl,bear,dog ring=fishing_small,ranger_ridge,ants_cookie,bathe,echo,ranger_ridge,map_chase,fishing_log",
     "loop=6 seed=418933486 length=619s plan=arrival=2 setup=0 firewood=1 fire=0 dinner=0 foodbag=1 bear=0 close=1 fillers=birds_on_water majors=fish_leap,squirrel_splash,raccoon_pack memory=loop=7 cairn=2 shoe=0 stolen=mug hole=0 rod=1 brave=squirrel,raccoon,bird,mouse ring=bathe,echo,ranger_ridge,map_chase,fishing_log,fish_leap,squirrel_splash,raccoon_pack",
     "loop=7 seed=3582373868 length=645s plan=arrival=2 setup=2 firewood=2 fire=0 dinner=2 foodbag=0 bear=1 close=1 fillers=stream_listen majors=fishing_small,ants_cookie,pinecone,shadow_theater memory=loop=8 cairn=1 shoe=1 stolen=shoe hole=0 rod=1 brave=squirrel,raccoon,bird,mouse ring=fishing_log,fish_leap,squirrel_splash,raccoon_pack,fishing_small,ants_cookie,pinecone,shadow_theater",
     "loop=8 seed=2338450490 length=623s plan=arrival=2 setup=1 firewood=1 fire=0 dinner=2 foodbag=0 bear=0 close=0 fillers=cairn majors=deer_stick,echo,bathe memory=loop=9 cairn=4 shoe=1 stolen=shoe hole=1 rod=1 brave=squirrel,frog,deer,raccoon,bird ring=raccoon_pack,fishing_small,ants_cookie,pinecone,shadow_theater,deer_stick,echo,bathe",
@@ -188,7 +188,8 @@ static bool isMajor(const char* name) {
   static const char* const kMajor[] = {"squirrel_splash", "deer_stick",    "pinecone", "map_chase",   "fish_leap",
                                        "raccoon_pack",    "ants_cookie",   "shadow_theater", "ranger_ridge", "echo",
                                        "firefly_jar",     "stargaze",      "fishing_small",  "fishing_log",  "fishing_good",
-                                       "bathe"};
+                                       "bathe",           "fetch",         "kite",        "boomerang",
+                                       "bike",            "archery",       "slackline",   "ropes"};
   for (const char* k : kMajor)
     if (strcmp(name, k) == 0) return true;
   return false;
@@ -221,12 +222,20 @@ static void testMorningVariants() {
   int bad_frame = 0, bad_corner = 0, bad_end = 0, overrun_loops = 0, len_bad = 0, corner_samples = 0;
   int lo = 1 << 30, hi = 0, reb_lo = 1 << 30, reb_hi = 0, kinds = 0;
   bool bird = false, chip = false;
-  for (uint64_t seed = 1; seed <= 40; ++seed) {
+  // Mark's morning: the first 40 seeds that plan it (the camp-stays morning, 60 % of the loops, has its own
+  // tests in test_morning_stay.cpp; its plan has `stay` set and other beats).
+  int played = 0;
+  for (uint64_t seed = 1; seed <= 400 && played < 40; ++seed) {
     const Inputs in = makeInputs(1.5f, kForceMorning);
     Rig a;
     CHECK(a.start(seed, in), "start");
     const World* w = appWorld(a.app);
     CHECK(appSpineFamily(a.app) == SF_MORNING, "seed %d: family %d", (int)seed, appSpineFamily(a.app));
+    if (w->plan.stay) {
+      a.stop();
+      continue;
+    }
+    ++played;
     const LoopPlan plan = w->plan;
     for (int b = 0; b < 6; ++b) {
       CHECK(plan.fvar[b] < kMVariants[b], "seed %d: %s variant %d", (int)seed, kMBeats[b], plan.fvar[b]);
@@ -354,7 +363,7 @@ static void testMorningVariants() {
 // through a whole morning loop: the camp popping in, the door, the ash, the
 // fly, the fog steps. Strips per frame on the way.
 static void testMorningIncremental() {
-  static const uint64_t kSeeds[4] = {1, 2, 3, 14};   // 14 plays break_camp b (the fly)
+  static const uint64_t kSeeds[4] = {2, 3, 8, 14};   // Mark's morning (not the stay); 14 plays break_camp b (the fly)
   long sum = 0, frames = 0;
   int worst = 0, diffs = 0, checks = 0;
   for (uint64_t seed : kSeeds) {

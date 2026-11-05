@@ -5,9 +5,10 @@
 
 namespace ss {
 
-bool Renderer::init(const HostAlloc& alloc) {
+bool Renderer::init(const HostAlloc& alloc, Pixel* strip) {
   cache = nullptr;
-  if (alloc.alloc_large == nullptr) return false;
+  strip_buf = strip;
+  if (alloc.alloc_large == nullptr || strip == nullptr) return false;
   void* mem = alloc.alloc_large((size_t)SS_WIDTH * SS_HEIGHT * sizeof(Pixel));
   if (mem == nullptr) return false;
   cache = static_cast<Pixel*>(mem);

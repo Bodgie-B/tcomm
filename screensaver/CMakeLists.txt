@@ -36,6 +36,12 @@ add_executable(ss_preview sim/preview_main.cpp sim/preview_common.cpp)
 target_link_libraries(ss_preview ss_core)
 target_compile_options(ss_preview PRIVATE -Wall -Wextra)
 
+# Soak test: simulated clock and inputs, every invariant checked every tick (sim/soak_main.cpp).
+find_package(Threads REQUIRED)   # the soak's hang watchdog is a std::thread
+add_executable(ss_soak sim/soak_main.cpp)
+target_link_libraries(ss_soak ss_core Threads::Threads)
+target_compile_options(ss_soak PRIVATE -Wall -Wextra)
+
 # Windowed preview: built only when SDL2 is found. Not verified in the cloud
 # build container (no SDL2 there); intended for Mike's laptop.
 find_package(SDL2 QUIET)

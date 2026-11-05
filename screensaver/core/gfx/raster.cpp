@@ -65,14 +65,19 @@ struct Edge {
   float dir;      // +1 if the original edge pointed down, -1 if up
 };
 
-// Static scratch (see non-reentrancy note above).
-float g_acc[SS_WIDTH + 2];
-Edge g_edges[kMaxEdges];
-int16_t g_order[kMaxEdges];
-int16_t g_active[kMaxEdges];
-Vec2 g_shape[SS_MAX_POLY_POINTS];
-int16_t g_ivlo[kMaxEdges];   // per-row touched cell ranges
-int16_t g_ivhi[kMaxEdges];
+// Scratch, lent through rasterSetScratch (see the non-reentrancy note in raster.h).
+struct Scratch {
+  float acc[SS_WIDTH + 2];
+  Edge edges[kMaxEdges];
+  int16_t order[kMaxEdges];
+  int16_t active[kMaxEdges];
+  Vec2 shape[SS_MAX_POLY_POINTS];
+  int16_t ivlo[kMaxEdges];   // per-row touched cell ranges
+  int16_t ivhi[kMaxEdges];
+};
+static_assert(SS_STRIP_BYTES + sizeof(Scratch) <= SS_FAST_BYTES, "strip buffer and scratch exceed SS_FAST_BYTES");
+
+Scratch* g_s = nullptr;
 
 struct EdgeBuild {
   int count;
@@ -97,7 +102,7 @@ void addEdge(EdgeBuild& eb, float xa, float ya, float xb, float yb) {
   if (xmin >= eb.w) return;                         // on the right boundary: no effect inside
   if (yb <= eb.cy0 || ya >= eb.cy1) return;         // entirely above or below the clip rows
   if (eb.count >= kMaxEdges) return;                // cannot happen for n <= SS_MAX_POLY_POINTS
-  Edge& e = g_edges[eb.count++];
+  Edge& e = g_s->edges[eb.count++];
   e.x0 = xa; e.y0 = ya; e.x1 = xb; e.y1 = yb;
   e.dxdy = (xb - xa) / dy;
   e.xmin = xmin; e.xmax = xmax;
@@ -146,8 +151,8 @@ inline void accumulate(float xa, float xb, float d, int& plo, int& phi) {
   if (x1i <= x0i + 1) {
     // Piece stays within one pixel column.
     float xmf = 0.5f * (xa + xb) - x0floor;
-    g_acc[x0i] += d - d * xmf;
-    g_acc[x0i + 1] += d * xmf;
+    g_s->acc[x0i] += d - d * xmf;
+    g_s->acc[x0i + 1] += d * xmf;
     phi = x0i + 1;
     return;
   }
@@ -156,18 +161,18 @@ inline void accumulate(float xa, float xb, float d, int& plo, int& phi) {
   float a0 = 0.5f * s * (1.0f - x0f) * (1.0f - x0f);
   float x1f = x1 - x1ceil + 1.0f;
   float am = 0.5f * s * x1f * x1f;
-  g_acc[x0i] += d * a0;
+  g_s->acc[x0i] += d * a0;
   if (x1i == x0i + 2) {
-    g_acc[x0i + 1] += d * (1.0f - a0 - am);
+    g_s->acc[x0i + 1] += d * (1.0f - a0 - am);
   } else {
     float a1 = s * (1.5f - x0f);
-    g_acc[x0i + 1] += d * (a1 - a0);
+    g_s->acc[x0i + 1] += d * (a1 - a0);
     float ds = d * s;
-    for (int xi = x0i + 2; xi < x1i - 1; ++xi) g_acc[xi] += ds;
+    for (int xi = x0i + 2; xi < x1i - 1; ++xi) g_s->acc[xi] += ds;
     float a2 = a1 + (float)(x1i - x0i - 3) * s;
-    g_acc[x1i - 1] += d * (1.0f - a2 - am);
+    g_s->acc[x1i - 1] += d * (1.0f - a2 - am);
   }
-  g_acc[x1i] += d * am;
+  g_s->acc[x1i] += d * am;
   phi = x1i;
 }
 
@@ -227,7 +232,7 @@ struct RowWriter {
 };
 
 void rasterPolygon(Surface& s, const Vec2* pts, int n, Pixel color, uint8_t alpha, const Rect& clip) {
-  if (pts == nullptr || n < 3 || n > SS_MAX_POLY_POINTS || alpha == 0) return;
+  if (g_s == nullptr || pts == nullptr || n < 3 || n > SS_MAX_POLY_POINTS || alpha == 0) return;
   Rect c = effectiveClip(s, clip);
   if (c.empty()) return;
   for (int i = 0; i < n; ++i) {
@@ -254,11 +259,11 @@ void rasterPolygon(Surface& s, const Vec2* pts, int n, Pixel color, uint8_t alph
   for (int i = 0; i < ne; ++i) {
     int16_t idx = (int16_t)i;
     int j = i;
-    while (j > 0 && g_edges[g_order[j - 1]].y0 > g_edges[idx].y0) {
-      g_order[j] = g_order[j - 1];
+    while (j > 0 && g_s->edges[g_s->order[j - 1]].y0 > g_s->edges[idx].y0) {
+      g_s->order[j] = g_s->order[j - 1];
       --j;
     }
-    g_order[j] = idx;
+    g_s->order[j] = idx;
   }
 
   int row0 = (int)floorf(clampf(eb.ymin, eb.cy0, eb.cy1));
@@ -275,12 +280,12 @@ void rasterPolygon(Surface& s, const Vec2* pts, int n, Pixel color, uint8_t alph
   int next = 0, nactive = 0;
   for (int y = row0; y < row1; ++y) {
     const float fy0 = (float)y, fy1 = fy0 + 1.0f;
-    while (next < ne && g_edges[g_order[next]].y0 < fy1) g_active[nactive++] = g_order[next++];
+    while (next < ne && g_s->edges[g_s->order[next]].y0 < fy1) g_s->active[nactive++] = g_s->order[next++];
 
     int niv = 0;
     int keep = 0;
     for (int k = 0; k < nactive; ++k) {
-      const Edge& e = g_edges[g_active[k]];
+      const Edge& e = g_s->edges[g_s->active[k]];
       float ya = e.y0 > fy0 ? e.y0 : fy0;
       float yb = e.y1 < fy1 ? e.y1 : fy1;
       if (yb > ya) {
@@ -290,15 +295,15 @@ void rasterPolygon(Surface& s, const Vec2* pts, int n, Pixel color, uint8_t alph
         accumulate(xa, xb, (yb - ya) * e.dir, plo, phi);
         // Insert the touched range into the row's interval list, sorted by start.
         int j = niv++;
-        while (j > 0 && g_ivlo[j - 1] > plo) {
-          g_ivlo[j] = g_ivlo[j - 1];
-          g_ivhi[j] = g_ivhi[j - 1];
+        while (j > 0 && g_s->ivlo[j - 1] > plo) {
+          g_s->ivlo[j] = g_s->ivlo[j - 1];
+          g_s->ivhi[j] = g_s->ivhi[j - 1];
           --j;
         }
-        g_ivlo[j] = (int16_t)plo;
-        g_ivhi[j] = (int16_t)phi;
+        g_s->ivlo[j] = (int16_t)plo;
+        g_s->ivhi[j] = (int16_t)phi;
       }
-      if (e.y1 > fy1) g_active[keep++] = g_active[k];   // still live next row
+      if (e.y1 > fy1) g_s->active[keep++] = g_s->active[k];   // still live next row
     }
     nactive = keep;
     if (niv == 0) continue;
@@ -314,18 +319,18 @@ void rasterPolygon(Surface& s, const Vec2* pts, int n, Pixel color, uint8_t alph
     int pos = -1;   // first pixel not yet emitted, -1 before the first range
     int k = 0;
     while (k < niv) {
-      int a = g_ivlo[k], b = g_ivhi[k];
-      for (++k; k < niv && g_ivlo[k] <= b + 1; ++k) {
-        if (g_ivhi[k] > b) b = g_ivhi[k];
+      int a = g_s->ivlo[k], b = g_s->ivhi[k];
+      for (++k; k < niv && g_s->ivlo[k] <= b + 1; ++k) {
+        if (g_s->ivhi[k] > b) b = g_s->ivhi[k];
       }
       if (pos >= 0) rw.constant(pos, a < w ? a : w, fabsf(sum));
       const int e = b < w - 1 ? b : w - 1;
       for (int i = a; i <= e; ++i) {
-        sum += g_acc[i];
-        g_acc[i] = 0.0f;
+        sum += g_s->acc[i];
+        g_s->acc[i] = 0.0f;
         rw.pixel(i, fabsf(sum));
       }
-      for (int i = (a > e + 1 ? a : e + 1); i <= b; ++i) g_acc[i] = 0.0f;   // cells past the clip
+      for (int i = (a > e + 1 ? a : e + 1); i <= b; ++i) g_s->acc[i] = 0.0f;   // cells past the clip
       if (e + 1 > pos) pos = e + 1;
     }
     if (pos < w) {
@@ -363,6 +368,18 @@ float areaMatchScale(int n) {
 
 }  // namespace
 
+size_t rasterScratchBytes() { return sizeof(Scratch); }
+
+void rasterResetScratch(void* mem) {
+  if (mem != nullptr) memset(static_cast<Scratch*>(mem)->acc, 0, sizeof(Scratch::acc));
+}
+
+void* rasterSetScratch(void* mem) {
+  void* prev = g_s;
+  g_s = static_cast<Scratch*>(mem);
+  return prev;
+}
+
 void fillPolygon(Surface& s, const Vec2* pts, int n, Pixel color, const Rect& clip) {
   rasterPolygon(s, pts, n, color, 255, clip);
 }
@@ -372,7 +389,7 @@ void fillPolygonAlpha(Surface& s, const Vec2* pts, int n, Pixel color, uint8_t a
 }
 
 void fillEllipse(Surface& s, Vec2 c, float rx, float ry, Pixel color, const Rect& clip) {
-  if (!(rx > 0.0f) || !(ry > 0.0f)) return;
+  if (g_s == nullptr || !(rx > 0.0f) || !(ry > 0.0f)) return;
   if (!coordOk(c.x) || !coordOk(c.y) || !coordOk(rx) || !coordOk(ry)) return;
   const int n = circleSegments(rx > ry ? rx : ry);
   const float k = areaMatchScale(n);
@@ -381,13 +398,13 @@ void fillEllipse(Surface& s, Vec2 c, float rx, float ry, Pixel color, const Rect
   const float kx = rx * k, ky = ry * k;
   float cs = 1.0f, sn = 0.0f;   // rotation recurrence: one sinf/cosf per shape
   for (int i = 0; i < n; ++i) {
-    g_shape[i].x = c.x + kx * cs;
-    g_shape[i].y = c.y + ky * sn;
+    g_s->shape[i].x = c.x + kx * cs;
+    g_s->shape[i].y = c.y + ky * sn;
     float t = cs * cstep - sn * sstep;
     sn = sn * cstep + cs * sstep;
     cs = t;
   }
-  rasterPolygon(s, g_shape, n, color, 255, clip);
+  rasterPolygon(s, g_s->shape, n, color, 255, clip);
 }
 
 void fillCircle(Surface& s, Vec2 c, float r, Pixel color, const Rect& clip) {
@@ -396,7 +413,7 @@ void fillCircle(Surface& s, Vec2 c, float r, Pixel color, const Rect& clip) {
 
 void strokeCapsule(Surface& s, Vec2 a, Vec2 b, float width, Pixel color, const Rect& clip) {
   const float r = 0.5f * width;
-  if (!(r > 0.0f)) return;
+  if (g_s == nullptr || !(r > 0.0f)) return;
   if (!coordOk(a.x) || !coordOk(a.y) || !coordOk(b.x) || !coordOk(b.y) || !coordOk(r)) return;
   const float dx = b.x - a.x, dy = b.y - a.y;
   const float len = sqrtf(dx * dx + dy * dy);
@@ -423,16 +440,16 @@ void strokeCapsule(Surface& s, Vec2 a, Vec2 b, float width, Pixel color, const R
     float rr = (i == 0 || i == m) ? r : r * k;
     float ox = rr * (nx * cs + ux * sn);
     float oy = rr * (ny * cs + uy * sn);
-    g_shape[i].x = b.x + ox;
-    g_shape[i].y = b.y + oy;
-    g_shape[m + 1 + i].x = a.x - ox;
-    g_shape[m + 1 + i].y = a.y - oy;
+    g_s->shape[i].x = b.x + ox;
+    g_s->shape[i].y = b.y + oy;
+    g_s->shape[m + 1 + i].x = a.x - ox;
+    g_s->shape[m + 1 + i].y = a.y - oy;
     float t = cs * cstep - sn * sstep;
     sn = sn * cstep + cs * sstep;
     cs = t;
   }
   const int n = 2 * (m + 1);
-  rasterPolygon(s, g_shape, n, color, 255, clip);
+  rasterPolygon(s, g_s->shape, n, color, 255, clip);
 }
 
 void fillRect(Surface& s, const Rect& r, Pixel color, const Rect& clip) {

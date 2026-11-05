@@ -29,11 +29,15 @@ const KindReach kReach[CR_COUNT] = {
     {12.f, 30.f, 120.f, CA_MOVE},  // bird: flies
     {48.f, 114.f, 120.f, CA_RUN},  // bear
     {10.f, 12.f, 90.f, CA_RUN},    // mouse
+    {22.f, 30.f, 130.f, CA_RUN},   // dog (a branch it drags trails behind it: its bounds, not this half length)
 };
 
 constexpr float kStartleS = 0.3f;
 constexpr float kHikerNear = 80.f;   // px between bounds, horizontally
 constexpr float kHikerNearY = 40.f;
+// On his feet and still, he is about to set off: his bounds grow by about 10 px when he does, and a
+// scattered critter stands for kStartleS before it moves. So one this close now would be under him then.
+constexpr float kHikerSetOff = 12.f;
 
 inline float minf(float a, float b) { return a < b ? a : b; }
 inline float maxf(float a, float b) { return a > b ? a : b; }
@@ -134,19 +138,20 @@ void directorAvoidHiker(World& w) {
   const Hiker& h = w.hiker;
   if (!h.visible) return;
   const bool walking = h.walking;
-  const bool stirring = walking || (h.blending && h.target != POSE_SIT && h.target != POSE_LIE &&
-                                    h.target != POSE_READ && h.target != POSE_HOLD_MUG);
-  if (!stirring) return;
+  const bool seated = h.target == POSE_SIT || h.target == POSE_LIE || h.target == POSE_READ || h.target == POSE_HOLD_MUG;
+  const bool stirring = walking || (h.blending && !seated);
+  if (!stirring && seated) return;   // sitting or lying still: nothing to guard against
   const Rect& hr = w.hiker_rect;
   for (int i = 0; i < CRITTER_MAX; ++i) {
     const CritterSlot& s = w.crit[i];
     if (!s.in_use || s.mode != CM_FREE || (s.flags & CF_BRAVE)) continue;
-    bool go = (s.flags & CF_SHY) != 0;
-    if (!go && walking) {
+    bool go = stirring && (s.flags & CF_SHY) != 0;
+    if (!go) {
       const Rect r = critterBounds(w.critters[i]);
       const float gx = maxf(0.f, (float)maxf((float)(r.x0 - hr.x1), (float)(hr.x0 - r.x1)));
       const float gy = maxf(0.f, (float)maxf((float)(r.y0 - hr.y1), (float)(hr.y0 - r.y1)));
-      go = gx < kHikerNear && gy < kHikerNearY;
+      // Walking: anything within kHikerNear. On his feet but not yet walking: anything he would walk into.
+      go = walking ? gx < kHikerNear && gy < kHikerNearY : gx < kHikerSetOff && gy < kHikerSetOff;
     }
     if (go) startScatter(w, i, h.feet.x);
   }
@@ -189,7 +194,8 @@ void directorExit(World& w, int slot, int side, float px_per_s, CritterAction ga
   if (!valid(slot) || !w.crit[slot].in_use) return;
   CritterSlot& s = w.crit[slot];
   const Critter& c = w.critters[slot];
-  const float half = kReach[c.kind < CR_COUNT ? c.kind : 0].half * c.scale;
+  // A dog dragging its branch has 100 px more of figure to get out of sight (it trails behind).
+  const float half = kReach[c.kind < CR_COUNT ? c.kind : 0].half * c.scale + (c.carry == CC_BRANCH ? 100.f : 0.f);
   const Vec2 to = directorClamp(w, slot, Vec2{side < 0 ? -half - 40.f : (float)SS_WIDTH + half + 40.f, c.feet.y}, true);
   s.mode = CM_FLEE;
   s.t = 0.f;

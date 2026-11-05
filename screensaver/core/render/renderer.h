@@ -4,8 +4,8 @@
 // into the layer cache (a full RGB565 frame in host-provided large memory) and
 // redrawn only when the palette changes. Each frame the renderer walks the
 // SS_STRIP_COUNT horizontal strips. A strip that no dynamic element touches is
-// skipped. A dirty strip is composited in a small strip buffer (internal SRAM
-// on the board): copy the cache rows, draw every dynamic element clipped to
+// skipped. A dirty strip is composited in a small strip buffer (the head of
+// the host's fast block, internal SRAM on the board): copy the cache rows, draw every dynamic element clipped to
 // the strip, then write the strip to the framebuffer in one sequential run.
 //
 // Drawing is expressed through a DrawList callback so the scene layer stays
@@ -31,13 +31,14 @@ struct SceneDraw {
 
 struct Renderer {
   Pixel* cache;                 // SS_WIDTH * SS_HEIGHT, large memory
-  Pixel  strip_buf[SS_WIDTH * SS_STRIP_ROWS];   // 51,200 bytes, internal SRAM
+  Pixel* strip_buf;             // SS_STRIP_BYTES, the head of the fast block (ss_platform.h)
   uint16_t dirty_mask;          // bit i = strip i needs compositing this frame
   bool cache_valid;
   Palette palette;
 
-  // Allocates the cache through `alloc`. Returns false if allocation fails.
-  bool init(const HostAlloc& alloc);
+  // Allocates the cache through `alloc` and composites in `strip` (SS_STRIP_BYTES,
+  // owned by the caller). Returns false if allocation fails.
+  bool init(const HostAlloc& alloc, Pixel* strip);
   void shutdown(const HostAlloc& alloc);
 
   // New palette: the cache is rebuilt on the next frame and every strip is

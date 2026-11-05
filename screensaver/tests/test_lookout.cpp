@@ -42,7 +42,7 @@ static int g_fail = 0;
 
 static void* hostAlloc(size_t n) { return malloc(n); }
 static void hostFree(void* p) { free(p); }
-static const HostAlloc kAlloc = {hostAlloc, hostFree};
+static const HostAlloc kAlloc = {hostAlloc, hostFree, nullptr};   // no fast block lent: core takes one
 
 struct Rig {
   void* mem = nullptr;

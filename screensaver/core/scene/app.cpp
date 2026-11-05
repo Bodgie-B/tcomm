@@ -9,9 +9,13 @@
 #include <string.h>
 #include <new>
 
+#include "../gfx/raster.h"
 #include "../render/renderer.h"
 #include "../ss_app.h"
+#include "chip.h"
 #include "director.h"
+#include "react.h"
+#include "reveal.h"
 #include "world.h"
 
 namespace ss {
@@ -35,7 +39,15 @@ struct App {
   uint32_t events_seen;   // drained events; ignored until later stages
   uint16_t pal_rebuilds;  // computeAppPalette calls this loop (appPaletteRebuilds)
 
-  Renderer renderer;      // last: it carries the 51 KB strip buffer
+  // SS_FAST_BYTES: the strip buffer, then the rasterizer's scratch. Lent by the
+  // host (HostAlloc::fast) or, when it lends none, taken from alloc_large.
+  void* fast;
+  bool fast_owned;
+
+  RevealState reveal;     // the touch reveal; while active the scene is frozen
+  ChipState chip;         // the other floor's status, the dog badges, the doorbell pulse
+
+  Renderer renderer;
 };
 
 static_assert(sizeof(App) <= SS_APP_BYTES, "App exceeds SS_APP_BYTES");
@@ -53,6 +65,7 @@ void drawStatic(void* user, Surface& frame, const Palette& pal) {
 void drawDynamic(void* user, Surface& strip, const Rect& clip, const Palette& pal) {
   const App* a = static_cast<const App*>(user);
   worldDrawDynamic(a->world, strip, clip, pal, a->pal_mood);
+  if (a->in.chip) chipDraw(a->chip, strip, clip, pal);   // over everything, the loop's fade included
 }
 
 float moodDistance(float a, float b) {
@@ -123,10 +136,18 @@ void beginLoop(App* a) {
 
 App* appStart(void* storage, const HostAlloc& alloc, uint64_t seed, const Inputs& in) {
   App* a = new (storage) App();
-  if (!a->renderer.init(alloc)) {
+  a->fast = alloc.fast;
+  a->fast_owned = false;
+  if (a->fast == nullptr && alloc.alloc_large != nullptr) {
+    a->fast = alloc.alloc_large(SS_FAST_BYTES);
+    a->fast_owned = a->fast != nullptr;
+  }
+  if (a->fast == nullptr || !a->renderer.init(alloc, static_cast<Pixel*>(a->fast))) {
+    if (a->fast_owned && alloc.free_large != nullptr) alloc.free_large(a->fast);
     a->~App();
     return nullptr;
   }
+  chipInit(a->chip);
   a->in = in;
   a->loop_seed = seed;
   a->draw.user = a;
@@ -134,21 +155,38 @@ App* appStart(void* storage, const HostAlloc& alloc, uint64_t seed, const Inputs
   a->draw.draw_dynamic = drawDynamic;
   beginLoop(a);
   computeAppPalette(a, true);
+  // The chip's first update sets its look with no fade, so the first frame shows the real status.
+  if (in.chip) chipUpdate(a->chip, in.other_status, in.dog_out, in.night_mode, 0.f);
   return a;
 }
 
 void appStop(App* app, const HostAlloc& alloc) {
   app->renderer.shutdown(alloc);
+  if (app->fast_owned && alloc.free_large != nullptr) alloc.free_large(app->fast);
   app->~App();
 }
 
-void appSetInputs(App* app, const Inputs& in) { app->in = in; }
+void appSetInputs(App* app, const Inputs& in) {
+  if (in.chip != app->in.chip) app->renderer.markDirtyRect(chipBounds(app->chip));   // shown or hidden
+  app->in = in;
+}
 
 bool appPostEvent(App* app, Event e) { return app->timeline.post(e); }
 
 bool appTick(App* a) {
+  if (a->reveal.active) return false;   // frozen under the reveal
   Event ev[SS_MAX_PENDING_EVENTS];
-  a->events_seen += (uint32_t)a->timeline.takeEvents(ev, SS_MAX_PENDING_EVENTS);
+  const int n_ev = a->timeline.takeEvents(ev, SS_MAX_PENDING_EVENTS);
+  a->events_seen += (uint32_t)n_ev;
+  for (int i = 0; i < n_ev; ++i) {
+    if (ev[i].type != EV_DOORBELL) continue;
+    if (a->in.chip) chipDoorbell(a->chip);
+    if (reactCanStart(a->world)) reactStart(a->world);
+  }
+  if (a->in.chip) {
+    const Rect d = chipUpdate(a->chip, a->in.other_status, a->in.dog_out, a->in.night_mode, SS_TICK_DT);
+    if (!d.empty()) a->renderer.markDirtyRect(d);
+  }
 
   // Palette follows the inputs only when they moved enough to matter.
   float flash = 0.f;
@@ -160,6 +198,13 @@ bool appTick(App* a) {
       flash != a->pal_flash ||   // the flash moves in a few fixed steps: every step counts
       a->in.night_mode != a->pal_night) {
     computeAppPalette(a, false);
+  }
+
+  // The doorbell reaction holds the story still (react.h): no beat or minor
+  // advances, only the world's ambient layer and his reaction.
+  if (a->world.react.active) {
+    worldTick(a->world, a->rng, a->renderer);
+    return false;
   }
 
   // Beats drive the world first, then the world steps its ambient layer and
@@ -178,7 +223,30 @@ bool appTick(App* a) {
   return false;
 }
 
-int appRender(App* app, Surface& fb) { return app->renderer.render(fb, app->draw); }
+int appRender(App* app, Surface& fb) {
+  if (app->reveal.active) return 0;   // the cache holds the main screen now
+  // All of the app's drawing happens in here, with its own scratch. Its
+  // coverage row is zeroed every frame: a lent block can take a stray write
+  // from its owner (on the panel, LVGL's buffer), and that would streak every
+  // shape after it.
+  void* scratch = static_cast<uint8_t*>(app->fast) + SS_STRIP_BYTES;
+  rasterResetScratch(scratch);
+  void* prev = rasterSetScratch(scratch);
+  const int n = app->renderer.render(fb, app->draw);
+  rasterSetScratch(prev);
+  return n;
+}
+
+Pixel* appRevealBegin(App* app, int x, int y) {
+  if (!app->reveal.active) revealBegin(app->reveal, x, y);
+  return app->renderer.cache;
+}
+
+bool appRevealStep(App* app, Surface& fb, float dt) {
+  if (!app->reveal.active) return false;
+  if (fb.width < SS_WIDTH || fb.height < SS_HEIGHT || fb.origin_y != 0 || fb.stride < SS_WIDTH) return false;
+  return revealStep(app->reveal, fb, app->renderer.cache, app->pal[CLOUD_LIT], dt);
+}
 
 void appInvalidate(App* app) { app->renderer.markAllDirty(); }
 

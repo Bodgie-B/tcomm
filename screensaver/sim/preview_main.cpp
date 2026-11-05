@@ -58,6 +58,29 @@ static double msSince(Clock::time_point t) {
   return std::chrono::duration<double, std::milli>(Clock::now() - t).count();
 }
 
+// The main screen for --reveal-at, as RGB565: an 800x480 P6 PPM, or a test card
+// (a light UI-like background with a grid) when no file is given.
+static bool loadMainScreen(const char* path, ss::Pixel* out) {
+  if (path == nullptr) {
+    for (int y = 0; y < SS_HEIGHT; ++y)
+      for (int x = 0; x < SS_WIDTH; ++x)
+        out[y * SS_WIDTH + x] = (x % 100 == 0 || y % 80 == 0) ? (ss::Pixel)0x4208 : (ss::Pixel)0xEF5B;
+    return true;
+  }
+  FILE* fp = fopen(path, "rb");
+  if (!fp) return false;
+  int w = 0, h = 0, maxv = 0;
+  bool ok = fscanf(fp, "P6 %d %d %d", &w, &h, &maxv) == 3 && w == SS_WIDTH && h == SS_HEIGHT && maxv == 255 &&
+            fgetc(fp) != EOF;
+  for (int i = 0; ok && i < SS_WIDTH * SS_HEIGHT; ++i) {
+    const int r = fgetc(fp), g = fgetc(fp), b = fgetc(fp);
+    if (b == EOF) ok = false;
+    else out[i] = (ss::Pixel)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
+  }
+  fclose(fp);
+  return ok;
+}
+
 int main(int argc, char** argv) {
   PreviewOptions o;
   previewParseArgs(argc, argv, o);
@@ -96,13 +119,30 @@ int main(int argc, char** argv) {
   double skip_ms = msSince(t);
 
   int loops = 0;
+  bool revealing = false;
+  int after_reveal = -1;   // frames still to write once the reveal is done
   for (int f = 0; f < o.frames; f++) {
     t = Clock::now();
     if (o.sweep) {
       float u = o.frames > 1 ? (float)f / (float)(o.frames - 1) : 0.0f;
       previewSetMood(st, o.sweep_a + (o.sweep_b - o.sweep_a) * u);
     }
-    loops += previewStep(st, previewTicksForFrameOpts(o, f));
+    const int n = previewTicksForFrameOpts(o, f);
+    if (!revealing && o.reveal_at >= 0 && (long long)st.tick + n >= o.reveal_at) {
+      // The touch: the host fills the buffer core hands back with the main screen.
+      ss::Pixel* main_screen = appRevealBegin(st.app, o.reveal_x, o.reveal_y);
+      if (!loadMainScreen(o.main_ppm, main_screen)) {
+        fprintf(stderr, "cannot read %s (800x480 P6 PPM)\n", o.main_ppm);
+        previewShutdown(st);
+        return 1;
+      }
+      revealing = true;
+    }
+    if (revealing) {
+      if (appRevealStep(st.app, st.surface, (float)n / SS_TICK_HZ) && after_reveal < 0) after_reveal = 4;
+    } else {
+      loops += previewStep(st, n);
+    }
     sim_ms += msSince(t);
 
     char path[1200];
@@ -116,6 +156,12 @@ int main(int argc, char** argv) {
       previewHudLine(st, hud, sizeof hud);
       printf("frame %d: %s\n", f, hud);
     }
+    if (after_reveal == 0) {
+      printf("reveal done at frame %d\n", f);
+      o.frames = f + 1;
+      break;
+    }
+    if (after_reveal > 0) --after_reveal;
   }
 
   double wall_ms = msSince(wall0);

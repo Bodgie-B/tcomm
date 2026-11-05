@@ -59,6 +59,7 @@ static bool onSegment(Pixel p, Pixel a, Pixel b) {
 
 int main(int argc, char** argv) {
   const char* out = argc > 1 ? argv[1] : ".";
+  rasterSetScratch(calloc(1, rasterScratchBytes()));   // must start zeroed
   Surface s{g_fb, SS_WIDTH, SS_HEIGHT, SS_WIDTH, 0};
   const Rect full = s.bounds();
   const float moods[6] = {3.5f, 4.0f, 4.5f, 5.0f, 5.5f, 5.9f};

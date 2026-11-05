@@ -13,6 +13,11 @@
 #include <cstring>
 #include <vector>
 
+// MinGW's <cmath> leaves M_PI out under -std=c++17 (no GNU extensions).
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 using namespace ss;
 
 static int g_failures = 0;
@@ -565,6 +570,7 @@ static void writeSample(const char* path) {
 }
 
 int main(int argc, char** argv) {
+  rasterSetScratch(calloc(1, rasterScratchBytes()));   // zeroed; appRender sets its own in the app
   testBlend();
   testSquare();
   testConservation();

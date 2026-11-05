@@ -126,8 +126,20 @@ bool cairnSame(const Cairn& a, const Cairn& b);
 // turns from straight up (+ toward `facing`), the fish skewered at its far
 // end, `size` its scale (1 whole; it shrinks as he eats); size <= 0 is the
 // skeleton. `on_fire`: propped over the fire, sorted in front of the flames.
+//
+// The morning when the camp stays up (morning_stay.cpp) adds four:
+// PAN is the frying pan on the fire (or down), its handle toward +x of `facing`; `angle` tilts the
+// bowl up about the handle's end (turns), `fill` 1 has a pancake lying in it.
+// CAKE is a pancake on its own (in the air, on his hat, in a bird's feet): `angle` turns it,
+// `fill` is how flat-on it is (1 face on .. 0 edge on: the flip), `alt` drapes it over a hat.
+// BRUSH is the toothbrush, held in his near hand (World places it there).
+// SACK is the stuff sack standing on the ground: `fill` how much sleeping bag is in it (0 flat ..
+// 1 full), `squash` how far he has squashed it (0..1), `puff` the bag springing out of its
+// mouth (0 none .. 1 all of it), `alt` tied shut.
+// SHOE's `alt` is a pair: a second shoe lies beside it, on its -x side.
 enum ItemId : uint8_t {
   ITEM_MUG = 0, ITEM_BOOK, ITEM_POT, ITEM_STICK, ITEM_SHOE, ITEM_WOOD, ITEM_FORK, ITEM_ROD, ITEM_HAT, ITEM_FISH,
+  ITEM_PAN, ITEM_CAKE, ITEM_BRUSH, ITEM_SACK,
   ITEM_COUNT
 };
 
@@ -159,7 +171,11 @@ struct Item {
   float grip;
   float squeeze;     // critter-held: the holder's turn-around squeeze (x scale, 0.15..1)
   bool placed;       // critter-held, but its owner sets pos and grip (a pick-up or a drop under way)
-  bool alt = false;  // a variant look (ITEM_ROD: the stick that stood in for the rod)
+  bool alt = false;  // a variant look (ITEM_ROD: the stick that stood in for the rod; see ItemId)
+  // The morning stay's props (see ItemId): contents, and the sack's spill.
+  float fill = 0.f;
+  float puff = 0.f;
+  float squash = 0.f;
 };
 
 Rect itemBounds(ItemId id, const Item& it);
@@ -182,6 +198,18 @@ struct Steam {
 Rect steamBounds(const Steam& s);
 void steamDraw(const Steam& s, Surface& dst, const Rect& clip, const Palette& pal);
 bool steamSame(const Steam& a, const Steam& b);
+
+// Foliage shaking where he went in behind the big pine (the morning's pee): a few needle sprays
+// poking out of the silhouette near `at` (a point on its edge, frame px), quivering for
+// RUSTLE_S seconds; `t` seconds since it began, < 0 off. Drawn from its fields alone.
+#define RUSTLE_S 2.8f
+struct Rustle {
+  Vec2 at;
+  float t;
+};
+Rect rustleBounds(const Rustle& r);
+void rustleDraw(const Rustle& r, Surface& dst, const Rect& clip, const Palette& pal);
+bool rustleSame(const Rustle& a, const Rustle& b);
 
 // A skipped stone: thrown from p[0], it touches the water at p[1..n] and sinks
 // at p[n]; each touch leaves a ring that spreads and thins. `t` seconds since

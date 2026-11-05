@@ -6,7 +6,7 @@ The GUI design brief lives in `docs/design/`. Where it disagrees with the handof
 
 The campsite screensaver is a separate sub-project with its own brief: `docs/screensaver/CAMPSITE_SCREENSAVER_BRIEF.md`. Read it when working on the screensaver. It runs as an idle mode inside the panel firmware, and its visual rules (Firewatch palettes, full animation) apply only to the screensaver, not to the main interface.
 
-Screensaver work continues from `docs/screensaver/START_HERE.md` (on the `screensaver` branch). Read it first in any screensaver session: it records what is done and verified, the git rules, the reordered build plan (all animation stages in the PC preview first, then the board), and the budget each preview stage must stay inside.
+Mike took the screensaver over from Mark on 1 November 2026. In any screensaver session read `docs/screensaver/WORKLOG.md` first (what is done, verified and queued), then `docs/screensaver/HOW_TO_ADD_SCENES.md` (how the scene code fits together and the rules every addition keeps). `docs/screensaver/START_HERE.md` is Mark's plan from 30 October: its stages 7 to 11 (the panel) still stand, its toolchain and memory notes are out of date.
 
 Rules for this repo:
 - This repo is public. Never commit Wi-Fi passwords, ESP-NOW keys, tokens or anything from Mike's other projects. Use an untracked config file (see `.gitignore`).

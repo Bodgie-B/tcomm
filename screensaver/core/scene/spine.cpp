@@ -2753,10 +2753,12 @@ void spineFitLength(LoopPlan& p, Memory& mem, const FitSpec& f) {
     // one of the last loops played (memory) and another choice does not.
     uint32_t all = 0;
     for (int i = 0; i < p.n_majors; ++i) all = (uint32_t)(all | (1u << p.major[i]));
-    // fishing_good stays (dinner is planned round it).
-    int drop = p.major[p.n_majors - 1] == MJ_FISHING_GOOD ? p.n_majors - 2 : p.n_majors - 1;
+    // fishing_good stays (dinner is planned round it), and so does a fetch the house asked for (a dog is out).
+    auto kept = [&p](int i) { return p.major[i] == MJ_FISHING_GOOD || majorKept(p.major[i], p.major_var[i]); };
+    int drop = p.n_majors - 1;
+    while (drop > 0 && kept(drop)) --drop;
     for (int i = p.n_majors - 1; i >= 0; --i)
-      if (p.major[i] != MJ_FISHING_GOOD && !memoryRecentSet(mem, (uint32_t)(all & ~(1u << p.major[i])))) {
+      if (!kept(i) && !memoryRecentSet(mem, (uint32_t)(all & ~(1u << p.major[i])))) {
         drop = i;
         break;
       }
@@ -2801,7 +2803,10 @@ void spinePlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
     eveningPlan(p, rng, in, mem);
   }
   mem.last_family = p.family;
-  for (int i = 0; i < 8; ++i) mem.last_fvar[i] = p.fvar[i];
+  // The camp-stays morning remembers its variants apart (last_sfvar), so Mark's morning, which
+  // reads last_fvar, plans as it always did.
+  mem.last_stay = p.family == SF_MORNING && p.stay != 0;
+  for (int i = 0; i < 8; ++i) (mem.last_stay ? mem.last_sfvar[i] : mem.last_fvar[i]) = p.fvar[i];
 }
 
 void spineBeginLoop(World& w, Rng& rng) {
@@ -2890,6 +2895,11 @@ void spineLayout(World& w) {
   sp.fcrit = -1;
   sp.fstage = 0;
   sp.ft = 0.f;
+  sp.xcrit[0] = sp.xcrit[1] = -1;   // the camp-stays morning's (morning_stay.cpp)
+  sp.xbit[0] = sp.xbit[1] = -1;
+  sp.xstage = sp.xbits = sp.xloot = sp.xstep = 0;
+  sp.xt2 = 0.f;
+  sp.xt = 0.f;
 }
 
 void spineCritterScenes(World& w) {
