@@ -24,6 +24,7 @@ class DevicePlatform : public tc::Platform {
   void save_mail(const tc::MailState &m) override;
   void save_settings(const tc::Settings &s) override;
   void save_comfort_count(uint32_t n) override;
+  void save_comfort_pending(const tc::ComfortPending *p, int n) override;
   void save_requests(const tc::RequestState &s) override;
   void append_line(const char *name, const char *header, const char *line) override;
   void set_csv_field(const char *name, uint32_t n, int column, const char *value) override;
@@ -47,7 +48,8 @@ class DevicePlatform : public tc::Platform {
     kDirtyClock = 8,
     kDirtyMail = 16,
     kDirtyComfort = 32,
-    kDirtyRequests = 64
+    kDirtyRequests = 64,
+    kDirtyPending = 128  // the comfort outbox (Mike, 2026-11-07)
   };
   volatile uint8_t dirty_ = 0;
   tc::OwnState own_;
@@ -55,6 +57,8 @@ class DevicePlatform : public tc::Platform {
   tc::MailState mail_;
   tc::Settings settings_;
   uint32_t comfort_n_ = 0;
+  tc::ComfortPending pending_[tc::kComfortPendingMax] = {};
+  int npending_ = 0;
   tc::RequestState requests_ = {};
   uint8_t clock_q_ = 0;
   // The calendar's files waiting to be written by the loop task, oldest first. An entry stays while

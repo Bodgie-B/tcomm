@@ -99,6 +99,16 @@ void DevicePlatform::save_comfort_count(uint32_t n) {
   taskEXIT_CRITICAL(&g_save_mux);
 }
 
+void DevicePlatform::save_comfort_pending(const tc::ComfortPending *p, int n) {
+  if (!p || n < 0) n = 0;
+  if (n > tc::kComfortPendingMax) n = tc::kComfortPendingMax;
+  taskENTER_CRITICAL(&g_save_mux);
+  for (int i = 0; i < n; i++) pending_[i] = p[i];
+  npending_ = n;
+  dirty_ |= kDirtyPending;
+  taskEXIT_CRITICAL(&g_save_mux);
+}
+
 void DevicePlatform::save_requests(const tc::RequestState &s) {
   taskENTER_CRITICAL(&g_save_mux);
   requests_ = s;
@@ -217,6 +227,8 @@ void DevicePlatform::flush_saves() {
   tc::Settings settings;
   uint32_t comfort;
   tc::RequestState requests;
+  static tc::ComfortPending pending[tc::kComfortPendingMax];  // a copy, outside the lock; only this task uses it
+  int npending;
   uint8_t q;
   taskENTER_CRITICAL(&g_save_mux);
   uint8_t d = dirty_;
@@ -227,6 +239,9 @@ void DevicePlatform::flush_saves() {
   settings = settings_;
   comfort = comfort_n_;
   requests = requests_;
+  npending = npending_;
+  if (d & kDirtyPending)
+    for (int i = 0; i < npending; i++) pending[i] = pending_[i];
   q = clock_q_;
   taskEXIT_CRITICAL(&g_save_mux);
   uint32_t t0 = millis();
@@ -236,6 +251,7 @@ void DevicePlatform::flush_saves() {
   if (d & kDirtySettings) board::save_settings(settings);
   if (d & kDirtyComfort) board::save_comfort_count(comfort);
   if (d & kDirtyRequests) board::save_requests(requests);
+  if (d & kDirtyPending) board::save_comfort_pending(pending, npending);
   if (d & kDirtyClock) save_clock_quality(q);
 
   // A flash write stalls both cores' caches; worth seeing next to a sound that went unheard.

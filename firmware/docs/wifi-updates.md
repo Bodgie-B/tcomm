@@ -29,6 +29,24 @@ runs. The flash already has room: two 3 MB program slots, and the panel firmware
    screen should show TCOMM UPDATE, the panel's name, its Wi-Fi address and a countdown. Send the
    firmware (below), or wait ten minutes and it goes back on its own.
 
+## Updating both panels at once (since 2026-11-07)
+
+One tap and one command (Mike, 2026-11-07):
+
+1. On either panel: Settings > Update over Wi-Fi > BOTH PANELS. That panel tells the other one by
+   radio (an UPDATE message), and both restart into their updaters: the other at once, the tapped
+   one 700 ms after the other answers, so its queued saves reach flash first. If the other panel
+   doesn't answer within 2 seconds, the tapped one updates on its own. Over USB serial, `update
+   both` does the same.
+2. On the laptop, in Git Bash in the firmware folder: `bash tools/fw.sh ota-both`. It first finds
+   both waiting updaters with `tools/find_panels.py` (a ping sweep of the laptop's own network, then
+   the ARP table, matched exactly to the two panels' MACs in `secrets.h` by the script, which prints
+   only `UPSTAIRS <address>` and `DOWNSTAIRS <address>`), stops if either is missing, then compiles
+   once and uploads to downstairs, then upstairs.
+
+Checked on both panels on 2026-11-07: one tap on BOTH PANELS, then `ota-both` found both and both
+answered "Update Success". The single-panel steps below still work.
+
 ## Updating a mounted panel
 
 Compile first, `bash tools/fw.sh radio`, so the build is ready before the panel starts waiting: a

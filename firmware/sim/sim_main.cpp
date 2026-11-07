@@ -111,6 +111,11 @@ class Proxy : public ui::Actions {
   uint8_t *read_file(const char *name, size_t &len) override { return g_h->app.read_file(name, len); }
   void free_file(uint8_t *p) override { g_h->app.free_file(p); }
   void answer(bool y) override { g_h->app.answer(y); }
+  // Mike, 2026-11-07: the simulator pretends an updater is installed, and counts the two ways to start it.
+  bool updater_installed() override { return true; }
+  void start_updater() override { n_this++; }
+  void start_updater_both() override { n_both++; }
+  int n_this = 0, n_both = 0;
   void dismiss_banner() override { g_h->app.dismiss_banner(); }
   void apply_settings(const Settings &s) override { g_h->app.apply_settings(s); }
   void set_clock_local(int64_t l) override { g_h->app.set_clock_local(l); }
@@ -144,6 +149,19 @@ static void tap(int x, int y, int after = 250) {
   pump(100);
   g_pressed = false;
   pump(after);
+}
+
+// A finger dragging up by dy pixels (scrolls a sheet), in small steps.
+static void drag_up(int x, int y, int dy) {
+  g_touch = {(lv_coord_t)x, (lv_coord_t)y};
+  g_pressed = true;
+  pump(60);
+  for (int i = 1; i <= 10; i++) {
+    g_touch = {(lv_coord_t)x, (lv_coord_t)(y - dy * i / 10)};
+    pump(40);
+  }
+  g_pressed = false;
+  pump(400);
 }
 
 static void long_press(int x, int y, int ms = 800, int after = 250) {
@@ -633,6 +651,22 @@ int main(int argc, char **argv) {
     start(upc); seed_comfort(); ui::open_sheet(ui::Sheet::Chart); pump(500);
     tap(seed_xy(k).x, seed_xy(k).y); pump(300); capture("62_chart_upstairs");
     start(p1); seed_comfort(); ui::open_sheet(ui::Sheet::Chart); pump(500); capture("63_chart_night");
+    // Settings > Update over Wi-Fi asks which panels (Mike, 2026-11-07).
+    start(p4); ui::open_sheet(ui::Sheet::Settings); pump(400);
+    drag_up(200, 400, 150);
+    tap(600, 330);  // the UPDATE OVER WI-FI tile
+    capture("64_update_both_choice");
+    tap(400, 351);  // Cancel
+    check(g_proxy.n_this == 0 && g_proxy.n_both == 0, "Cancel starts no updater");
+    tap(600, 330);
+    tap(258, 253);  // THIS PANEL
+    check(g_proxy.n_this == 1 && g_proxy.n_both == 0, "THIS PANEL starts this panel's updater only");
+    start(p4); ui::open_sheet(ui::Sheet::Settings); pump(400);
+    drag_up(200, 400, 150);
+    tap(600, 330);
+    tap(542, 253);  // BOTH PANELS
+    check(g_proxy.n_this == 1 && g_proxy.n_both == 1, "BOTH PANELS calls start_updater_both");
+    std::printf("update choice by touch: %d failed\n", g_fails);
   }
 
   // Both dogs out (Mike, 2026-10-25: it happens now).

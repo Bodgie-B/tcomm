@@ -14,6 +14,10 @@
 #                                      panel's second app slot; the panel firmware stays as it is
 #   bash tools/fw.sh ota HOST          the radio build, over Wi-Fi, to a panel waiting in its
 #                                      updater (HOST: the address on its screen, or tcomm-upstairs.local)
+#   bash tools/fw.sh ota-both          the same build to both panels at once (Mike, 2026-11-07): start
+#                                      Settings > Update over Wi-Fi > BOTH PANELS (or serial "update
+#                                      both") on a panel first; tools/find_panels.py finds the two
+#                                      updaters, and the build goes to downstairs, then upstairs
 #
 # Run it from Git Bash. Bitdefender's Advanced Threat Defense stopped the same compile started from
 # PowerShell (2026-10-25: powershell.exe running arduino-cli.exe) and quarantined the gateway's
@@ -46,7 +50,7 @@ fi
 
 WHAT=panel
 case "${1:-}" in
-  gateway | listener | radio | updater | ota)
+  gateway | listener | radio | updater | ota | ota-both)
     WHAT=$1
     shift
     ;;
@@ -65,7 +69,7 @@ case $WHAT in
     UP="$LOCALAPPDATA/tcomm/b/upload32.log"
     EXTRA=(--libraries libraries)
     ;;
-  radio | ota)
+  radio | ota | ota-both)
     # The same sketch with the two switches in tcomm_config.h set from here, in its own build
     # folder so going back and forth doesn't rebuild everything. ota sends this same build.
     SKETCH=tcomm
@@ -108,6 +112,18 @@ case $WHAT in
     ;;
 esac
 mkdir -p "$OUT"
+# An HTTP upload to the updater's /update, sent from here, so nothing has to come in through the
+# laptop's firewall (espota needs the panel to connect back, and Windows blocked that). One log per
+# call (UP, or UP with a label); prints the result line and returns 0 if the panel took it.
+ota_send() {  # ota_send HOST LOGFILE
+  if curl -sS --fail --max-time 180 -u "tcomm:$ota_pass" -F "firmware=@$OUT/tcomm.ino.bin" "http://$1/update" > "$2" 2>&1 && grep -q "Update Success" "$2"; then
+    echo "sent to $1; the panel restarts into the new firmware (log: $2)"
+    return 0
+  fi
+  echo "UPLOAD FAILED (log: $2)"
+  head -5 "$2"
+  return 1
+}
 # The gateway and listener pick secrets.h or, without it, secrets.example.h with __has_include.
 # The build cache only knows about the file it used last, so a secrets.h made after a build would
 # be missed and the old placeholder keys flashed. Their own files always recompile (a few seconds;
@@ -117,13 +133,31 @@ if [ "$WHAT" = gateway ] || [ "$WHAT" = listener ] || [ "$WHAT" = updater ]; the
 # The campsite screensaver's core (screensaver/core, plain C++17) builds into the panel firmware as
 # the ss_core library: refreshed into libraries/ss_core/src (not in git) before each panel build, so
 # there is one copy of it in git. On GitHub the screensaver sits beside firmware/.
-if [ "$WHAT" = panel ] || [ "$WHAT" = radio ] || [ "$WHAT" = ota ]; then
+if [ "$WHAT" = panel ] || [ "$WHAT" = radio ] || [ "$WHAT" = ota ] || [ "$WHAT" = ota-both ]; then
   SS_CORE=screensaver/core
   [ -d "$SS_CORE" ] || SS_CORE=../screensaver/core
   [ -d "$SS_CORE" ] || { echo "screensaver/core not found: the panel firmware builds the screensaver in"; exit 1; }
   SYNC=tools/sync_ss_core.py
   [ -f "$SYNC" ] || SYNC=../tools/sync_ss_core.py
   python "$SYNC" "$SS_CORE" libraries/ss_core/src || exit 1   # -O2 on the screensaver only
+fi
+
+if [ "$WHAT" = ota-both ]; then
+  # Find both waiting updaters before compiling, so a missing one stops the run at once and the
+  # ten-minute wait isn't spent on the compile first (review, 2026-11-07).
+  ota_pass=$(sed -n 's/^#define TCOMM_OTA_PASS *"\(.*\)".*/\1/p' tcomm/src/config/secrets.h 2>/dev/null)
+  if [ -z "$ota_pass" ]; then
+    echo "NOT UPLOADED: secrets.h needs TCOMM_OTA_PASS filled in (docs/wifi-updates.md)."
+    exit 1
+  fi
+  found=$(python -I tools/find_panels.py) || { echo "NOT UPLOADED: tools/find_panels.py failed"; exit 1; }
+  ip_down=$(echo "$found" | sed -n 's/^DOWNSTAIRS \([0-9.]*\)$/\1/p')
+  ip_up=$(echo "$found" | sed -n 's/^UPSTAIRS \([0-9.]*\)$/\1/p')
+  if [ -z "$ip_down" ] || [ -z "$ip_up" ]; then
+    echo "NOT UPLOADED: both panels' updaters must be waiting first (Settings > Update over Wi-Fi > BOTH PANELS)."
+    echo "$found"
+    exit 1
+  fi
 fi
 
 if ! grep -q "high_perf" "$ARDUINO_DIRECTORIES_DATA"/packages/esp32/tools/esp32-arduino-libs/*/versions.txt 2>/dev/null; then
@@ -137,6 +171,16 @@ if ! "$ACLI" compile --fqbn "$FQBN" "${EXTRA[@]}" --warnings default --build-pat
 fi
 grep "Sketch uses\|Global variables" "$LOG"
 grep -n "warning" "$LOG" | grep -v "libraries[/\\]lvgl" | head -20
+if [ "$WHAT" = ota-both ]; then
+  # Mike, 2026-11-07: both panels from one command. Compiled once above; the addresses came from
+  # tools/find_panels.py before the compile (it prints no secrets).
+  rc=0
+  echo "downstairs:"
+  ota_send "$ip_down" "$UP.downstairs" || rc=1
+  echo "upstairs:"
+  ota_send "$ip_up" "$UP.upstairs" || rc=1
+  exit $rc
+fi
 if [ $# -ge 1 ]; then
   if [ "$WHAT" != panel ] && [ ! -f tcomm/src/config/secrets.h ]; then
     echo "NOT UPLOADED: tcomm/src/config/secrets.h is missing (copy secrets.example.h and"
@@ -171,15 +215,8 @@ if [ $# -ge 1 ]; then
     exit 1
   fi
   if [ "$WHAT" = ota ]; then
-    # An HTTP upload to the updater's /update, sent from here, so nothing has to come in through the
-    # laptop's firewall (espota needs the panel to connect back, and Windows blocked that).
-    if curl -sS --fail --max-time 180 -u "tcomm:$ota_pass" -F "firmware=@$OUT/tcomm.ino.bin"       "http://$1/update" > "$UP" 2>&1 && grep -q "Update Success" "$UP"; then
-      echo "sent to $1; the panel restarts into the new firmware (log: $UP)"
-      exit 0
-    fi
-    echo "UPLOAD FAILED (log: $UP)"
-    head -5 "$UP"
-    exit 1
+    ota_send "$1" "$UP"
+    exit $?
   fi
   "$ACLI" upload --fqbn "$FQBN" --input-dir "$OUT" -p "$1" > "$UP" 2>&1
   # The board's Wi-Fi MAC. The C6 also has an 8-byte 802.15.4 address, which esptool prints as

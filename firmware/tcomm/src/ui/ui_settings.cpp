@@ -200,13 +200,30 @@ void ask_swap() {
   confirm_ask(q, sub, "Swap", swap_answer);
 }
 
+// Mike, 2026-11-07: the updater asks which panels to restart. Answer user data: 0 Cancel, 1 this panel,
+// 2 both panels (this one and, over the radio, the other).
 void update_answer(lv_event_t *e) {
-  if (confirm_close(e) && g_act) g_act->start_updater();  // restarts the panel into the updater
+  intptr_t which = (intptr_t)lv_event_get_user_data(e);
+  confirm_close(e);
+  if (!g_act) return;
+  if (which == 1) g_act->start_updater();  // restarts the panel into the updater
+  if (which == 2) g_act->start_updater_both();
 }
 
 void ask_update() {
   if (g_confirm || !g_updater) return;
-  confirm_ask("Restart into the updater?", "Off the radio for up to 10 minutes.", "Restart", update_answer);
+  const theme::Palette &pal = theme::palette(g_mode);
+  g_confirm = box(g_sheet_root, 0, 0, 800, 480, hex(0), 0);
+  lv_obj_set_style_bg_opa(g_confirm, LV_OPA_50, 0);
+  lv_obj_add_flag(g_confirm, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_t *d = box(g_confirm, 100, 80, 600, 330, pal.doorbell, 24);
+  lv_obj_add_flag(d, LV_OBJ_FLAG_CLICKABLE);
+  label(d, J30, pal.cream, 28, 24, "Update over Wi-Fi");
+  label(d, B20, pal.cream, 30, 72, "Off the radio for up to 10 minutes.");
+  theme::StatusColors open = theme::status_colors(0, g_mode);
+  button(d, 24, 128, 268, 90, open.tile, open.text, "THIS PANEL", J30, update_answer, (void *)1);
+  button(d, 308, 128, 268, 90, open.tile, open.text, "BOTH PANELS", J30, update_answer, (void *)2);
+  button(d, 24, 236, 552, 70, pal.ring, pal.cream, "Cancel", J30, update_answer, (void *)0);
 }
 
 void tile_clicked(lv_event_t *e) {

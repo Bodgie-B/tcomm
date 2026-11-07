@@ -41,6 +41,12 @@ class Platform {
   // (downstairs: answers given; upstairs: the highest answer number copied here).
   virtual void save_comfort_count(uint32_t) {}
   virtual void save_requests(const RequestState &) {}  // the heat and cooling arrows (requests.h)
+  // The comfort answers and removals still waiting for upstairs (oldest first), saved on every
+  // change so a restart keeps them (comfort.h).
+  virtual void save_comfort_pending(const ComfortPending *p, int n) {
+    (void)p;
+    (void)n;
+  }
   // In the file's line whose first column is n, replaces column `column` (0-based) with value.
   // Queued in order with append_line (an edit never overtakes a line still waiting) and written in
   // the background through a temporary file, so a power cut keeps the old file. For removing a
@@ -224,6 +230,12 @@ class Controller : public CalendarSource {
   // mistake. It's marked removed (the time) in this panel's comfort.csv and upstairs'. False on the
   // upstairs panel or for n 0 or beyond the answers here.
   bool comfort_remove(uint32_t n);
+  // At start-up: what was still waiting for upstairs when the panel stopped (save_comfort_pending).
+  void restore_comfort_pending(const ComfortPending *p, int n);
+  // Settings > Update over Wi-Fi > Both panels (Mike, 2026-11-07): asks the other panel to start
+  // its updater too (an UPDATE message), then starts this panel's once the other has answered or
+  // after a short wait. False if this panel has no updater.
+  bool update_both();
   void restore_requests(const RequestState &s) {
     req_.restore(s);
     req_snapshot(true);
@@ -383,6 +395,21 @@ class Controller : public CalendarSource {
   struct ComfortOut { ComfortAnswer a; uint16_t seq; bool del; };
   ComfortOut comfort_out_[kComfortOutbox] = {};
   int comfort_out_n_ = 0;
+  // Saves the outbox through Platform::save_comfort_pending, on every change (Mike, 2026-11-07).
+  void comfort_out_save();
+  void tick_update(uint32_t now);
+  // Settings > Update over Wi-Fi > Both panels (Mike, 2026-11-07). both_wait_: this panel's updater
+  // starts when UPDATE is ACKed (both_seq_) or at both_at_, 2 s after it was sent. update_wait_: a
+  // received UPDATE starts it at update_at_, about 700 ms later so the ACK gets out first.
+  static constexpr uint32_t kBothWaitMs = 2000;
+  static constexpr uint32_t kUpdateDelayMs = 700;
+  bool both_wait_ = false;
+  uint16_t both_seq_ = 0;
+  uint32_t both_at_ = 0;
+  uint32_t both_sent_ = 0;   // when UPDATE went out: once ACKed, this panel starts kUpdateDelayMs after it
+  bool both_acked_ = false;
+  bool update_wait_ = false;
+  uint32_t update_at_ = 0;
   bool outside_fresh(uint32_t now) const;
   int forced_phase_ = 6;
   ReqArrow req_prev_[kMaxArrows] = {};

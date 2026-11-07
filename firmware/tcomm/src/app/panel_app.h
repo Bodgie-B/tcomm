@@ -39,6 +39,7 @@ class PanelApp : public ui::Actions {
   bool floor_locked() override { return floor_locked_; }
   bool updater_installed() override { return p_.updater_installed(); }
   void start_updater() override { p_.start_updater(); }
+  void start_updater_both() override { c_.update_both(); }
 
   void apply_settings(const Settings &in) override {
     Settings s = in;

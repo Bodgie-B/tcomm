@@ -399,7 +399,23 @@ void setup() {
   if (lvgl_port_lock(-1)) {
     g_ctrl.begin(settings, own, dog, mail);
     uint32_t comfort_n = 0;
-    if (board::load_comfort_count(comfort_n)) g_ctrl.set_comfort_count(comfort_n);
+    bool have_count = board::load_comfort_count(comfort_n);
+    // Mike, 2026-11-07: the count can't go backwards. If the saved one was lost or is behind, the
+    // number in comfort.csv's last complete line is the floor, so no answer number is reused.
+    uint32_t file_n = board::calendar_last_number(tc::kComfortFile);
+    if (file_n > comfort_n) {
+      Serial.printf("[tcomm] comfort count: saved %lu, comfort.csv's last line %lu; using the larger\n",
+                    (unsigned long)(have_count ? comfort_n : 0), (unsigned long)file_n);
+      comfort_n = file_n;
+      have_count = true;
+    }
+    if (have_count) g_ctrl.set_comfort_count(comfort_n);
+    tc::ComfortPending pending[tc::kComfortPendingMax];  // answers and removals still waiting for upstairs
+    int npending = 0;
+    if (board::load_comfort_pending(pending, tc::kComfortPendingMax, npending) && npending > 0) {
+      Serial.printf("[tcomm] comfort: %d answers or removals were waiting for upstairs\n", npending);
+      g_ctrl.restore_comfort_pending(pending, npending);
+    }
     tc::RequestState requests;  // the arrows held when the panel last saved them (requests.h)
     if (board::load_requests(requests)) g_ctrl.restore_requests(requests);
     if (!have_settings) g_platform.save_settings(settings);
@@ -590,6 +606,7 @@ static void command(char *s) {
     Serial.println("req (the arrows held) | req send 0-3 (the tenant sends urgent heat, mild heat, mild cooling, urgent cooling; "
                    "downstairs only) | req tap (a tap on the arrows) | req acted (a tap on Action taken)");
     Serial.println("gear (as a tap on the gear: Settings rolls down or up) | knock (the other floor rings, as if by radio)");
+    Serial.println("update both (the other panel and this one restart into the Wi-Fi updater, as Settings > Update over Wi-Fi > BOTH PANELS does)");
     Serial.println("update (restart into the Wi-Fi updater, as Settings > Update over Wi-Fi does)");
     Serial.println("timesync (ask the internet for the time now; the result shows in log and radio)");
     Serial.println("phase N (the sky as if it were 0 night, 1 dawn, 2 morning, 3 midday, 4 golden hour, 5 dusk: the palette, "
@@ -688,6 +705,8 @@ static void command(char *s) {
   else if (cmd_int(s, "comfort", v) && tc::feel_valid((uint8_t)v))
     Serial.printf("comfort: %s\n", g_ctrl.comfort_answer((tc::Feel)v) ? "answer taken" : "not taken (upstairs, or the survey isn't asking)");
   else if (!strcmp(s, "gear")) ui::tap_gear();
+  else if (!strcmp(s, "update both"))  // Mike, 2026-11-07: the same as Settings > Update over Wi-Fi > BOTH PANELS
+    Serial.println(g_ctrl.update_both() ? "update both: asking the other panel, then this one restarts" : "update both: this panel has no updater installed");
   else if (!strcmp(s, "update")) board::restart_into_updater();
   else if (!strcmp(s, "timesync")) Serial.println(board::time_sync_start() ? "time: asking" : "time: can't ask now");
   else if (!strcmp(s, "knock")) knock_from_other_floor();

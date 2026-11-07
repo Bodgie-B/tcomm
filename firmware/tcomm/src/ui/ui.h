@@ -58,6 +58,7 @@ class Actions {
   virtual bool floor_locked() { return false; }  // Settings hides the floor swap when true
   virtual bool updater_installed() { return false; }  // Settings > Update over Wi-Fi
   virtual void start_updater() {}
+  virtual void start_updater_both() {}  // Update over Wi-Fi > Both panels (Controller::update_both)
   virtual DemoInfo demo_info() = 0;
   virtual void demo(DemoAction a) = 0;
   // The calendar. save_event returns the event's id, or 0 if it couldn't be kept (the calendar is

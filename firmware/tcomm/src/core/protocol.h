@@ -27,6 +27,8 @@
 //           (unused slots zero; ver = the change counter, so like MAIL the later change wins)
 //   COMFORT_DEL 12 bytes (Mike, 2026-11-06; downstairs removed answer n by mistake): n u32 | removed u32 | offset i32
 //           (removed = when, UTC, 0 without a clock. Every removal matters, so none replaces another.)
+//   UPDATE  reserved u8 (always 0)   (Mike, 2026-11-07: start your Wi-Fi updater; sent by the panel whose
+//           Settings > Update over Wi-Fi > Both panels was tapped. Not latest-wins. See docs/wifi-updates.md.)
 #pragma once
 #include "types.h"
 #include "events.h"
@@ -41,7 +43,7 @@ constexpr size_t kMaxPhrase = 48;
 
 enum class MsgType : uint8_t {
   State = 1, Knock = 2, Reply = 3, Ack = 4, DogMsg = 5, Reading = 6, Lucy = 7, Outside = 8, EventMsg = 9, EventSum = 10,
-  Mail = 11, Comfort = 12, Requests = 13, ComfortDel = 14
+  Mail = 11, Comfort = 12, Requests = 13, ComfortDel = 14, Update = 15
 };
 enum Sender : uint8_t { kSenderUpstairs = 0, kSenderDownstairs = 1, kSenderGateway = 2 };
 inline uint8_t sender_id(Floor f) { return f == Floor::Upstairs ? kSenderUpstairs : kSenderDownstairs; }

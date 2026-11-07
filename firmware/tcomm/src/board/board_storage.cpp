@@ -33,6 +33,7 @@ static constexpr uint16_t kDogVersion = 3;  // 2: change counter added; 3: each 
 static constexpr uint16_t kMailVersion = 1;
 static constexpr uint16_t kComfortVersion = 1;
 static constexpr uint16_t kRequestsVersion = 1;
+static constexpr uint16_t kComfortPendingVersion = 1;
 
 void storage_begin() { g_open = g_prefs.begin("tcomm", false); }
 
@@ -166,6 +167,37 @@ bool load_comfort_count(uint32_t &n) {
   return true;
 }
 void save_comfort_count(uint32_t n) { save_blob("comfort", kComfortVersion, n); }
+
+// The comfort answers and removals still waiting for upstairs' ACK (Mike, 2026-11-07: a restart
+// downstairs must lose neither): a count and up to kComfortPendingMax records, in one blob.
+struct ComfortPendingBlob {
+  uint32_t n;
+  tc::ComfortPending p[tc::kComfortPendingMax];
+};
+
+bool load_comfort_pending(tc::ComfortPending *out, int max, int &n) {
+  n = 0;
+  static ComfortPendingBlob tmp;  // too big to be worth the loop task's stack; one caller, at start-up
+  if (!out || max <= 0 || !load_blob("cpend", kComfortPendingVersion, tmp)) return false;
+  if (tmp.n > (uint32_t)tc::kComfortPendingMax || tmp.n > (uint32_t)max) return false;
+  for (uint32_t i = 0; i < tmp.n; i++) {
+    const tc::ComfortPending &r = tmp.p[i];
+    if (r.del > 1) return false;
+    if (r.del == 0 && !tc::feel_valid(r.a.feel)) return false;
+  }
+  for (uint32_t i = 0; i < tmp.n; i++) out[i] = tmp.p[i];
+  n = (int)tmp.n;
+  return true;
+}
+void save_comfort_pending(const tc::ComfortPending *p, int n) {
+  static ComfortPendingBlob blob;  // zeroed, so the unused records (and padding) are always the same bytes
+  memset(&blob, 0, sizeof(blob));
+  if (!p || n < 0) n = 0;
+  if (n > tc::kComfortPendingMax) n = tc::kComfortPendingMax;
+  blob.n = (uint32_t)n;
+  for (int i = 0; i < n; i++) blob.p[i] = p[i];
+  save_blob("cpend", kComfortPendingVersion, blob);
+}
 
 // The arrows (requests.h, docs/temperature-requests.md). Anything this build can't check is ignored,
 // as the other blobs are: a held arrow must be a real one (never None) from a known source.
@@ -306,6 +338,46 @@ uint8_t *calendar_read(const char *name, size_t &len) {
   }
   len = n;
   return buf;
+}
+
+// The first column of the last complete line (one ending in a newline), read from the file's last
+// few hundred bytes only: a comfort file grows for years. Mike, 2026-11-07: the answer count must
+// never go backwards, even if the saved one is lost. 0 if there is no such line or it isn't a number.
+uint32_t calendar_last_number(const char *name) {
+  if (!g_cal || !name) return 0;
+  char p[48], t[48];
+  cal_path(p, sizeof(p), name);
+  cal_path(t, sizeof(t), name, true);
+  recover_tmp(p, t);
+  File f = g_cal->open(p, "r");
+  if (!f) return 0;
+  size_t size = f.size();
+  static constexpr size_t kTail = 512;
+  size_t start = size > kTail ? size - kTail : 0;
+  char buf[kTail + 1];
+  size_t got = 0;
+  if (size && f.seek(start)) got = f.read((uint8_t *)buf, size - start);
+  f.close();
+  if (got == 0) return 0;
+  // Drop anything after the last newline (a line a power cut left short).
+  size_t end = got;
+  while (end > 0 && buf[end - 1] != '\n') end--;
+  if (end == 0) return 0;
+  end--;  // the last complete line ends just before this newline
+  size_t b = end;
+  while (b > 0 && buf[b - 1] != '\n') b--;
+  // If the tail began mid-line, the line is cut at its front: only whole lines count.
+  if (b == 0 && start > 0) return 0;
+  uint32_t v = 0;
+  size_t i = b;
+  size_t digits = 0;
+  while (i < end && buf[i] >= '0' && buf[i] <= '9') {
+    v = v * 10 + (uint32_t)(buf[i] - '0');
+    i++;
+    digits++;
+  }
+  if (digits == 0 || (i < end && buf[i] != ',')) return 0;
+  return v;
 }
 
 bool calendar_write(const char *name, const uint8_t *buf, size_t len) {

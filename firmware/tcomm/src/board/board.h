@@ -72,6 +72,10 @@ bool load_mail(tc::MailState &m);
 void save_mail(const tc::MailState &m);
 bool load_comfort_count(uint32_t &n);  // the comfort survey's answer count (comfort.h)
 void save_comfort_count(uint32_t n);
+// The comfort answers and removals still waiting for upstairs' ACK (Mike, 2026-11-07), oldest first.
+// load: false (and n = 0) if nothing is saved or anything in it isn't valid.
+bool load_comfort_pending(tc::ComfortPending *out, int max, int &n);
+void save_comfort_pending(const tc::ComfortPending *p, int n);
 bool load_requests(tc::RequestState &s);  // the heat and cooling arrows held (requests.h)
 void save_requests(const tc::RequestState &s);
 uint8_t load_clock_quality();
@@ -84,6 +88,9 @@ void save_clock_quality(uint8_t q);
 void calendar_fs_begin();
 uint8_t *calendar_read(const char *name, size_t &len);  // a PSRAM buffer to free(), or null
 bool calendar_write(const char *name, const uint8_t *buf, size_t len);
+// The first column of the file's last complete line, as a number (0 if none or not a number); only
+// the file's last few hundred bytes are read. Mike, 2026-11-07: the comfort count's safety net.
+uint32_t calendar_last_number(const char *name);
 // A name with a dot in it ("comfort.csv") is the whole file name; others get ".bin".
 // calendar_append adds one line to the end, header first if the file is new or empty. A plain append,
 // not temp and rename: a power cut at worst cuts the last line short.

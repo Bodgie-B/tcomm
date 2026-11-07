@@ -60,6 +60,10 @@ class FakePlatform : public Platform {
   RequestState saved_req = {};
   int req_saves = 0;
   uint32_t saved_comfort = 0;
+  std::vector<ComfortPending> saved_pending;  // the last save_comfort_pending (Mike, 2026-11-07)
+  int pending_saves = 0;
+  bool has_updater = true;  // updater_installed()
+  int updater_starts = 0;   // start_updater() calls
   std::vector<std::string> csv_sets;  // set_csv_field calls as "name|n|column|value"
   MemFiles files;  // the calendar's files (the SD card)
   int event_saves() { return files.writes["calendar"]; }
@@ -75,6 +79,12 @@ class FakePlatform : public Platform {
   void save_dog(const DogState &d) override { saved_dog = d; }
   void save_mail(const MailState &m) override { saved_mail = m; }
   void save_comfort_count(uint32_t n) override { saved_comfort = n; }
+  void save_comfort_pending(const ComfortPending *p, int n) override {
+    saved_pending.assign(p, p + n);
+    pending_saves++;
+  }
+  bool updater_installed() override { return has_updater; }
+  void start_updater() override { updater_starts++; }
   void save_requests(const RequestState &r) override { saved_req = r; req_saves++; }
   void append_line(const char *name, const char *header, const char *line) override {
     if (!strcmp(name, kRequestsFile)) {
@@ -1020,6 +1030,145 @@ static std::string chart_line(uint32_t n, Feel f, int t, int h, uint32_t removed
   a.n = n; a.feel = (uint8_t)f; a.in_t = (int16_t)t; a.in_h = (uint16_t)h; a.removed = removed;
   if (!inside) a.have &= ~kHaveInside;
   return csv(a);
+}
+
+static void test_update_both_and_pending() {
+  // The wire: 5 + 1 bytes, type 15; a wrong length is refused.
+  Msg m;
+  m.type = MsgType::Update;
+  m.sender = kSenderUpstairs;
+  m.seq = 7;
+  uint8_t buf[16];
+  size_t len = encode(m, buf, sizeof(buf));
+  CHECK(len == 6 && buf[1] == 15 && buf[5] == 0);
+  Msg d;
+  CHECK(decode(buf, len, d) && d.type == MsgType::Update && d.seq == 7 && d.sender == kSenderUpstairs);
+  CHECK_STR(msg_name(MsgType::Update), "UPDATE");
+  CHECK(!decode(buf, len - 1, d));
+  buf[len] = 0;
+  CHECK(!decode(buf, len + 1, d));
+  RetryQueue rq;
+  CHECK(rq.push(m, kSenderUpstairs, 0) && rq.push(m, kSenderUpstairs, 0));
+  CHECK(rq.pending(MsgType::Update) == 2);  // not latest-wins
+
+  // update_both: UPDATE goes out and the updater starts once it is ACKed.
+  {
+    Pair p;
+    p.begin();
+    p.run(1000);
+    CHECK(p.a.update_both());
+    CHECK(p.pa.updater_starts == 0);
+    p.run(100);
+    CHECK(p.pa.updater_starts == 0);  // ACKed at once, but both wait about 700 ms so saves reach flash
+    CHECK(p.pb.updater_starts == 0);
+    p.run(1000);
+    CHECK(p.pb.updater_starts == 1 && p.pa.updater_starts == 1);  // well before the 2 s no-answer wait
+    p.run(5000);
+    CHECK(p.pb.updater_starts == 1 && p.pa.updater_starts == 1);  // once each
+  }
+  // No ACK: this panel starts its own updater after 2 s, not before.
+  {
+    Pair p;
+    p.begin();
+    p.run(1000);
+    p.cut = true;
+    CHECK(p.b.update_both());
+    p.run(1900);
+    CHECK(p.pb.updater_starts == 0);
+    p.run(200);
+    CHECK(p.pb.updater_starts == 1 && p.pa.updater_starts == 0);
+    p.run(3000);
+    CHECK(p.pb.updater_starts == 1);
+  }
+  // Without an updater here: false, nothing sent. The other panel without one ignores UPDATE.
+  {
+    Pair p;
+    p.begin();
+    p.run(1000);
+    p.pa.has_updater = false;
+    p.pa.out.clear();
+    CHECK(!p.a.update_both());
+    CHECK(p.pa.out.empty() && p.pa.updater_starts == 0);
+    p.pa.has_updater = true;
+    p.pb.has_updater = false;
+    CHECK(p.a.update_both());
+    p.run(2000);
+    CHECK(p.pa.updater_starts == 1 && p.pb.updater_starts == 0);
+  }
+  // A received UPDATE starts the updater after about 700 ms, and only from the peer.
+  {
+    Pair p;
+    p.begin();
+    p.run(1000);
+    Msg u;
+    u.type = MsgType::Update;
+    u.sender = kSenderGateway;
+    u.seq = 3000;
+    uint8_t fb[16];
+    size_t fn = encode(u, fb, sizeof(fb));
+    p.b.on_radio(fb, fn);
+    p.run(2000);
+    CHECK(p.pb.updater_starts == 0);
+    u.sender = kSenderUpstairs;
+    u.seq = 3001;
+    fn = encode(u, fb, sizeof(fb));
+    p.pb.out.clear();
+    p.b.on_radio(fb, fn);
+    CHECK(!p.pb.out.empty());  // the ACK is out at once
+    p.run(600);
+    CHECK(p.pb.updater_starts == 0);
+    p.run(200);
+    CHECK(p.pb.updater_starts == 1);
+    p.run(3000);
+    CHECK(p.pb.updater_starts == 1);
+  }
+
+  // The comfort outbox is saved on every change; a restored one is delivered in order.
+  {
+    Pair p;
+    p.pa.offset = 3600; p.pb.offset = 3600;
+    p.begin();
+    p.run(1000);
+    p.b.on_local_reading(true, 673, 472);
+    p.run(500);
+    p.cut = true;
+    int saves = p.pb.pending_saves;
+    CHECK(p.b.comfort_answer(Feel::TooWarm));
+    CHECK(p.pb.pending_saves == saves + 1 && p.pb.saved_pending.size() == 1 && p.pb.saved_pending[0].del == 0);
+    CHECK(p.b.comfort_answer(Feel::TooCool));
+    CHECK(p.pb.saved_pending.size() == 2);
+    CHECK(p.b.comfort_remove(1));
+    CHECK(p.pb.saved_pending.size() == 3 && p.pb.saved_pending[2].del == 1 && p.pb.saved_pending[2].a.n == 1);
+    CHECK(p.pb.saved_pending[0].a.n == 1 && p.pb.saved_pending[1].a.n == 2);
+    std::vector<ComfortPending> kept = p.pb.saved_pending;
+    // A restart: a fresh downstairs panel, fed the saved list, with upstairs unreachable until heard.
+    Pair q;
+    q.pa.offset = 3600; q.pb.offset = 3600;
+    q.begin();
+    q.b.set_comfort_count(2);
+    q.cut = true;
+    q.b.restore_comfort_pending(kept.data(), (int)kept.size());
+    q.a.set_comfort_count(0);
+    q.run(5000);
+    CHECK(q.pa.lines.empty());
+    q.cut = false;
+    q.a.choose_status(Status::Busy);
+    q.run(5000);
+    CHECK(q.pa.lines.size() == 2 && q.pa.csv_sets.size() == 1);  // both answers, then the removal
+    CHECK(q.pb.saved_pending.empty());                          // all ACKed: saved as empty
+    CHECK(q.pa.lines[0].find("1,") == 0 && q.pa.lines[1].find("2,") == 0);
+  }
+  // A restored list longer than the outbox keeps the newest.
+  {
+    Pair p;
+    p.begin();
+    p.run(500);
+    p.cut = true;
+    std::vector<ComfortPending> big(40);
+    for (int i = 0; i < 40; i++) { big[i] = ComfortPending{}; big[i].a.n = (uint32_t)(i + 1); big[i].a.feel = (uint8_t)Feel::TooWarm; }
+    p.b.restore_comfort_pending(big.data(), 40);
+    CHECK(p.pb.saved_pending.size() == 32 && p.pb.saved_pending[0].a.n == 9 && p.pb.saved_pending[31].a.n == 40);
+  }
 }
 
 static void test_comfort_chart() {
@@ -2455,6 +2604,7 @@ int main(int argc, char **argv) {
   test_mail();
   test_comfort();
   test_comfort_chart();
+  test_update_both_and_pending();
   test_requests();
   test_request_ties();
   test_bell_shake_and_red();

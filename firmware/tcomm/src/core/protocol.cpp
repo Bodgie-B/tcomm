@@ -88,6 +88,7 @@ size_t encode(const Msg &m, uint8_t *out, size_t cap) {
     case MsgType::ComfortDel:
       w.u32(m.u.comfort_del.n); w.u32(m.u.comfort_del.removed); w.u32((uint32_t)m.u.comfort_del.offset);
       break;
+    case MsgType::Update: w.u8(0); break;  // one reserved byte
     case MsgType::Requests: {
       const RequestState &r = m.u.req;
       if (r.n > kMaxArrows) return 0;
@@ -180,6 +181,9 @@ bool decode(const uint8_t *in, size_t len, Msg &m) {
     case MsgType::ComfortDel:
       m.u.comfort_del.n = r.u32(); m.u.comfort_del.removed = r.u32(); m.u.comfort_del.offset = (int32_t)r.u32();
       if (m.u.comfort_del.n == 0) return false;
+      break;
+    case MsgType::Update:
+      r.u8();  // the reserved byte: any value is accepted, so a later use can't break this version
       break;
     case MsgType::Requests: {
       RequestState &q = m.u.req;
@@ -319,6 +323,7 @@ const char *msg_name(MsgType t) {
     case MsgType::Comfort: return "COMFORT";
     case MsgType::Requests: return "REQUESTS";
     case MsgType::ComfortDel: return "COMFORT_DEL";
+    case MsgType::Update: return "UPDATE";
   }
   return "?";
 }

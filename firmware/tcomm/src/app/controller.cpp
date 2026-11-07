@@ -107,6 +107,7 @@ void Controller::tick() {
     p_.log(line);
   }
 
+  tick_update(now);
   send_comfort();
   tick_requests(now);
   tick_events(now, w);
@@ -574,8 +575,17 @@ void Controller::on_radio(const uint8_t *data, size_t len) {
         if (comfort_out_[i].seq != m.u.ack.seq) continue;
         for (int j = i + 1; j < comfort_out_n_; j++) comfort_out_[j - 1] = comfort_out_[j];
         comfort_out_n_--;
+        comfort_out_save();
         break;
       }
+    }
+    if (acked && r.type == MsgType::Update && both_wait_ && m.u.ack.seq == both_seq_) {
+      // Not at once: the loop task writes queued saves (the comfort outbox among them) to flash, and
+      // a restart a few ms after the tap could cut them off (review, 2026-11-07). The same 700 ms the
+      // other panel waits.
+      both_acked_ = true;
+      both_at_ = both_sent_ + kUpdateDelayMs;
+      p_.log("update both: the other panel answered");
     }
     return;
   }
@@ -692,6 +702,18 @@ void Controller::handle(const Msg &m) {
       char text[24];
       comfort_removed_text(m.u.comfort_del.removed, m.u.comfort_del.offset, text, sizeof(text));
       p_.set_csv_field(kComfortFile, n, kComfortRemovedColumn, text);
+      break;
+    }
+    case MsgType::Update: {
+      // Mike, 2026-11-07: the other panel's "both panels" button. Already ACKed by on_radio; the
+      // updater starts a little later (tick_update) so that ACK is out before this panel restarts.
+      if (m.sender != peer) return;
+      if (!p_.updater_installed()) {
+        p_.log("update: asked by the other panel, but this panel has no updater");
+        return;
+      }
+      update_wait_ = true;
+      update_at_ = now + kUpdateDelayMs;
       break;
     }
     case MsgType::Mail: {
@@ -938,7 +960,16 @@ void Controller::comfort_out_add(const ComfortAnswer &a, bool del) {
     comfort_out_n_--;
   }
   comfort_out_[comfort_out_n_++] = ComfortOut{a, 0, del};
+  comfort_out_save();
   send_comfort();
+}
+
+void Controller::comfort_out_save() {
+  ComfortPending pend[kComfortPendingMax];
+  int n = comfort_out_n_ < kComfortPendingMax ? comfort_out_n_ : kComfortPendingMax;
+  int skip = comfort_out_n_ - n;  // never, while the outbox is no larger than the saved list
+  for (int i = 0; i < n; i++) pend[i] = ComfortPending{comfort_out_[skip + i].a, (uint8_t)(comfort_out_[skip + i].del ? 1 : 0)};
+  p_.save_comfort_pending(pend, n);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1067,6 +1098,53 @@ bool Controller::comfort_remove(uint32_t n) {
   p_.log(line);
   comfort_out_add(a, true);
   return true;
+}
+
+// Mike, 2026-11-07: a restart must not lose answers or removals upstairs has not ACKed. They come
+// back with no seq, so they are sent again (oldest first) when the other panel is heard.
+void Controller::restore_comfort_pending(const ComfortPending *p, int n) {
+  if (!p || n <= 0) return;
+  int skip = n > kComfortOutbox ? n - kComfortOutbox : 0;  // too many: keep the newest
+  comfort_out_n_ = 0;
+  for (int i = skip; i < n; i++) comfort_out_[comfort_out_n_++] = ComfortOut{p[i].a, 0, p[i].del != 0};
+  if (skip) comfort_out_save();
+  send_comfort();
+}
+
+// Mike, 2026-11-07: one tap updates both panels. UPDATE goes to the other panel; this panel's
+// updater starts when that is ACKed, or after 2 s if it never is (the other may be off or out of range).
+bool Controller::update_both() {
+  if (!p_.updater_installed()) return false;
+  Msg m;
+  m.type = MsgType::Update;
+  uint16_t seq = retry_.push(m, me(), p_.mono_ms());
+  if (!seq) {
+    p_.log("update both: the radio queue is full, updating this panel only");
+    p_.start_updater();
+    return true;
+  }
+  both_wait_ = true;
+  both_acked_ = false;
+  both_seq_ = seq;
+  both_sent_ = p_.mono_ms();
+  both_at_ = both_sent_ + kBothWaitMs;
+  p_.log("update both: UPDATE sent to the other panel");
+  return true;
+}
+
+// The waits of update_both and of a received UPDATE.
+void Controller::tick_update(uint32_t now) {
+  if (both_wait_ && ms_reached(now, both_at_)) {
+    both_wait_ = false;
+    p_.log(both_acked_ ? "update both: starting this panel's updater"
+                       : "update both: no answer from the other panel in 2 s, starting this panel's updater");
+    p_.start_updater();
+  }
+  if (update_wait_ && ms_reached(now, update_at_)) {
+    update_wait_ = false;
+    p_.log("update: asked by the other panel, starting the updater");
+    p_.start_updater();
+  }
 }
 
 bool Controller::tap_mail() {

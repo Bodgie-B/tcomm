@@ -46,6 +46,14 @@ struct ComfortAnswer {
   uint32_t removed;  // when the tenant removed it (stage 3); 0 = not removed
 };
 
+// An answer, or a removal (del = 1: only n, removed and offset count), still waiting for upstairs'
+// ACK. Kept across restarts (Mike, 2026-11-07), so a restart downstairs loses neither.
+struct ComfortPending {
+  ComfortAnswer a;
+  uint8_t del;
+};
+constexpr int kComfortPendingMax = 32;
+
 // Parts of the day (Mike's theory: comfort may differ between them). NIGHT 10 PM-6 AM (the screen's
 // dark hours), MORNING 6-10 AM, MIDDAY 10 AM-4 PM, EVENING 4-10 PM.
 enum class DayPart : uint8_t { Night = 0, Morning = 1, Midday = 2, Evening = 3 };
