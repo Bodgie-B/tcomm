@@ -4,6 +4,7 @@
 #pragma once
 #include "../core/events.h"
 #include "../core/holidays.h"
+#include "../core/requests.h"
 #include "../core/types.h"
 #include "../gfx/canvas.h"
 
@@ -43,6 +44,15 @@ void icon(gfx::Canvas &c, Icon i, gfx::Color fg);
 constexpr int kMail = 34;
 void mail(gfx::Canvas &c, bool solid, gfx::Color fg, gfx::Color bg);
 void badge(gfx::Canvas &c, int status_or_nosignal, gfx::Color fg, gfx::Color bg);  // 80 x 80
+// A heat or cooling arrow (requests.h), filling a square canvas of any size (kArrow on the tile,
+// larger on the survey). The tenant's: a dark plum disc with the arrow in its colour (mild heat
+// light red, urgent heat red, mild cooling light blue, urgent cooling blue; urgent ones are two
+// overlapping arrowheads). A prediction's: the disc filled with the colour (light or dark orange
+// for heat, light or dark purple for cooling) and the arrow plum on the light ones, cream on the
+// dark ones. arrow_opa (0-255) dims the arrow alone, for the dim half of an urgent arrow's flash.
+// Colours: docs/temperature-requests.md and tools/temperature_mockups.py.
+constexpr int kArrow = 34;
+void request_arrow(gfx::Canvas &c, tc::Ask a, tc::ReqSource s, uint8_t arrow_opa = 255);
 // Forecast icons, 88 x 88, one colour. At night the moon takes the sun's place (sunny, partly
 // cloudy, clearing).
 void forecast(gfx::Canvas &c, tc::Forecast f, bool night, gfx::Color ink);

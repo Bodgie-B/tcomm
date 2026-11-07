@@ -7,6 +7,8 @@
 #include "app/controller.h"
 #include "app/demo.h"
 #include "core/civil.h"
+#include "core/comfort.h"
+#include "core/requests.h"
 #include "core/events.h"
 #include "core/holidays.h"
 #include "app/mem_files.h"
@@ -52,6 +54,13 @@ class FakePlatform : public Platform {
   OwnState saved_own;
   DogState saved_dog;
   MailState saved_mail;
+  std::vector<std::string> lines;  // append_line's lines (comfort.csv)
+  std::string line_header;
+  std::vector<std::string> req_lines;  // append_line's lines for requests.csv
+  RequestState saved_req = {};
+  int req_saves = 0;
+  uint32_t saved_comfort = 0;
+  std::vector<std::string> csv_sets;  // set_csv_field calls as "name|n|column|value"
   MemFiles files;  // the calendar's files (the SD card)
   int event_saves() { return files.writes["calendar"]; }
 
@@ -65,6 +74,20 @@ class FakePlatform : public Platform {
   void save_own(const OwnState &s) override { saved_own = s; }
   void save_dog(const DogState &d) override { saved_dog = d; }
   void save_mail(const MailState &m) override { saved_mail = m; }
+  void save_comfort_count(uint32_t n) override { saved_comfort = n; }
+  void save_requests(const RequestState &r) override { saved_req = r; req_saves++; }
+  void append_line(const char *name, const char *header, const char *line) override {
+    if (!strcmp(name, kRequestsFile)) {
+      CHECK_STR(header, kRequestsCsvHeader);
+      req_lines.push_back(line);
+      return;
+    }
+    if (lines.empty()) line_header = header;
+    lines.push_back(line);
+  }
+  void set_csv_field(const char *name, uint32_t n, int column, const char *value) override {
+    csv_sets.push_back(std::string(name) + "|" + std::to_string(n) + "|" + std::to_string(column) + "|" + value);
+  }
   uint32_t random32() override { rnd = rnd * 1103515245u + 12345u; return rnd; }
   uint8_t *read_file(const char *name, size_t &len) override { return files.read(*this, name, len); }
   void write_file(const char *name, uint8_t *buf, size_t len) override { files.write(*this, name, buf, len); }
@@ -763,6 +786,393 @@ static void test_both_dogs() {
 }
 
 // Mail for downstairs (Mike, 2026-10-26): upstairs marks it, downstairs acknowledges it.
+static ComfortAnswer make_answer() {
+  ComfortAnswer a = {};
+  a.n = 12;
+  a.utc = (uint32_t)seconds_from_civil(2026, 11, 6, 15, 30, 0) - 3600;
+  a.offset = 3600;
+  a.clock_q = kClockNetwork;
+  a.feel = (uint8_t)Feel::TooWarm;
+  a.status = (uint8_t)Status::Busy;
+  a.have = kHaveInside | kHaveUpstairs | kHaveOutside;
+  a.in_t = 673; a.in_h = 472; a.up_t = 701; a.up_h = 455; a.out_t = 482; a.out_h = 61;
+  return a;
+}
+
+static std::string csv(const ComfortAnswer &a) {
+  char buf[200];
+  size_t n = comfort_csv_line(a, buf, sizeof(buf));
+  return n ? std::string(buf, n) : std::string("<too long>");
+}
+
+static void test_comfort() {
+  // Parts of the day: night 10 PM-6 AM, morning to 10, midday to 4 PM, evening to 10 PM.
+  CHECK(day_part(0) == DayPart::Night && day_part(359) == DayPart::Night);
+  CHECK(day_part(360) == DayPart::Morning && day_part(599) == DayPart::Morning);
+  CHECK(day_part(600) == DayPart::Midday && day_part(959) == DayPart::Midday);
+  CHECK(day_part(960) == DayPart::Evening && day_part(1319) == DayPart::Evening);
+  CHECK(day_part(1320) == DayPart::Night && day_part(1439) == DayPart::Night);
+  CHECK_STR(day_part_word(DayPart::Night), "NIGHT");
+  CHECK_STR(day_part_word(DayPart::Morning), "MORNING");
+  CHECK_STR(day_part_word(DayPart::Midday), "MIDDAY");
+  CHECK_STR(day_part_word(DayPart::Evening), "EVENING");
+  const char *seasons[] = {"WINTER", "WINTER", "SPRING", "SPRING", "SPRING", "SUMMER", "SUMMER", "SUMMER", "FALL", "FALL", "FALL", "WINTER"};
+  for (int m = 1; m <= 12; m++) CHECK_STR(season_word(m), seasons[m - 1]);
+  CHECK_STR(season_word(0), "");
+  CHECK_STR(season_word(13), "");
+
+  CHECK_STR(feel_code(Feel::MuchTooHot), "MUCH_TOO_HOT");
+  CHECK_STR(feel_code(Feel::TooWarm), "TOO_WARM");
+  CHECK_STR(feel_code(Feel::JustRight), "JUST_RIGHT");
+  CHECK_STR(feel_code(Feel::TooCool), "TOO_COOL");
+  CHECK_STR(feel_code(Feel::MuchTooCold), "MUCH_TOO_COLD");
+  CHECK_STR(feel_label(Feel::MuchTooHot), "MUCH TOO HOT");
+  CHECK_STR(feel_label(Feel::JustRight), "JUST RIGHT");
+  CHECK_STR(feel_label(Feel::MuchTooCold), "MUCH TOO COLD");
+  CHECK_STR(feel_code((Feel)9), "");
+  CHECK_STR(ask_code(Ask::None), "NONE");
+  CHECK_STR(ask_code(Ask::UrgentHeat), "URGENT_HEAT");
+  CHECK_STR(ask_code(Ask::MildHeat), "MILD_HEAT");
+  CHECK_STR(ask_code(Ask::MildCool), "MILD_COOL");
+  CHECK_STR(ask_code(Ask::UrgentCool), "URGENT_COOL");
+  CHECK_STR(ask_code((Ask)9), "");
+  CHECK_STR(ask_sent_code(AskSent::Blank), "");
+  CHECK_STR(ask_sent_code(AskSent::Send), "SEND");
+  CHECK_STR(ask_sent_code(AskSent::Cancel), "CANCEL");
+  CHECK_STR(ask_sent_code((AskSent)9), "");
+
+  // The file's lines.
+  CHECK_STR(kComfortFile, "comfort.csv");
+  ComfortAnswer a = make_answer();
+  CHECK_STR(csv(a), "12,2026-11-06,15:30,1,MIDDAY,Fri,Nov,FALL,67.3,47.2,TOO_WARM,NONE,,BUSY,70.1,45.5,48.2,61,\n");
+  char tiny[10];
+  CHECK(comfort_csv_line(a, tiny, sizeof(tiny)) == 0);
+  // The longest possible line, every field at its widest, fits the buffers that carry it
+  // (controller and the panel's line queue), and so does the header.
+  ComfortAnswer w = make_answer();
+  w.n = 4294967295u; w.feel = (uint8_t)Feel::MuchTooCold; w.ask = (uint8_t)Ask::UrgentHeat;
+  w.sent = (uint8_t)AskSent::Cancel; w.status = (uint8_t)Status::Sleeping; w.utc = 1788767400u + 9 * 3600;
+  w.in_t = -32768; w.in_h = 65535; w.up_t = -32768; w.up_h = 65535; w.out_t = -32768; w.out_h = 255;
+  w.removed = 1788767400u + 86400;
+  char wide[kComfortLineMax];
+  size_t wl = comfort_csv_line(w, wide, sizeof(wide));
+  CHECK(wl > 0 && wl < kComfortLineMax);
+  CHECK(strlen(kComfortCsvHeader) < kComfortLineMax);
+  // No clock, only the inside reading: the time columns are blank.
+  ComfortAnswer b = {};
+  b.n = 1; b.feel = (uint8_t)Feel::JustRight; b.have = kHaveInside; b.in_t = 673; b.in_h = 472;
+  CHECK_STR(csv(b), "1,,,0,,,,,67.3,47.2,JUST_RIGHT,NONE,,OPEN,,,,,\n");
+  // Negative temperatures, the offset 0, a clock from the peer, stage 2 and 3 fields.
+  ComfortAnswer c = {};
+  c.n = 3;
+  c.utc = (uint32_t)seconds_from_civil(2027, 1, 1, 0, 5, 0);
+  c.clock_q = kClockFromPeer;
+  c.feel = (uint8_t)Feel::MuchTooCold; c.ask = (uint8_t)Ask::UrgentCool; c.sent = (uint8_t)AskSent::Send;
+  c.status = (uint8_t)Status::Sleeping;
+  c.have = kHaveInside | kHaveUpstairs | kHaveOutside;
+  c.in_t = -5; c.in_h = 305; c.up_t = -35; c.up_h = 1000; c.out_t = -125; c.out_h = 100;
+  c.removed = (uint32_t)seconds_from_civil(2027, 1, 1, 0, 45, 0);
+  CHECK_STR(csv(c), "3,2027-01-01,00:05,1,NIGHT,Fri,Jan,WINTER,-0.5,30.5,MUCH_TOO_COLD,URGENT_COOL,SEND,SLEEPING,-3.5,100.0,-12.5,100,2027-01-01 00:45\n");
+  c.clock_q = kClockManual;
+  CHECK(csv(c).find(",00:05,0,NIGHT") != std::string::npos);  // set by hand: not sure
+  // The local day is the offset's: 23:30 UTC at +3600 is 00:30 the next day.
+  a.utc = (uint32_t)seconds_from_civil(2026, 12, 31, 23, 30, 0);
+  CHECK(csv(a).find(",2027-01-01,00:30,") != std::string::npos);
+
+  // The wire: 5 + 33 bytes, little-endian.
+  Msg m;
+  m.type = MsgType::Comfort;
+  m.sender = kSenderDownstairs;
+  m.seq = 77;
+  a = make_answer();
+  a.offset = -3600;
+  a.removed = 99;
+  m.u.comfort = a;
+  uint8_t buf[64];
+  size_t n = encode(m, buf, sizeof(buf));
+  CHECK(n == 38);
+  CHECK(buf[5] == 12 && buf[6] == 0 && buf[13] == 0xF0 && buf[14] == 0xF1 && buf[16] == 0xFF);  // n, offset -3600
+  Msg d;
+  CHECK(decode(buf, n, d));
+  const ComfortAnswer &e = d.u.comfort;
+  CHECK(d.type == MsgType::Comfort && d.seq == 77 && d.sender == kSenderDownstairs);
+  CHECK(e.n == 12 && e.utc == a.utc && e.offset == -3600 && e.clock_q == kClockNetwork && e.feel == 1 && e.status == 1);
+  CHECK(e.have == 7 && e.in_t == 673 && e.in_h == 472 && e.up_t == 701 && e.up_h == 455 && e.out_t == 482 && e.out_h == 61 && e.removed == 99);
+  CHECK_STR(msg_name(MsgType::Comfort), "COMFORT");
+  CHECK(!decode(buf, n - 1, d));
+  uint8_t longer[64];
+  memcpy(longer, buf, n);
+  longer[n] = 0;
+  CHECK(!decode(longer, n + 1, d));
+  const struct { int at; uint8_t v; } bad[] = {{18, 5}, {19, 5}, {20, 3}, {21, 5}};  // feel, ask, sent, status
+  for (auto &x : bad) {
+    memcpy(longer, buf, n);
+    longer[x.at] = x.v;
+    CHECK(!decode(longer, n, d));
+  }
+  memcpy(longer, buf, n);
+  longer[19] = 4; longer[20] = 2; longer[21] = 4;  // the largest valid ones
+  CHECK(decode(longer, n, d));
+  // Every answer matters: a newer one never replaces one waiting.
+  RetryQueue q;
+  CHECK(q.push(m, kSenderDownstairs, 0) && q.push(m, kSenderDownstairs, 0));
+  CHECK(q.pending(MsgType::Comfort) == 2);
+
+  // Two panels: the answer reaches upstairs as the same line.
+  {
+    Pair p;
+    p.pa.offset = 3600; p.pb.offset = 3600;
+    p.begin();
+    p.run(1000);
+    p.b.on_local_reading(true, 673, 472);
+    p.run(500);
+    CHECK(!p.a.comfort_answer(Feel::TooWarm));  // upstairs doesn't answer
+    CHECK(p.pa.lines.empty() && p.a.comfort_count() == 0);
+    CHECK(p.b.comfort_answer(Feel::TooWarm));
+    CHECK(p.pb.lines.size() == 1 && p.pb.saved_comfort == 1 && p.b.comfort_count() == 1);
+    CHECK_STR(p.pb.line_header, kComfortCsvHeader);
+    p.run(500);
+    CHECK(p.pa.lines.size() == 1 && p.pa.lines[0] == p.pb.lines[0]);
+    CHECK(p.a.comfort_count() == 1 && p.pa.saved_comfort == 1);
+    CHECK_STR(p.pa.line_header, kComfortCsvHeader);
+    CHECK(p.pb.lines[0].find("1,2026-10-22,01:") == 0);
+    CHECK(p.pb.lines[0].find(",TOO_WARM,NONE,,OPEN,") != std::string::npos && p.pb.lines[0].find(",67.3,47.2,") != std::string::npos);
+    CHECK(p.pb.lines[0].find(",0,NIGHT,Thu,Oct,FALL,") != std::string::npos);  // manual clock
+    // A resend of the same number is ignored; a gap is noted and the later one kept.
+    Msg r;
+    r.type = MsgType::Comfort;
+    r.sender = kSenderDownstairs;
+    r.seq = 4000;
+    r.u.comfort = make_answer();
+    r.u.comfort.n = 1;
+    uint8_t fb[64];
+    size_t fn = encode(r, fb, sizeof(fb));
+    p.a.on_radio(fb, fn);
+    r.seq = 4001;
+    fn = encode(r, fb, sizeof(fb));
+    p.a.on_radio(fb, fn);
+    CHECK(p.pa.lines.size() == 1 && p.a.comfort_count() == 1);
+    r.seq = 4002;
+    r.u.comfort.n = 3;
+    fn = encode(r, fb, sizeof(fb));
+    p.a.on_radio(fb, fn);
+    CHECK(p.pa.lines.size() == 2 && p.a.comfort_count() == 3 && p.pa.saved_comfort == 3);
+    // The downstairs panel ignores a COMFORT.
+    p.b.on_radio(fb, fn);
+    CHECK(p.pb.lines.size() == 1 && p.b.comfort_count() == 1);
+  }
+  // The other panel unreachable: the answers stay in the outbox and arrive, in order, once it is heard.
+  {
+    Pair p;
+    p.pa.offset = 3600; p.pb.offset = 3600;
+    p.begin();
+    p.run(1000);
+    p.cut = true;
+    for (int i = 0; i < 5; i++) {
+      CHECK(p.b.comfort_answer(i % 2 ? Feel::TooCool : Feel::TooWarm));
+      p.run(400);
+    }
+    p.run(4000);
+    CHECK(p.b.peer_no_signal());
+    CHECK(p.pa.lines.empty() && p.pb.lines.size() == 5);
+    p.cut = false;
+    p.run(3000);
+    CHECK(p.pa.lines.empty());                  // nobody has said anything yet
+    p.a.choose_status(Status::Busy);            // upstairs is heard again
+    p.run(3000);
+    CHECK(!p.b.peer_no_signal());
+    CHECK(p.pa.lines.size() == 5 && p.a.comfort_count() == 5);
+    for (int i = 0; i < 5; i++) CHECK(p.pa.lines[i] == p.pb.lines[i]);
+    CHECK(p.pa.lines[0].find("1,") == 0 && p.pa.lines[4].find("5,") == 0);
+    p.run(5000);
+    CHECK(p.pa.lines.size() == 5);              // all ACKed: nothing is sent again
+    CHECK(p.b.comfort_count() == 5);
+  }
+  // Two answers made quickly while the first frame is lost once: with two in flight, answer 2 arrived
+  // first, upstairs counted 2, and the retry of answer 1 was ACKed but ignored, so answer 1 was lost.
+  {
+    Pair p;
+    p.pa.offset = 3600; p.pb.offset = 3600;
+    p.begin();
+    p.run(1000);
+    int dropped = 0;
+    p.drop = [&](bool from_a, const Msg &m) {
+      if (from_a || m.type != MsgType::Comfort || m.u.comfort.n != 1 || dropped) return false;
+      dropped++;
+      return true;
+    };
+    CHECK(p.b.comfort_answer(Feel::TooWarm));
+    CHECK(p.b.comfort_answer(Feel::TooCool));
+    p.run(6000);
+    CHECK(dropped == 1);
+    CHECK(p.pa.lines.size() == 2 && p.a.comfort_count() == 2 && p.pa.saved_comfort == 2);
+    if (p.pa.lines.size() == 2) {
+      CHECK(p.pa.lines[0] == p.pb.lines[0] && p.pa.lines[1] == p.pb.lines[1]);
+      CHECK(p.pa.lines[0].find("1,") == 0 && p.pa.lines[1].find("2,") == 0);
+    }
+    CHECK(p.pa.lines.size() == 2 && !p.b.peer_no_signal());
+  }
+}
+
+// Stage 3: the comfort chart's file reader, units, the removal text and the removal over the radio.
+static std::string chart_line(uint32_t n, Feel f, int t, int h, uint32_t removed = 0, bool inside = true) {
+  ComfortAnswer a = make_answer();
+  a.n = n; a.feel = (uint8_t)f; a.in_t = (int16_t)t; a.in_h = (uint16_t)h; a.removed = removed;
+  if (!inside) a.have &= ~kHaveInside;
+  return csv(a);
+}
+
+static void test_comfort_chart() {
+  std::string head = kComfortCsvHeader;
+  std::string body = chart_line(1, Feel::MuchTooHot, 781, 612) + chart_line(2, Feel::TooCool, 655, 400, 5000) +
+                     chart_line(3, Feel::JustRight, 700, 500, 0, false) + chart_line(4, Feel::MuchTooCold, 601, 355);
+  std::string all = head + body;
+  CHECK(comfort_count_lines(all.data(), all.size()) == 4);
+  ComfortPoint pt[8];
+  int n = comfort_parse(all.data(), all.size(), pt, 8);
+  CHECK(n == 3);  // the line without the inside reading can't be placed
+  CHECK(pt[0].n == 1 && pt[0].t == 781 && pt[0].h == 612 && pt[0].feel == (uint8_t)Feel::MuchTooHot && !pt[0].removed);
+  CHECK(pt[1].n == 2 && pt[1].removed && pt[1].feel == (uint8_t)Feel::TooCool && pt[1].t == 655);
+  CHECK(pt[2].n == 4 && pt[2].feel == (uint8_t)Feel::MuchTooCold);
+  CHECK(pt[0].year == 2026 && pt[0].month == 11 && pt[0].day == 6 && pt[0].hour == 15 && pt[0].minute == 30);
+  CHECK(pt[0].part == (uint8_t)DayPart::Midday && pt[0].weekday == 5);
+  CHECK(comfort_parse(all.data(), all.size(), pt, 2) == 2);  // cap
+  // A cut-off last line (a power cut), CRLF line ends and no header.
+  std::string cut = all.substr(0, all.size() - 30);
+  CHECK(comfort_parse(cut.data(), cut.size(), pt, 8) == 2);
+  std::string crlf;
+  for (char c : all) { if (c == '\n') crlf += '\r'; crlf += c; }
+  CHECK(comfort_parse(crlf.data(), crlf.size(), pt, 8) == 3 && pt[2].n == 4 && !pt[2].removed);
+  CHECK(comfort_parse(body.data(), body.size(), pt, 8) == 3 && pt[0].n == 1);
+  CHECK(comfort_parse("", 0, pt, 8) == 0 && comfort_count_lines("", 0) == 0 && comfort_parse(head.data(), head.size(), pt, 8) == 0);
+  // Bad lines: an unknown answer, too few columns.
+  std::string bad = chart_line(1, Feel::TooWarm, 700, 500);
+  bad.replace(bad.find("TOO_WARM"), 8, "MAYBE");
+  CHECK(comfort_parse(bad.data(), bad.size(), pt, 8) == 0);
+  std::string few = "5,2026-11-06,15:30,1,MIDDAY,Fri,Nov,FALL,70.0,50.0,TOO_WARM\n";
+  CHECK(comfort_parse(few.data(), few.size(), pt, 8) == 0);
+  // Blank date and time: year 0, and no part or weekday.
+  ComfortAnswer nc = make_answer();
+  nc.utc = 0; nc.offset = 0; nc.clock_q = kClockNone;
+  std::string nt = csv(nc);
+  CHECK(comfort_parse(nt.data(), nt.size(), pt, 8) == 1 && pt[0].year == 0 && pt[0].part == 0xFF && pt[0].weekday == 0xFF);
+  // Negative and zero readings survive.
+  std::string neg = chart_line(7, Feel::TooCool, -5, 0);
+  CHECK(comfort_parse(neg.data(), neg.size(), pt, 8) == 1 && pt[0].t == -5 && pt[0].h == 0);
+
+  // The chart's height.
+  CHECK(fabsf(grains_per_lb(72, 50) - 58.3f) < 1.0f);
+  CHECK(fabsf(grains_per_lb(70, 30) - 32.7f) < 1.0f);
+  CHECK(grains_per_lb(60, 0) == 0);
+  CHECK(grains_per_lb(80, 80) > grains_per_lb(80, 40) && grains_per_lb(80, 40) > grains_per_lb(60, 40));
+
+  // The removed column's text.
+  char t[32];
+  uint32_t u = (uint32_t)seconds_from_civil(2026, 11, 6, 23, 30, 0);
+  CHECK(comfort_removed_text(u, 0, t, sizeof(t)) == 16);
+  CHECK_STR(t, "2026-11-06 23:30");
+  CHECK(comfort_removed_text(u, 3600, t, sizeof(t)) == 16);
+  CHECK_STR(t, "2026-11-07 00:30");
+  CHECK(comfort_removed_text(0, 0, t, sizeof(t)) == 7);
+  CHECK_STR(t, "REMOVED");
+  char small[8];
+  CHECK(comfort_removed_text(u, 0, small, sizeof(small)) == 0);
+  CHECK(kComfortRemovedColumn == 18);
+
+  // The wire: 5 + 12 bytes, little-endian.
+  Msg m;
+  m.type = MsgType::ComfortDel;
+  m.sender = kSenderDownstairs;
+  m.seq = 9;
+  m.u.comfort_del = {258, 99, -3600};
+  uint8_t buf[32];
+  size_t len = encode(m, buf, sizeof(buf));
+  CHECK(len == 17 && buf[1] == 14 && buf[5] == 2 && buf[6] == 1 && buf[9] == 99 && buf[13] == 0xF0 && buf[14] == 0xF1);
+  Msg d;
+  CHECK(decode(buf, len, d) && d.type == MsgType::ComfortDel);
+  CHECK(d.u.comfort_del.n == 258 && d.u.comfort_del.removed == 99 && d.u.comfort_del.offset == -3600);
+  CHECK_STR(msg_name(MsgType::ComfortDel), "COMFORT_DEL");
+  CHECK(!decode(buf, len - 1, d));
+  uint8_t longer[32];
+  memcpy(longer, buf, len);
+  longer[len] = 0;
+  CHECK(!decode(longer, len + 1, d));
+  m.u.comfort_del.n = 0;
+  len = encode(m, buf, sizeof(buf));
+  CHECK(len == 17 && !decode(buf, len, d));
+  RetryQueue q;
+  m.u.comfort_del.n = 1;
+  CHECK(q.push(m, kSenderDownstairs, 0) && q.push(m, kSenderDownstairs, 0));
+  CHECK(q.pending(MsgType::ComfortDel) == 2);  // none replaces another
+
+  // Two panels: the removal is marked in both files with the same text.
+  {
+    Pair p;
+    p.pa.offset = 3600; p.pb.offset = 3600;
+    p.begin();
+    p.run(1000);
+    p.b.on_local_reading(true, 673, 472);
+    p.run(500);
+    CHECK(p.b.comfort_answer(Feel::TooWarm) && p.b.comfort_answer(Feel::TooCool));
+    p.run(500);
+    CHECK(!p.a.comfort_remove(1) && p.pa.csv_sets.empty());  // upstairs can't remove
+    CHECK(!p.b.comfort_remove(0) && !p.b.comfort_remove(3) && p.pb.csv_sets.empty());
+    CHECK(p.b.comfort_remove(2));
+    CHECK(p.pb.csv_sets.size() == 1);
+    p.run(500);
+    CHECK(p.pa.csv_sets.size() == 1 && p.pa.csv_sets[0] == p.pb.csv_sets[0]);
+    CHECK(p.pb.csv_sets[0].find("comfort.csv|2|18|") == 0);
+    CHECK(p.pb.csv_sets[0].size() == strlen("comfort.csv|2|18|") + 16);
+    p.run(5000);
+    CHECK(p.pa.csv_sets.size() == 1);  // ACKed: not sent again
+    // Upstairs ignores a removal of an answer it doesn't have; downstairs ignores any COMFORT_DEL.
+    Msg r;
+    r.type = MsgType::ComfortDel;
+    r.sender = kSenderDownstairs;
+    r.seq = 4000;
+    r.u.comfort_del = {9, 5, 0};
+    uint8_t fb[32];
+    size_t fn = encode(r, fb, sizeof(fb));
+    p.a.on_radio(fb, fn);
+    CHECK(p.pa.csv_sets.size() == 1);
+    r.u.comfort_del.n = 1;
+    r.seq = 4001;
+    fn = encode(r, fb, sizeof(fb));
+    p.b.on_radio(fb, fn);
+    CHECK(p.pb.csv_sets.size() == 1);
+    // With no clock the column still says REMOVED.
+    p.pb.w.valid = false;
+    CHECK(p.b.comfort_remove(1));
+    CHECK(p.pb.csv_sets[1] == "comfort.csv|1|18|REMOVED");
+    p.run(500);
+    CHECK(p.pa.csv_sets.size() == 2 && p.pa.csv_sets[1] == p.pb.csv_sets[1]);
+  }
+  // An answer and then its removal made while upstairs is unreachable arrive in order once it is back.
+  {
+    Pair p;
+    p.pa.offset = 3600; p.pb.offset = 3600;
+    p.begin();
+    p.run(1000);
+    p.b.on_local_reading(true, 673, 472);
+    p.run(500);
+    p.cut = true;
+    CHECK(p.b.comfort_answer(Feel::TooWarm));
+    p.run(400);
+    CHECK(p.b.comfort_answer(Feel::TooCool));
+    CHECK(p.b.comfort_remove(2));
+    p.run(5000);
+    CHECK(p.b.peer_no_signal());
+    CHECK(p.pa.lines.empty() && p.pa.csv_sets.empty() && p.pb.csv_sets.size() == 1);
+    p.cut = false;
+    p.a.choose_status(Status::Busy);  // upstairs is heard again
+    p.run(4000);
+    CHECK(p.pa.lines.size() == 2 && p.pa.csv_sets.size() == 1);
+    CHECK(p.pa.csv_sets[0] == p.pb.csv_sets[0]);
+    p.run(5000);
+    CHECK(p.pa.lines.size() == 2 && p.pa.csv_sets.size() == 1);
+  }
+}
+
 static void test_mail() {
   // The model: the higher counter wins; a tie goes to the later time, then to "waiting".
   WallTime t1{true, 1000, kClockManual}, t2{true, 2000, kClockManual};
@@ -1629,6 +2039,412 @@ static void test_sht4x() {
   CHECK(!decode_serial(f, &sn));
 }
 
+// The heat and cooling arrows (requests.h, Mike 2026-11-06). UTC offsets 0 and +3600 only.
+static int soft_dings(FakePlatform &f) {
+  int n = 0;
+  for (auto &s : f.played) n += s.first == Sound::SoftChime;
+  return n;
+}
+
+static void req_start(Pair &p) {
+  p.pa.offset = p.pb.offset = 0;
+  p.begin();
+  p.run(400);
+}
+
+static void req_send(Pair &p, Feel f) {
+  CHECK(p.b.comfort_answer(f, ask_for_feel(f), AskSent::Send));
+  p.run(200);
+}
+
+static void req_jump(Pair &p, uint32_t s) {  // the clocks move on; the milliseconds don't matter here
+  p.pa.w.utc += s;
+  p.pb.w.utc += s;
+  p.run(100);
+}
+
+// Review fixes (2026-11-06): a true tie settles the same way on both panels, and arrows sent with
+// no clock get a time once the clock is set, so they age out too.
+static void test_request_ties() {
+  WallTime nc{false, 0, kClockNone};
+  // Both panels change from the same counter with no clock: same ver, same since (0).
+  RequestModel down, up;
+  down.add(Ask::UrgentHeat, ReqSource::Tenant, nc);  // the tenant asks...
+  RequestModel up2;
+  up2.add(Ask::MildHeat, ReqSource::Tenant, nc);     // ...a different state at the same counter
+  RequestState a = down.state(), b = up2.state();
+  CHECK(a.ver == b.ver && a.since == b.since && !(a == b));
+  RequestModel x, y;
+  x.restore(a);
+  y.restore(b);
+  bool cx = x.apply_remote(b), cy = y.apply_remote(a);
+  CHECK(cx != cy);                  // exactly one side gives way
+  CHECK(x.state() == y.state());    // and they agree, so nothing bounces
+  CHECK(!x.apply_remote(y.state()) && !y.apply_remote(x.state()));
+  // More arrows wins a tie: better an extra arrow than a lost request.
+  RequestState two = a;
+  two.n = 2;
+  two.a[1] = ReqArrow{(uint8_t)Ask::MildCool, (uint8_t)ReqSource::Tenant, 0};
+  RequestModel z;
+  z.restore(a);
+  CHECK(z.apply_remote(two) && z.state().n == 2);
+  RequestModel w;
+  w.restore(two);
+  CHECK(!w.apply_remote(a) && w.state().n == 2);
+
+  // Stamping: an arrow sent with no clock gets the time when the clock is set, then ages out.
+  RequestModel s;
+  s.add(Ask::UrgentCool, ReqSource::Tenant, nc);
+  CHECK(s.state().a[0].sent == 0 && s.any_urgent(1792670400u + 10 * kArrowLifeS));
+  WallTime t{true, 1792670400u, kClockNetwork};
+  CHECK(!s.stamp_unknown(nc));
+  uint32_t v = s.state().ver;
+  CHECK(s.stamp_unknown(t) && s.state().a[0].sent == t.utc && s.state().ver == v + 1);
+  CHECK(!s.stamp_unknown(t));
+  CHECK(s.any_urgent(t.utc + kArrowLifeS - 1) && !s.any_urgent(t.utc + kArrowLifeS));
+}
+
+static void test_requests() {
+  // The arrow the survey picks.
+  CHECK(ask_for_feel(Feel::MuchTooHot) == Ask::UrgentCool && ask_for_feel(Feel::TooWarm) == Ask::MildCool);
+  CHECK(ask_for_feel(Feel::JustRight) == Ask::None);
+  CHECK(ask_for_feel(Feel::TooCool) == Ask::MildHeat && ask_for_feel(Feel::MuchTooCold) == Ask::UrgentHeat);
+  CHECK(ask_urgent(Ask::UrgentHeat) && ask_urgent(Ask::UrgentCool) && !ask_urgent(Ask::MildHeat) && !ask_urgent(Ask::MildCool));
+  CHECK_STR(req_end_code(ReqEnd::Cleared), "CLEARED");
+  CHECK_STR(req_end_code(ReqEnd::TakenBack), "TAKEN_BACK");
+  CHECK_STR(req_end_code(ReqEnd::PushedOff), "PUSHED_OFF");
+  CHECK_STR(req_end_code(ReqEnd::TimedOut), "TIMED_OUT");
+
+  // The model: arrows are added on the right, the fourth pushes the oldest off.
+  WallTime t0{true, 1792670400u, kClockManual};  // 2026-10-22 12:00 UTC
+  RequestModel m;
+  CHECK(!m.take_back(t0) && !m.clear(t0) && !m.dismiss_acted(t0));
+  ReqArrow pushed = {};
+  bool did = true;
+  m.add(Ask::MildHeat, ReqSource::Tenant, t0, &pushed, &did);
+  CHECK(!did && m.state().n == 1 && m.state().ver == 1 && m.state().since == t0.utc && m.state().a[0].sent == t0.utc);
+  WallTime t1 = t0, t2 = t0, t3 = t0;
+  t1.utc += 60; t2.utc += 120; t3.utc += 180;
+  m.add(Ask::UrgentCool, ReqSource::Tenant, t1);
+  CHECK(m.state().n == 2 && m.state().a[0].ask == (uint8_t)Ask::MildHeat && m.state().a[1].ask == (uint8_t)Ask::UrgentCool);
+  CHECK(m.state().ver == 2 && m.state().since == t1.utc);
+  m.add(Ask::MildCool, ReqSource::Predicted, t2);
+  CHECK(m.state().n == 3 && m.state().a[2].source == (uint8_t)ReqSource::Predicted);
+  m.add(Ask::UrgentHeat, ReqSource::Tenant, t3, &pushed, &did);
+  CHECK(did && pushed.ask == (uint8_t)Ask::MildHeat && pushed.sent == t0.utc);
+  CHECK(m.state().n == 3 && m.state().a[0].ask == (uint8_t)Ask::UrgentCool && m.state().a[1].ask == (uint8_t)Ask::MildCool &&
+        m.state().a[2].ask == (uint8_t)Ask::UrgentHeat && m.state().ver == 4);
+  ReqArrow sh[kMaxArrows];
+  CHECK(m.showing(t3.utc, sh) == 3 && sh[0].ask == (uint8_t)Ask::UrgentCool && sh[2].ask == (uint8_t)Ask::UrgentHeat);
+  CHECK(m.any_urgent(t3.utc));
+
+  // Ages: an arrow shows until kArrowLifeS after it was sent; with no clock nothing ages.
+  CHECK(m.showing(t1.utc + kArrowLifeS - 1, sh) == 3);
+  CHECK(m.showing(t1.utc + kArrowLifeS, sh) == 2 && sh[0].ask == (uint8_t)Ask::MildCool);
+  CHECK(m.showing(t3.utc + kArrowLifeS, sh) == 0 && !m.any_urgent(t3.utc + kArrowLifeS));
+  CHECK(m.showing(0, sh) == 3);
+  RequestModel nc;
+  nc.add(Ask::MildCool, ReqSource::Tenant, WallTime());
+  CHECK(nc.state().ver == 1 && nc.state().since == 0 && nc.state().a[0].sent == 0);
+  CHECK(nc.showing(2000000000u, sh) == 1);  // sent with no clock: never times out
+  RequestModel mild;
+  mild.add(Ask::MildHeat, ReqSource::Tenant, t0);
+  CHECK(!mild.any_urgent(t0.utc));
+  // Adding drops arrows already past their life (they were never logged as pushed off).
+  RequestModel o = m;
+  WallTime late = t0;
+  late.utc = t2.utc + kArrowLifeS;  // the first two have gone, the newest has not
+  o.add(Ask::MildHeat, ReqSource::Tenant, late, &pushed, &did);
+  CHECK(!did && o.state().n == 2 && o.state().a[0].ask == (uint8_t)Ask::UrgentHeat && o.state().a[1].ask == (uint8_t)Ask::MildHeat);
+
+  // Taking back.
+  RequestModel k = m;
+  CHECK(k.take_back(t3) && k.state().n == 0 && k.state().ver == 5 && k.state().acted == 0);
+  CHECK(k.state().a[0].ask == 0 && k.state().a[2].sent == 0);  // unused slots are zero
+  CHECK(!k.take_back(t3) && k.state().ver == 5);
+  CHECK(!k.clear(t3));
+  RequestModel gone = m;
+  CHECK(!gone.take_back(WallTime{true, t3.utc + kArrowLifeS * 2, kClockManual}));  // all aged out: nothing showing
+
+  // Mike clears them: all go and the message shows for 30 minutes, or until the tenant taps it.
+  RequestModel c = m;
+  WallTime tc{true, t3.utc + 600, kClockManual};
+  CHECK(c.clear(tc) && c.state().n == 0 && c.state().acted == tc.utc && !c.state().acted_dismissed && c.state().ver == 5);
+  CHECK(c.acted_showing(tc.utc) && c.acted_showing(tc.utc + kActedShowS - 1) && !c.acted_showing(tc.utc + kActedShowS));
+  CHECK(c.acted_showing(0));
+  CHECK(!c.clear(tc));
+  RequestModel dm = c;
+  CHECK(dm.dismiss_acted(tc) && dm.state().acted_dismissed && !dm.acted_showing(tc.utc) && !dm.dismiss_acted(tc));
+  c.add(Ask::MildHeat, ReqSource::Tenant, tc);  // a new request puts the message away
+  CHECK(c.state().acted == 0 && !c.acted_showing(tc.utc));
+  RequestModel ncl;
+  ncl.add(Ask::UrgentHeat, ReqSource::Tenant, WallTime());
+  CHECK(ncl.clear(WallTime()) && ncl.state().acted == 1 && ncl.acted_showing(3000000000u) && ncl.acted_showing(0));
+
+  // apply_remote: the higher counter wins, a tie goes to the later change, a true tie keeps ours.
+  RequestState hi = m.state(), lo = m.state();
+  hi.ver++; hi.n = 1;
+  lo.ver--;
+  RequestModel r;
+  r.restore(m.state());
+  CHECK(!r.apply_remote(m.state()) && !r.apply_remote(lo));
+  CHECK(r.apply_remote(hi) && r.state().ver == hi.ver && r.state().n == 1 && r.state().a[1].ask == 0);
+  RequestState x = m.state(), y = x;
+  y.since++;
+  y.acted = 77;
+  RequestModel r1, r2, r3, r4;
+  r1.restore(x);
+  CHECK(r1.apply_remote(y) && r1.state().acted == 77);
+  r2.restore(y);
+  CHECK(!r2.apply_remote(x) && r2.state().acted == 77);
+  y.since = x.since;
+  r3.restore(x);
+  r4.restore(y);
+  // A full tie (same counter, same time): both panels settle on the same one, here the later acted.
+  CHECK(r3.apply_remote(y) && !r4.apply_remote(x) && r3.state().acted == 77 && r4.state().acted == 77);
+  CHECK(x == m.state() && !(x == y));
+
+  // The file's lines (local times; offset 0 here, and +3600).
+  char line[kComfortLineMax];
+  ReqArrow a1 = {(uint8_t)Ask::UrgentCool, (uint8_t)ReqSource::Tenant, 1792670400u};
+  CHECK(request_csv_line(a1, ReqEnd::Cleared, 1792670400u + 1800, 0, line, sizeof(line)) > 0);
+  CHECK_STR(line, "2026-10-22,12:00,MIDDAY,URGENT_COOL,TENANT,CLEARED,2026-10-22,12:30,30\n");
+  CHECK(request_csv_line(a1, ReqEnd::Cleared, 1792670400u + 1800, 3600, line, sizeof(line)) > 0);
+  CHECK_STR(line, "2026-10-22,13:00,MIDDAY,URGENT_COOL,TENANT,CLEARED,2026-10-22,13:30,30\n");
+  ReqArrow a2 = {(uint8_t)Ask::MildHeat, (uint8_t)ReqSource::Predicted, 1792627200u + 23 * 3600};
+  request_csv_line(a2, ReqEnd::TimedOut, a2.sent + 3 * 3600 + 59, 0, line, sizeof(line));
+  CHECK_STR(line, "2026-10-22,23:00,NIGHT,MILD_HEAT,PREDICTED,TIMED_OUT,2026-10-23,02:00,180\n");
+  ReqArrow a3 = {(uint8_t)Ask::UrgentHeat, (uint8_t)ReqSource::Tenant, 0};
+  request_csv_line(a3, ReqEnd::PushedOff, 0, 0, line, sizeof(line));
+  CHECK_STR(line, ",,,URGENT_HEAT,TENANT,PUSHED_OFF,,,\n");
+  request_csv_line(a3, ReqEnd::TakenBack, 1792670400u, 0, line, sizeof(line));  // sent with no clock: no wait
+  CHECK_STR(line, ",,,URGENT_HEAT,TENANT,TAKEN_BACK,2026-10-22,12:00,\n");
+  request_csv_line(a1, ReqEnd::TakenBack, 0, 0, line, sizeof(line));
+  CHECK_STR(line, "2026-10-22,12:00,MIDDAY,URGENT_COOL,TENANT,TAKEN_BACK,,,\n");
+  CHECK(request_csv_line(a1, ReqEnd::Cleared, 1792670400u, 0, line, 10) == 0);
+  CHECK_STR(kRequestsFile, "requests.csv");
+  CHECK_STR(kRequestsCsvHeader, "sent_date,sent_time,part_of_day,arrow,source,ended,ended_date,ended_time,waited_min\n");
+  CHECK(strlen(kRequestsCsvHeader) < kComfortLineMax);
+
+  // The wire: 5 + 32 bytes, little-endian.
+  Msg wm;
+  wm.type = MsgType::Requests;
+  wm.sender = kSenderDownstairs;
+  wm.seq = 0x2345;
+  RequestState &q = wm.u.req;
+  q.n = 2;
+  q.a[0] = ReqArrow{(uint8_t)Ask::MildHeat, (uint8_t)ReqSource::Tenant, 0x6ADF03D0u};
+  q.a[1] = ReqArrow{(uint8_t)Ask::UrgentCool, (uint8_t)ReqSource::Predicted, 5};
+  q.a[2] = ReqArrow{0, 0, 0};
+  q.acted = 0x11223344u;
+  q.acted_dismissed = true;
+  q.since = 0x01020304u;
+  q.ver = 9;
+  uint8_t buf[64];
+  size_t n = encode(wm, buf, sizeof(buf));
+  CHECK(n == 37);
+  CHECK(buf[1] == 13 && buf[5] == 2 && buf[6] == 2 && buf[7] == 0 && buf[8] == 0xD0 && buf[11] == 0x6A);
+  CHECK(buf[12] == 4 && buf[13] == 1 && buf[14] == 5 && buf[18] == 0 && buf[24] == 0x44 && buf[27] == 0x11);
+  CHECK(buf[28] == 1 && buf[29] == 4 && buf[32] == 1 && buf[33] == 9 && buf[36] == 0);
+  Msg dm2;
+  CHECK(decode(buf, n, dm2) && dm2.type == MsgType::Requests && dm2.sender == kSenderDownstairs && dm2.seq == 0x2345);
+  CHECK(dm2.u.req == q && dm2.u.req.a[2].ask == 0);
+  CHECK(encode(wm, buf, 20) == 0);
+  CHECK(!decode(buf, n - 1, dm2));
+  uint8_t longer[64];
+  memcpy(longer, buf, n);
+  longer[n] = 0;
+  CHECK(!decode(longer, n + 1, dm2));
+  auto bad = [&](size_t at, uint8_t v) {
+    uint8_t c2[64];
+    memcpy(c2, buf, n);
+    c2[at] = v;
+    return decode(c2, n, dm2);
+  };
+  CHECK(!bad(5, 4));    // more than 3 arrows
+  CHECK(!bad(6, 0));    // a used slot with no arrow
+  CHECK(!bad(6, 5));    // an arrow that doesn't exist
+  CHECK(!bad(7, 2));    // a source that doesn't exist
+  CHECK(!bad(28, 2));   // dismissed is 0 or 1
+  CHECK(bad(18, 7));    // the unused third slot is ignored
+  wm.u.req.n = 4;
+  CHECK(encode(wm, buf, sizeof(buf)) == 0);
+  wm.u.req.n = 0;
+  q.a[0] = ReqArrow{0, 0, 0};
+  q.a[1] = ReqArrow{0, 0, 0};
+  CHECK(encode(wm, buf, sizeof(buf)) == 37 && decode(buf, 37, dm2) && dm2.u.req.n == 0);
+  CHECK_STR(msg_name(MsgType::Requests), "REQUESTS");
+  {  // latest wins, like MAIL: a second copy replaces the first in the queue
+    RetryQueue rq;
+    wm.u.req.n = 0;
+    rq.push(wm, kSenderDownstairs, 0);
+    rq.push(wm, kSenderDownstairs, 10);
+    CHECK(rq.pending(MsgType::Requests) == 1);
+  }
+
+  // Two panels: SEND from downstairs. An urgent arrow shows on both, upstairs wakes and dings.
+  {
+    Pair p(1792670400u);
+    req_start(p);
+    p.a.choose_status(Status::Busy);  // it dings while Mike is Busy too
+    p.run(200);
+    int before = soft_dings(p.pa);
+    req_send(p, Feel::MuchTooHot);
+    CHECK(p.a.requests().n == 1 && p.b.requests().n == 1 && p.pa.saved_req.n == 1 && p.pb.saved_req.n == 1);
+    const View &va = p.a.view(), &vb = p.b.view();
+    CHECK(va.req.n == 1 && va.req.ask[0] == Ask::UrgentCool && va.req.source[0] == ReqSource::Tenant && va.req.flash && !va.req.acted);
+    CHECK(vb.req.n == 1 && vb.req.ask[0] == Ask::UrgentCool && vb.req.flash && !vb.req.acted);
+    CHECK(soft_dings(p.pa) == before + 1);  // at once, at Busy's soft chime level
+    CHECK(p.pa.played.back().first == Sound::SoftChime && p.pa.played.back().second == p.sa.volume - p.sa.soft_chime_drop);
+    CHECK(soft_dings(p.pb) == 0);
+    p.run(14000);
+    CHECK(soft_dings(p.pa) == before + 1);
+    p.run(1500);
+    CHECK(soft_dings(p.pa) == before + 2);  // every 15 s
+    p.run(15000);
+    CHECK(soft_dings(p.pa) == before + 3);
+    CHECK(p.pb.lines.size() == 1 && p.pb.lines[0].find(",MUCH_TOO_HOT,URGENT_COOL,SEND,") != std::string::npos);
+    CHECK(p.pa.req_lines.empty() && p.pb.req_lines.empty());  // nothing has ended yet; upstairs never writes it
+    // Mike taps: the dinging stops, and downstairs says so.
+    int d = soft_dings(p.pa);
+    CHECK(p.a.tap_requests());
+    p.run(300);
+    CHECK(p.a.requests().n == 0 && p.b.requests().n == 0 && va.req.n == 0 && vb.req.n == 0 && !va.req.flash);
+    CHECK(vb.req.acted && !va.req.acted);
+    p.run(20000);
+    CHECK(soft_dings(p.pa) == d);
+    CHECK(p.pb.req_lines.size() == 1 && p.pb.req_lines[0].find("URGENT_COOL,TENANT,CLEARED,2026-10-22,12:") != std::string::npos);
+    CHECK(p.pb.req_lines[0].find("2026-10-22,12:00,MIDDAY,URGENT_COOL") == 0);
+    CHECK(!p.a.tap_requests());  // nothing left
+    // The message stays 30 minutes.
+    req_jump(p, 1700);
+    CHECK(vb.req.acted);
+    req_jump(p, 120);
+    CHECK(!vb.req.acted);
+  }
+  // The tenant taps the message away.
+  {
+    Pair p(1792670400u);
+    req_start(p);
+    req_send(p, Feel::TooWarm);
+    CHECK(p.a.tap_requests());
+    p.run(300);
+    CHECK(p.b.view().req.acted);
+    CHECK(!p.a.tap_acted());  // upstairs has no message
+    CHECK(p.b.tap_acted());
+    p.run(300);
+    CHECK(!p.b.view().req.acted && p.a.requests().acted_dismissed && p.pb.saved_req.acted_dismissed);
+    CHECK(!p.b.tap_acted());
+    CHECK(!p.a.view().req.acted);
+  }
+  // Mild arrows: no sound, and no flashing.
+  {
+    Pair p(1792670400u);
+    req_start(p);
+    req_send(p, Feel::TooCool);
+    CHECK(p.a.view().req.n == 1 && p.a.view().req.ask[0] == Ask::MildHeat && !p.a.view().req.flash && !p.b.view().req.flash);
+    p.run(40000);
+    CHECK(soft_dings(p.pa) == 0 && p.pa.played.empty());
+    req_send(p, Feel::TooWarm);
+    p.run(20000);
+    CHECK(p.a.view().req.n == 2 && p.a.view().req.ask[1] == Ask::MildCool && p.pa.played.empty());
+  }
+  // The tenant takes the arrows back: gone at once from both panels, nothing said.
+  {
+    Pair p(1792670400u);
+    req_start(p);
+    req_send(p, Feel::MuchTooCold);
+    req_send(p, Feel::TooWarm);
+    CHECK(p.a.view().req.n == 2 && p.a.view().req.flash);
+    int d = soft_dings(p.pa);
+    CHECK(p.b.tap_requests());
+    p.run(300);
+    CHECK(p.a.requests().n == 0 && p.b.requests().n == 0 && p.a.view().req.n == 0 && p.b.view().req.n == 0);
+    CHECK(!p.a.view().req.acted && !p.b.view().req.acted && p.a.requests().acted == 0);
+    CHECK(p.pb.req_lines.size() == 2 && p.pb.req_lines[0].find("URGENT_HEAT,TENANT,TAKEN_BACK,") != std::string::npos &&
+          p.pb.req_lines[1].find("MILD_COOL,TENANT,TAKEN_BACK,") != std::string::npos);
+    CHECK(!p.b.tap_requests());
+    p.run(20000);
+    CHECK(soft_dings(p.pa) == d);
+  }
+  // A fourth arrow pushes the oldest off.
+  {
+    Pair p(1792670400u);
+    req_start(p);
+    req_send(p, Feel::MuchTooHot);
+    req_send(p, Feel::TooWarm);
+    req_send(p, Feel::TooCool);
+    CHECK(p.pb.req_lines.empty());
+    req_send(p, Feel::MuchTooCold);
+    for (const View *v : {&p.a.view(), &p.b.view()}) {
+      CHECK(v->req.n == 3 && v->req.ask[0] == Ask::MildCool && v->req.ask[1] == Ask::MildHeat && v->req.ask[2] == Ask::UrgentHeat);
+    }
+    CHECK(p.pb.req_lines.size() == 1 && p.pb.req_lines[0].find("URGENT_COOL,TENANT,PUSHED_OFF,") != std::string::npos);
+    CHECK(p.pb.lines.size() == 4 && p.pa.lines.size() == 4);  // every survey answer was kept
+  }
+  // Arrows nobody clears go after 4 hours, and downstairs logs each once.
+  {
+    Pair p(1792670400u);
+    req_start(p);
+    req_send(p, Feel::TooCool);
+    req_jump(p, kArrowLifeS - 100);
+    CHECK(p.a.view().req.n == 1 && p.b.view().req.n == 1 && p.pb.req_lines.empty());
+    req_jump(p, 200);
+    CHECK(p.a.view().req.n == 0 && p.b.view().req.n == 0 && !p.a.view().req.flash);
+    CHECK(p.pb.req_lines.size() == 1);
+    CHECK_STR(p.pb.req_lines.empty() ? "" : p.pb.req_lines[0].c_str(), "2026-10-22,12:00,MIDDAY,MILD_HEAT,TENANT,TIMED_OUT,2026-10-22,16:00,240\n");
+    p.run(2000);
+    CHECK(p.pb.req_lines.size() == 1 && p.pa.req_lines.empty());
+    CHECK(!p.a.tap_requests() && !p.b.tap_requests());  // nothing showing
+  }
+  // Survey answers that send nothing: no arrow, nothing on the radio for it.
+  {
+    Pair p(1792670400u);
+    req_start(p);
+    CHECK(p.b.comfort_answer(Feel::JustRight));
+    CHECK(p.b.comfort_answer(Feel::TooWarm, Ask::MildCool, AskSent::Cancel));
+    CHECK(p.b.comfort_answer(Feel::TooCool, Ask::MildHeat, AskSent::Blank));
+    CHECK(p.b.comfort_answer(Feel::TooCool, Ask::None, AskSent::Send));
+    p.run(300);
+    CHECK(p.b.requests().ver == 0 && p.a.requests().ver == 0 && p.pb.lines.size() == 4 && p.pb.req_saves == 0);
+    CHECK(!p.a.comfort_answer(Feel::TooWarm, Ask::MildCool, AskSent::Send) && p.a.requests().ver == 0);
+  }
+  // Night, with the screen off overnight: no ding, but the screen lights while an urgent arrow shows.
+  {
+    Pair p(1792627200u + 23 * 3600);  // 23:00
+    p.sa.screen_off_overnight = true;
+    p.sb.screen_off_overnight = true;
+    req_start(p);
+    CHECK(p.pa.backlight == kBacklightOff);
+    req_send(p, Feel::MuchTooCold);
+    CHECK(p.a.view().req.n == 1 && p.a.view().req.flash);
+    CHECK(p.pa.backlight != kBacklightOff && soft_dings(p.pa) == 0);
+    p.run(35000);
+    CHECK(p.pa.backlight != kBacklightOff && soft_dings(p.pa) == 0 && p.pa.played.empty());
+    // Mild: the screen stays dark.
+    Pair q(1792627200u + 23 * 3600);
+    q.sa.screen_off_overnight = true;
+    q.sb.screen_off_overnight = true;
+    req_start(q);
+    req_send(q, Feel::TooWarm);
+    q.run(1000);
+    CHECK(q.a.view().req.n == 1 && q.pa.backlight == kBacklightOff && q.pa.played.empty());
+  }
+  // A restart: the other panel brings the arrows back, as for mail.
+  {
+    Pair p(1792670400u);
+    req_start(p);
+    req_send(p, Feel::MuchTooHot);
+    Pair q(1792670400u);
+    q.pa.offset = q.pb.offset = 0;
+    q.b.restore_requests(p.b.requests());
+    q.begin();
+    q.run(500);
+    CHECK(q.a.requests().n == 1 && q.a.view().req.n == 1 && q.a.view().req.ask[0] == Ask::UrgentCool);
+    CHECK(q.pa.saved_req.n == 1 && q.pb.req_lines.empty());
+  }
+}
+
 int main(int argc, char **argv) {
   const char *wav_dir = argc > 1 ? argv[1] : nullptr;
   test_sht4x();
@@ -1637,6 +2453,10 @@ int main(int argc, char **argv) {
   test_dog();
   test_both_dogs();
   test_mail();
+  test_comfort();
+  test_comfort_chart();
+  test_requests();
+  test_request_ties();
   test_bell_shake_and_red();
   test_protocol();
   test_sky();

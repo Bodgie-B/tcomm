@@ -39,7 +39,7 @@ struct Reader {
 
 bool latest_wins(MsgType t) {
   return t == MsgType::State || t == MsgType::DogMsg || t == MsgType::Reading || t == MsgType::Outside ||
-         t == MsgType::EventSum || t == MsgType::Mail;
+         t == MsgType::EventSum || t == MsgType::Mail || t == MsgType::Requests;
 }
 
 }  // namespace
@@ -77,6 +77,28 @@ size_t encode(const Msg &m, uint8_t *out, size_t cap) {
       break;
     case MsgType::EventSum: w.u16(m.u.sum.count); w.u32(m.u.sum.digest); w.u8(m.u.sum.flags); break;
     case MsgType::Mail: w.u8(m.u.mail.waiting ? 1 : 0); w.u32(m.u.mail.since); w.u32(m.u.mail.ver); break;
+    case MsgType::Comfort: {
+      const ComfortAnswer &c = m.u.comfort;
+      w.u32(c.n); w.u32(c.utc); w.u32((uint32_t)c.offset);
+      w.u8(c.clock_q); w.u8(c.feel); w.u8(c.ask); w.u8(c.sent); w.u8(c.status); w.u8(c.have);
+      w.u16((uint16_t)c.in_t); w.u16(c.in_h); w.u16((uint16_t)c.up_t); w.u16(c.up_h); w.u16((uint16_t)c.out_t);
+      w.u8(c.out_h); w.u32(c.removed);
+      break;
+    }
+    case MsgType::ComfortDel:
+      w.u32(m.u.comfort_del.n); w.u32(m.u.comfort_del.removed); w.u32((uint32_t)m.u.comfort_del.offset);
+      break;
+    case MsgType::Requests: {
+      const RequestState &r = m.u.req;
+      if (r.n > kMaxArrows) return 0;
+      w.u8(r.n);
+      for (int i = 0; i < kMaxArrows; i++) {
+        bool used = i < r.n;
+        w.u8(used ? r.a[i].ask : 0); w.u8(used ? r.a[i].source : 0); w.u32(used ? r.a[i].sent : 0);
+      }
+      w.u32(r.acted); w.u8(r.acted_dismissed ? 1 : 0); w.u32(r.since); w.u32(r.ver);
+      break;
+    }
     default: return 0;
   }
   return w.ok ? w.n : 0;
@@ -146,6 +168,36 @@ bool decode(const uint8_t *in, size_t len, Msg &m) {
       m.u.mail.waiting = r.u8(); m.u.mail.since = r.u32(); m.u.mail.ver = r.u32();
       if (m.u.mail.waiting > 1) return false;
       break;
+    case MsgType::Comfort: {
+      ComfortAnswer &c = m.u.comfort;
+      c.n = r.u32(); c.utc = r.u32(); c.offset = (int32_t)r.u32();
+      c.clock_q = r.u8(); c.feel = r.u8(); c.ask = r.u8(); c.sent = r.u8(); c.status = r.u8(); c.have = r.u8();
+      c.in_t = (int16_t)r.u16(); c.in_h = r.u16(); c.up_t = (int16_t)r.u16(); c.up_h = r.u16(); c.out_t = (int16_t)r.u16();
+      c.out_h = r.u8(); c.removed = r.u32();
+      if (!feel_valid(c.feel) || !ask_valid(c.ask) || !ask_sent_valid(c.sent) || !status_valid(c.status)) return false;
+      break;
+    }
+    case MsgType::ComfortDel:
+      m.u.comfort_del.n = r.u32(); m.u.comfort_del.removed = r.u32(); m.u.comfort_del.offset = (int32_t)r.u32();
+      if (m.u.comfort_del.n == 0) return false;
+      break;
+    case MsgType::Requests: {
+      RequestState &q = m.u.req;
+      q.n = r.u8();
+      for (int i = 0; i < kMaxArrows; i++) {
+        q.a[i].ask = r.u8(); q.a[i].source = r.u8(); q.a[i].sent = r.u32();
+      }
+      q.acted = r.u32();
+      uint8_t dismissed = r.u8();  // a bool would turn a bad byte into true
+      q.acted_dismissed = dismissed != 0;
+      q.since = r.u32(); q.ver = r.u32();
+      if (q.n > kMaxArrows || dismissed > 1) return false;
+      for (int i = 0; i < kMaxArrows; i++) {
+        if (i >= q.n) { q.a[i] = ReqArrow{0, 0, 0}; continue; }
+        if (!ask_valid(q.a[i].ask) || q.a[i].ask == (uint8_t)Ask::None || !req_source_valid(q.a[i].source)) return false;
+      }
+      break;
+    }
     default: return false;
   }
   m.type = (MsgType)type;
@@ -264,6 +316,9 @@ const char *msg_name(MsgType t) {
     case MsgType::EventMsg: return "EVENT";
     case MsgType::EventSum: return "EVENT_SUM";
     case MsgType::Mail: return "MAIL";
+    case MsgType::Comfort: return "COMFORT";
+    case MsgType::Requests: return "REQUESTS";
+    case MsgType::ComfortDel: return "COMFORT_DEL";
   }
   return "?";
 }

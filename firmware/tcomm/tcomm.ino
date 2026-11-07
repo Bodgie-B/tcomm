@@ -398,6 +398,10 @@ void setup() {
   if (lvgl_port_init(panel, tp) != ESP_OK) Serial.println("[tcomm] LVGL port failed to start");
   if (lvgl_port_lock(-1)) {
     g_ctrl.begin(settings, own, dog, mail);
+    uint32_t comfort_n = 0;
+    if (board::load_comfort_count(comfort_n)) g_ctrl.set_comfort_count(comfort_n);
+    tc::RequestState requests;  // the arrows held when the panel last saved them (requests.h)
+    if (board::load_requests(requests)) g_ctrl.restore_requests(requests);
     if (!have_settings) g_platform.save_settings(settings);
 #if TCOMM_DEMO
     g_demo.begin(g_ctrl);
@@ -494,6 +498,48 @@ static bool cmd_int(const char *s, const char *word, int &v) {
   return true;
 }
 
+// "comfort": the answer count here, and the last 5 lines of comfort.csv (the whole file is read:
+// fine for a debug command).
+static void comfort_report() {
+  Serial.printf("comfort: %lu answers here\n", (unsigned long)g_ctrl.comfort_count());
+  size_t len = 0;
+  uint8_t *buf = g_platform.read_file("comfort.csv", len);
+  if (!buf || !len) {
+    Serial.println("comfort.csv: nothing in it yet");
+    if (buf) g_platform.free_big(buf);
+    return;
+  }
+  while (len && (buf[len - 1] == '\n' || buf[len - 1] == '\r')) len--;
+  size_t at = len;
+  for (int lines = 0; at > 0 && lines < 5;) {
+    at--;
+    if (buf[at] == '\n' && ++lines == 5) at++;
+  }
+  Serial.write(buf + at, len - at);
+  Serial.println();
+  g_platform.free_big(buf);
+}
+
+// "req": the heat and cooling arrows held, oldest first, with the minutes since each was sent, and
+// whether the "Action taken on temperature" line shows (requests.h). The ages come from the clock
+// here, as the screen's own are.
+static void req_report() {
+  const tc::RequestState &r = g_ctrl.requests();
+  const tc::WallTime w = g_platform.wall();
+  Serial.printf("req: %d held\n", (int)r.n);
+  for (int i = 0; i < r.n && i < tc::kMaxArrows; i++) {
+    const tc::ReqArrow &a = r.a[i];
+    char ago[32];
+    if (!a.sent) snprintf(ago, sizeof(ago), "at an unknown time");
+    else if (!w.valid) snprintf(ago, sizeof(ago), "(clock not set)");
+    else snprintf(ago, sizeof(ago), "%lu min ago", (unsigned long)(w.utc > a.sent ? (w.utc - a.sent) / 60 : 0));
+    Serial.printf("  %d: %s from the %s, sent %s\n", i + 1, tc::ask_code((tc::Ask)a.ask),
+                  a.source == (uint8_t)tc::ReqSource::Tenant ? "tenant" : "predicted", ago);
+  }
+  Serial.printf("action taken on temperature: %s; tapped away: %s\n", g_ctrl.view().req.acted ? "showing" : "not showing",
+                r.acted_dismissed ? "yes" : "no");
+}
+
 // "time YYYY-MM-DD HH:MM[:SS]" into f: year, month, day, hour, minute, second (left as it was if
 // not given).
 static bool cmd_time(const char *s, int f[6]) {
@@ -539,6 +585,10 @@ static void command(char *s) {
     Serial.println("radio (ESP-NOW counts, the last frames, and what the outside tile and dog pill show)");
     Serial.println("shot (the screen as raw RGB565, about a second; tools/shot2png.py makes a PNG)");
     Serial.println("mail (tap this panel's mail badge) | mail other (the other floor taps theirs, as if by radio)");
+    Serial.println("comfort (answers here and the last 5 lines of comfort.csv) | comfort 0-4 (the tenant taps MUCH TOO HOT, TOO WARM, "
+                   "JUST RIGHT, TOO COOL, MUCH TOO COLD; downstairs only) | comfort remove N (answer N marked removed, as the chart's REMOVE)");
+    Serial.println("req (the arrows held) | req send 0-3 (the tenant sends urgent heat, mild heat, mild cooling, urgent cooling; "
+                   "downstairs only) | req tap (a tap on the arrows) | req acted (a tap on Action taken)");
     Serial.println("gear (as a tap on the gear: Settings rolls down or up) | knock (the other floor rings, as if by radio)");
     Serial.println("update (restart into the Wi-Fi updater, as Settings > Update over Wi-Fi does)");
     Serial.println("timesync (ask the internet for the time now; the result shows in log and radio)");
@@ -620,6 +670,23 @@ static void command(char *s) {
   else if (!strcmp(s, "dog")) g_ctrl.tap_dog();
   else if (!strcmp(s, "mail")) Serial.println(g_ctrl.tap_mail() ? "mail: tapped" : "mail: nothing waiting to acknowledge");
   else if (!strcmp(s, "mail other")) mail_from_other_floor();
+  else if (!strcmp(s, "comfort")) comfort_report();
+  else if (cmd_int(s, "comfort remove", v) && v >= 0) {  // Mike, 2026-11-06: the chart's REMOVE, by number
+    Serial.printf("comfort remove %d: %s\n", v, g_ctrl.comfort_remove((uint32_t)v) ? "taken" : "not taken (upstairs, or no such answer)");
+  }
+  else if (!strcmp(s, "req")) req_report();
+  else if (cmd_int(s, "req send", v) && v >= 0 && v <= 3) {
+    // The answer that goes with each arrow, as the survey picks them (docs/temperature-requests.md).
+    static const tc::Feel kFeel[4] = {tc::Feel::MuchTooCold, tc::Feel::TooCool, tc::Feel::TooWarm, tc::Feel::MuchTooHot};
+    static const tc::Ask kAsk[4] = {tc::Ask::UrgentHeat, tc::Ask::MildHeat, tc::Ask::MildCool, tc::Ask::UrgentCool};
+    bool ok = g_ctrl.comfort_answer(kFeel[v], kAsk[v], tc::AskSent::Send);
+    Serial.printf("req: %s sent: %s\n", tc::ask_code(kAsk[v]), ok ? "taken" : "not taken (upstairs, or the survey isn't asking)");
+  } else if (!strcmp(s, "req tap"))
+    Serial.println(g_ctrl.tap_requests() ? "req tap: taken" : "req tap: no arrows showing");
+  else if (!strcmp(s, "req acted"))
+    Serial.println(g_ctrl.tap_acted() ? "req acted: put away" : "req acted: nothing to put away");
+  else if (cmd_int(s, "comfort", v) && tc::feel_valid((uint8_t)v))
+    Serial.printf("comfort: %s\n", g_ctrl.comfort_answer((tc::Feel)v) ? "answer taken" : "not taken (upstairs, or the survey isn't asking)");
   else if (!strcmp(s, "gear")) ui::tap_gear();
   else if (!strcmp(s, "update")) board::restart_into_updater();
   else if (!strcmp(s, "timesync")) Serial.println(board::time_sync_start() ? "time: asking" : "time: can't ask now");

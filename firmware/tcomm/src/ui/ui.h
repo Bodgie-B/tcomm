@@ -36,6 +36,19 @@ class Actions {
   virtual void tap_bell() = 0;
   virtual void tap_dog() = 0;
   virtual void tap_mail() = 0;
+  // The comfort survey (downstairs): the answer, the arrow picked and whether it was sent.
+  virtual void comfort_answer(tc::Feel f, tc::Ask ask, tc::AskSent sent) = 0;
+  virtual void tap_requests() = 0;  // the heat and cooling arrows on the UPSTAIRS tile
+  virtual void tap_acted() = 0;     // downstairs: "Action taken on temperature"
+  // The comfort chart: the tenant removes answer n (downstairs); and comfort.csv read whole
+  // (Platform::read_file; free it with free_file). Null when there's no file.
+  virtual bool comfort_remove(uint32_t n) = 0;  // false: not taken (upstairs, or no such answer)
+  virtual uint8_t *read_file(const char *name, size_t &len) {
+    (void)name;
+    len = 0;
+    return nullptr;
+  }
+  virtual void free_file(uint8_t *p) { (void)p; }
   virtual void answer(bool come_on) = 0;
   virtual void dismiss_banner() = 0;
   virtual void apply_settings(const tc::Settings &s) = 0;
@@ -84,7 +97,7 @@ void set_art_scratch(uint8_t *buf, size_t bytes);
 void set_copy_pause(void (*pause)());
 
 // For the simulator: open sheets the way a touch would, and scroll the open one's list.
-enum class Sheet { None, Status, Timer, Settings, TimeDate, Test, CleanScreen, Ringtone, Zambretti, Screensaver };
+enum class Sheet { None, Status, Timer, Settings, TimeDate, Test, CleanScreen, Ringtone, Zambretti, Screensaver, Comfort, Chart };
 void open_sheet(Sheet s, tc::Status timed = tc::Status::Private);
 void scroll_sheet(int y);
 void tap_gear();  // as a tap on the gear (Settings rolls down or up), for testing over serial

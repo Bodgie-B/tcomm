@@ -8,6 +8,9 @@
 #include "../core/status.h"
 #include "../core/dog.h"
 #include "../core/mail.h"
+#include "../core/comfort.h"
+#include "../core/requests.h"
+#include "../core/comfort_chart.h"
 #include "../core/bell.h"
 #include "../core/protocol.h"
 #include "../core/sky.h"
@@ -34,6 +37,28 @@ class Platform {
   virtual void save_dog(const DogState &) {}
   virtual void save_mail(const MailState &) {}
   virtual void save_settings(const Settings &) {}
+  // The comfort survey (comfort.h): how many answers this panel has, kept across restarts
+  // (downstairs: answers given; upstairs: the highest answer number copied here).
+  virtual void save_comfort_count(uint32_t) {}
+  virtual void save_requests(const RequestState &) {}  // the heat and cooling arrows (requests.h)
+  // In the file's line whose first column is n, replaces column `column` (0-based) with value.
+  // Queued in order with append_line (an edit never overtakes a line still waiting) and written in
+  // the background through a temporary file, so a power cut keeps the old file. For removing a
+  // comfort answer (comfort_chart.h).
+  virtual void set_csv_field(const char *name, uint32_t n, int column, const char *value) {
+    (void)name;
+    (void)n;
+    (void)column;
+    (void)value;
+  }
+  // Adds one line to a file in the calendar's folder, writing header first when the file is new or
+  // empty. Both already end in a line end and are written as they are. Queued like write_file and
+  // written in the background; nothing is read back.
+  virtual void append_line(const char *name, const char *header, const char *line) {
+    (void)name;
+    (void)header;
+    (void)line;
+  }
   virtual uint32_t random32() = 0;
   virtual void log(const char *) {}
   // Large buffers (the calendar's). The panel gives PSRAM.
@@ -120,6 +145,16 @@ struct MailView {
   bool pulse;
 };
 
+// The heat and cooling arrows at the top right of the UPSTAIRS tile, on both panels (Mike,
+// 2026-11-06, requests.h), and the downstairs panel's "Action taken on temperature" line.
+struct RequestView {
+  uint8_t n;                       // arrows showing, 0-3, oldest first: the newest is drawn on the right
+  Ask ask[kMaxArrows];
+  ReqSource source[kMaxArrows];
+  bool flash;                      // an urgent arrow is showing: urgent arrows flash (kFlashHalfMs)
+  bool acted;                      // downstairs: "Action taken on temperature" replaces the UPSTAIRS since line
+};
+
 struct BannerView {
   BannerKind kind;
   char title[40];       // "Doorbell from upstairs"
@@ -149,6 +184,7 @@ struct View {
   BellView bell;
   DogView dog;
   MailView mail;
+  RequestView req;
   BannerView banner;
   char toast[48];       // brief notice, e.g. a timer ending; empty when none
   uint8_t backlight;
@@ -175,6 +211,27 @@ class Controller : public CalendarSource {
   // The mail badge: upstairs marks mail for downstairs, or takes it back; downstairs acknowledges
   // it. False when there was nothing to do (downstairs, with no mail waiting).
   bool tap_mail();
+  // The comfort survey (comfort.h), downstairs only: the tenant's answer, saved with the readings
+  // and the time, and copied to upstairs. With sent == Send and an arrow, the arrow goes upstairs
+  // too (requests.h). False on the upstairs panel.
+  bool comfort_answer(Feel f, Ask ask = Ask::None, AskSent sent = AskSent::Blank);
+  // A tap on the arrows: upstairs, Mike has acted and they all go; downstairs, the tenant takes
+  // them back. False when none were showing.
+  bool tap_requests();
+  // Downstairs: a tap on "Action taken on temperature" puts it away.
+  bool tap_acted();
+  // The comfort chart (comfort_chart.h), downstairs only: the tenant removes answer n given by
+  // mistake. It's marked removed (the time) in this panel's comfort.csv and upstairs'. False on the
+  // upstairs panel or for n 0 or beyond the answers here.
+  bool comfort_remove(uint32_t n);
+  void restore_requests(const RequestState &s) {
+    req_.restore(s);
+    req_snapshot(true);
+  }
+  const RequestState &requests() const { return req_.state(); }
+  // The number of answers this panel has (see Platform::save_comfort_count), restored at start-up.
+  void set_comfort_count(uint32_t n) { comfort_count_ = n; }
+  uint32_t comfort_count() const { return comfort_count_; }
   void answer_banner(bool come_on);
   void dismiss_banner();
   void apply_settings(const Settings &s);
@@ -234,6 +291,16 @@ class Controller : public CalendarSource {
   void send_state(bool please_reply);
   void send_dog();
   void send_mail();
+  void send_comfort();  // top up the radio from the outbox
+  void comfort_out_add(const ComfortAnswer &a, bool del);
+  // The heat and cooling arrows (requests.h). Downstairs writes requests.csv as arrows end.
+  void send_requests();
+  void req_log(const ReqArrow &a, ReqEnd why, uint32_t ended_utc);
+  void req_snapshot(bool raw);  // what showed at the last change, to notice an arrow timing out
+  void req_age_log();
+  void req_ding();
+  void tick_requests(uint32_t now);
+  uint8_t soft_volume();
   void mail_alert();
   void send_reading();
   void send_outside();
@@ -269,6 +336,7 @@ class Controller : public CalendarSource {
   StatusModel status_;
   DogModel dog_;
   MailModel mail_;
+  RequestModel req_;
   BellSender bell_out_;
   BellReceiver bell_in_;
   RetryQueue retry_;
@@ -302,8 +370,26 @@ class Controller : public CalendarSource {
   char toast_[48] = {};
   uint32_t toast_until_ = 0;
   uint32_t missed_mono_ = 0;
+  uint32_t comfort_count_ = 0;
+  // Answers downstairs not yet ACKed by upstairs, oldest first. seq is its message in the retry
+  // queue while one is in flight, else 0. Kept when the tries run out; sent again when the other
+  // panel is heard.
+  static constexpr int kComfortOutbox = 32;
+  // One at a time: upstairs keeps only a running count, so answer n+1 arriving before a lost answer n
+  // would make it ignore n's retry for good. Each goes only after the ACK of the one before it.
+  static constexpr int kComfortInFlight = 1;
+  // del: this entry is a removal (COMFORT_DEL; only a.n, a.removed and a.offset are used). Answers and
+  // removals share the outbox so a removal never overtakes its own answer (Mike, 2026-11-06).
+  struct ComfortOut { ComfortAnswer a; uint16_t seq; bool del; };
+  ComfortOut comfort_out_[kComfortOutbox] = {};
+  int comfort_out_n_ = 0;
   bool outside_fresh(uint32_t now) const;
   int forced_phase_ = 6;
+  ReqArrow req_prev_[kMaxArrows] = {};
+  int req_prev_n_ = 0;
+  uint32_t req_prev_ver_ = 0;
+  bool req_urgent_ = false;   // upstairs: an urgent arrow was showing at the last tick
+  uint32_t req_ding_at_ = 0;
 
   EventStore events_;
   bool ev_dirty_ = false;

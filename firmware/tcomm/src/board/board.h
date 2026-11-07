@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include "../core/dog.h"
 #include "../core/mail.h"
+#include "../core/requests.h"
 #include "../core/settings.h"
 #include "../core/status.h"
 #include "driver/i2c_master.h"
@@ -69,6 +70,10 @@ bool load_dog(tc::DogState &d);
 void save_dog(const tc::DogState &d);
 bool load_mail(tc::MailState &m);
 void save_mail(const tc::MailState &m);
+bool load_comfort_count(uint32_t &n);  // the comfort survey's answer count (comfort.h)
+void save_comfort_count(uint32_t n);
+bool load_requests(tc::RequestState &s);  // the heat and cooling arrows held (requests.h)
+void save_requests(const tc::RequestState &s);
 uint8_t load_clock_quality();
 void save_clock_quality(uint8_t q);
 // The calendar's files (tc::Platform::read_file names), in /tcomm on the SD card (Mike,
@@ -79,6 +84,15 @@ void save_clock_quality(uint8_t q);
 void calendar_fs_begin();
 uint8_t *calendar_read(const char *name, size_t &len);  // a PSRAM buffer to free(), or null
 bool calendar_write(const char *name, const uint8_t *buf, size_t len);
+// A name with a dot in it ("comfort.csv") is the whole file name; others get ".bin".
+// calendar_append adds one line to the end, header first if the file is new or empty. A plain append,
+// not temp and rename: a power cut at worst cuts the last line short.
+bool calendar_append(const char *name, const char *header, const char *line);
+// calendar_set_field: in the line whose first column is n, replaces column `column` (0-based) with
+// value, as calendar_write does it (a temporary file renamed over the old one, so a power cut keeps
+// the old file). The file is copied line by line, never held whole. Mike, 2026-11-06: a comfort
+// answer's "removed" column, from the chart's REMOVE. False if there's no such line or column.
+bool calendar_set_field(const char *name, uint32_t n, int column, const char *value);
 struct CalendarFs {
   bool sd, fat;               // the card is in use; the FAT partition is mounted
   uint64_t card, total, used;  // bytes: the card's size, then the file system in use

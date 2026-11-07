@@ -16,6 +16,12 @@ class PanelApp : public ui::Actions {
   void tap_bell() override { c_.tap_bell(); }
   void tap_dog() override { c_.tap_dog(); }
   void tap_mail() override { c_.tap_mail(); }
+  void comfort_answer(Feel f, Ask a, AskSent s) override { c_.comfort_answer(f, a, s); }
+  void tap_requests() override { c_.tap_requests(); }
+  void tap_acted() override { c_.tap_acted(); }
+  bool comfort_remove(uint32_t n) override { return c_.comfort_remove(n); }
+  uint8_t *read_file(const char *name, size_t &len) override { return p_.read_file(name, len); }
+  void free_file(uint8_t *p) override { p_.free_big(p); }
   void answer(bool come_on) override { c_.answer_banner(come_on); }
   void dismiss_banner() override { c_.dismiss_banner(); }
   void clean_screen(bool on) override { c_.set_clean_screen(on); }

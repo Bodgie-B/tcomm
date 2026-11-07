@@ -206,6 +206,48 @@ void icon(Canvas &c, Icon i, Color fg) {
   }
 }
 
+// The heat and cooling arrows (Mike, 2026-11-06; shapes and colours from tools/temperature_mockups.py).
+// Everything is in units of s, the arrow's size, about the disc's centre; cooling mirrors it upside down.
+void request_arrow(gfx::Canvas &c, tc::Ask a, tc::ReqSource src, uint8_t arrow_opa) {
+  using tc::Ask;
+  const bool urgent = tc::ask_urgent(a), heat = tc::ask_heat(a), tenant = src == tc::ReqSource::Tenant;
+  const Color plum = hex(0x3B1D2B), cream = hex(0xFFFAF0);
+  Color col;  // the arrow's colour on a tenant's dark disc, or the prediction's disc colour
+  if (tenant) {
+    if (urgent) col = heat ? hex(0xFF4D4D) : hex(0x4DA3FF);
+    else col = heat ? hex(0xFFA0A0) : hex(0x96C8FF);
+  } else {
+    if (urgent) col = heat ? hex(0xFF7A1A) : hex(0xA66BFF);
+    else col = heat ? hex(0xFFC88C) : hex(0xDAC6FF);
+  }
+  Color disc = tenant ? plum : col;
+  Color ink = tenant ? col : (urgent ? cream : plum);
+  // The dim half of an urgent flash: the arrow fades toward the disc, which stays.
+  Color arrow = arrow_opa >= 255 ? ink : gfx::mix(disc, ink, (float)arrow_opa / 255.0f);
+  float r = (float)c.width() / 2, s = r * (urgent ? 1.3f : 1.15f), dir = heat ? 1.0f : -1.0f;
+  float cx = r, cy = r + dir * r * 0.03f;  // a hair off centre, as on the mockups
+  c.clear(disc, 0);
+  c.fill_circle(r, r, r, disc);
+  auto pt = [&](float x, float y) { return gfx::Pt{cx + x * s, cy + dir * y * s}; };
+  auto head = [&](float top, float hw, float hh, float grow, Color k) {
+    gfx::Pt p[3] = {pt(0, top - grow), pt(hw + grow * 1.3f, top + hh + grow * 0.7f),
+                    pt(-hw - grow * 1.3f, top + hh + grow * 0.7f)};
+    c.fill_polygon(p, 3, k);
+  };
+  float y0 = urgent ? 0.3f : -0.02f, y1 = 0.5f;
+  gfx::Pt q0 = pt(-0.13f, y0), q1 = pt(0.13f, y1);
+  c.fill_rrect(RRect{fminf(q0.x, q1.x), fminf(q0.y, q1.y), fmaxf(q0.x, q1.x), fmaxf(q0.y, q1.y), 0.06f * s,
+                     0.06f * s, 0.06f * s, 0.06f * s},
+               arrow);
+  if (urgent) {
+    head(-0.1f, 0.5f, 0.42f, 0, arrow);
+    head(-0.56f, 0.5f, 0.42f, 0.1f, disc);  // a thin gap round the upper head, so there are two
+    head(-0.56f, 0.5f, 0.42f, 0, arrow);
+  } else {
+    head(-0.5f, 0.44f, 0.44f, 0, arrow);
+  }
+}
+
 void mail(Canvas &c, bool solid, Color fg, Color bg) {
   float s = (float)c.width(), m = s / 2;
   c.clear(fg, 0);

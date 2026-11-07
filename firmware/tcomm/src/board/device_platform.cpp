@@ -92,6 +92,73 @@ void DevicePlatform::save_mail(const tc::MailState &m) {
   taskEXIT_CRITICAL(&g_save_mux);
 }
 
+void DevicePlatform::save_comfort_count(uint32_t n) {
+  taskENTER_CRITICAL(&g_save_mux);
+  comfort_n_ = n;
+  dirty_ |= kDirtyComfort;
+  taskEXIT_CRITICAL(&g_save_mux);
+}
+
+void DevicePlatform::save_requests(const tc::RequestState &s) {
+  taskENTER_CRITICAL(&g_save_mux);
+  requests_ = s;
+  dirty_ |= kDirtyRequests;
+  taskEXIT_CRITICAL(&g_save_mux);
+}
+
+// Called in the LVGL task: queued for the loop task (flush_saves), like write_file.
+void DevicePlatform::append_line(const char *name, const char *header, const char *line) {
+  PendingLine l = {};
+  snprintf(l.name, sizeof(l.name), "%s", name);
+  snprintf(l.header, sizeof(l.header), "%s", header ? header : "");
+  snprintf(l.line, sizeof(l.line), "%s", line);
+  queue_line(l);
+}
+
+// Called in the LVGL task: queued after the lines already waiting, so an edit never overtakes an
+// append (the chart's REMOVE on an answer whose line is still waiting). Mike, 2026-11-06.
+void DevicePlatform::set_csv_field(const char *name, uint32_t n, int column, const char *value) {
+  PendingLine l = {};
+  snprintf(l.name, sizeof(l.name), "%s", name);
+  if (strlen(value) >= sizeof(l.line)) {
+    elog("calendar: value for %s too long, not set", l.name);
+    return;
+  }
+  l.set = true;
+  l.n = n;
+  l.column = column;
+  snprintf(l.line, sizeof(l.line), "%s", value);
+  queue_line(l);
+}
+
+// Writes one queued entry to the card. The caller holds the files lock.
+void DevicePlatform::write_pending_line(const PendingLine &l) {
+  if (l.set) {  // calendar_set_field logs its own outcome
+    calendar_set_field(l.name, l.n, l.column, l.line);
+    return;
+  }
+  uint32_t t1 = millis();
+  bool ok = calendar_append(l.name, l.header, l.line);
+  elog("calendar: line for %s %s in %lu ms", l.name, ok ? "appended" : "NOT SAVED", (unsigned long)(millis() - t1));
+}
+
+void DevicePlatform::queue_line(const PendingLine &l) {
+  lock_files();
+  if (nlines_ < (int)(sizeof(lines_) / sizeof(lines_[0]))) {
+    lines_[nlines_++] = l;
+    unlock_files();
+    return;
+  }
+  // Never expected (an answer every few minutes at most). The lock stays held while the queued
+  // entries go out in order and then this one, so nothing overtakes anything and the loop task
+  // never touches the file meanwhile.
+  elog("calendar: line queue full, writing %s from the interface task", l.name);
+  for (int i = 0; i < nlines_; i++) write_pending_line(lines_[i]);
+  nlines_ = 0;
+  write_pending_line(l);
+  unlock_files();
+}
+
 void DevicePlatform::save_settings(const tc::Settings &s) {
   taskENTER_CRITICAL(&g_save_mux);
   settings_ = s;
@@ -131,11 +198,25 @@ void DevicePlatform::flush_saves() {
       free_big(job.buf);
     }
   }
+  if (files_lock_) {  // appended lines and set fields, oldest first, one per call
+    // The lock is held from taking the entry to finishing its write, so a full queue's writer in
+    // the interface task can't get its newer entry onto the card ahead of this older one.
+    lock_files();
+    if (nlines_ > 0) {
+      PendingLine l = lines_[0];
+      for (int i = 0; i + 1 < nlines_; i++) lines_[i] = lines_[i + 1];
+      nlines_--;
+      write_pending_line(l);
+    }
+    unlock_files();
+  }
   if (!dirty_) return;
   tc::OwnState own;
   tc::DogState dog;
   tc::MailState mail;
   tc::Settings settings;
+  uint32_t comfort;
+  tc::RequestState requests;
   uint8_t q;
   taskENTER_CRITICAL(&g_save_mux);
   uint8_t d = dirty_;
@@ -144,6 +225,8 @@ void DevicePlatform::flush_saves() {
   dog = dog_;
   mail = mail_;
   settings = settings_;
+  comfort = comfort_n_;
+  requests = requests_;
   q = clock_q_;
   taskEXIT_CRITICAL(&g_save_mux);
   uint32_t t0 = millis();
@@ -151,6 +234,8 @@ void DevicePlatform::flush_saves() {
   if (d & kDirtyDog) board::save_dog(dog);
   if (d & kDirtyMail) board::save_mail(mail);
   if (d & kDirtySettings) board::save_settings(settings);
+  if (d & kDirtyComfort) board::save_comfort_count(comfort);
+  if (d & kDirtyRequests) board::save_requests(requests);
   if (d & kDirtyClock) save_clock_quality(q);
 
   // A flash write stalls both cores' caches; worth seeing next to a sound that went unheard.
@@ -182,9 +267,11 @@ uint8_t *DevicePlatform::read_file(const char *name, size_t &len) {
     unlock_files();
     return copy;
   }
-  unlock_files();
+  // The card read stays under the lock: a queued line may be rewriting this very file (the
+  // temporary file is renamed over it), and a read in the middle could find it missing.
   uint32_t t0 = millis();
   uint8_t *buf = calendar_read(name, len);
+  unlock_files();
   uint32_t ms = millis() - t0;
   if (ms >= 20) elog("calendar: %s read in %lu ms", name, (unsigned long)ms);
   return buf;

@@ -11,6 +11,7 @@
 #include <math.h>
 #include <stddef.h>
 #include "../core/synth.h"
+#include "../core/comfort.h"
 #include "board.h"
 
 namespace board {
@@ -30,6 +31,8 @@ static constexpr size_t kSettingsV4Size = settings_size_ending_at(offsetof(tc::S
 static constexpr uint16_t kOwnVersion = 1;
 static constexpr uint16_t kDogVersion = 3;  // 2: change counter added; 3: each dog on its own
 static constexpr uint16_t kMailVersion = 1;
+static constexpr uint16_t kComfortVersion = 1;
+static constexpr uint16_t kRequestsVersion = 1;
 
 void storage_begin() { g_open = g_prefs.begin("tcomm", false); }
 
@@ -156,6 +159,31 @@ bool load_mail(tc::MailState &m) {
 }
 void save_mail(const tc::MailState &m) { save_blob("mail", kMailVersion, m); }
 
+bool load_comfort_count(uint32_t &n) {
+  uint32_t tmp;
+  if (!load_blob("comfort", kComfortVersion, tmp)) return false;
+  n = tmp;
+  return true;
+}
+void save_comfort_count(uint32_t n) { save_blob("comfort", kComfortVersion, n); }
+
+// The arrows (requests.h, docs/temperature-requests.md). Anything this build can't check is ignored,
+// as the other blobs are: a held arrow must be a real one (never None) from a known source.
+bool load_requests(tc::RequestState &s) {
+  tc::RequestState tmp;
+  if (!load_blob("requests", kRequestsVersion, tmp)) return false;
+  if (tmp.n > tc::kMaxArrows) return false;
+  for (int i = 0; i < tmp.n; i++)
+    if (!tc::ask_valid(tmp.a[i].ask) || tmp.a[i].ask == (uint8_t)tc::Ask::None || !tc::req_source_valid(tmp.a[i].source))
+      return false;
+  uint8_t b;
+  memcpy(&b, &tmp.acted_dismissed, 1);  // a bool: read as a byte, so a bad value isn't taken as one
+  if (b > 1) return false;
+  s = tmp;
+  return true;
+}
+void save_requests(const tc::RequestState &s) { save_blob("requests", kRequestsVersion, s); }
+
 // No saved quality means we don't know where the RTC's time came from: rank it lowest.
 uint8_t load_clock_quality() {
   uint8_t q = g_open ? g_prefs.getUChar("clockq", tc::kClockFromPeer) : (uint8_t)tc::kClockFromPeer;
@@ -182,7 +210,9 @@ static void fs_size(const char *base, uint64_t &total, uint64_t &used) {
 }
 
 static void cal_path(char *out, size_t n, const char *name, bool tmp = false) {
-  snprintf(out, n, "%s/%s.%s", kDir, name, tmp ? "tmp" : "bin");
+  // A name with a dot ("comfort.csv", Mike, 2026-11-06) is the whole file name.
+  if (strchr(name, '.')) snprintf(out, n, "%s/%s%s", kDir, name, tmp ? ".tmp" : "");
+  else snprintf(out, n, "%s/%s.%s", kDir, name, tmp ? "tmp" : "bin");
 }
 
 static bool sd_mount(bool format) {
@@ -249,13 +279,19 @@ void calendar_fs_begin() {
   if (g_cal && !g_cal->exists(kDir)) g_cal->mkdir(kDir);
 }
 
+// A power cut between the remove and the rename leaves only the ".tmp", which then holds the one
+// copy: it becomes the file again before anything reads, appends to or edits it.
+static void recover_tmp(const char *p, const char *t) {
+  if (!g_cal->exists(p) && g_cal->exists(t)) g_cal->rename(t, p);
+}
+
 uint8_t *calendar_read(const char *name, size_t &len) {
   len = 0;
   if (!g_cal) return nullptr;
   char p[48], t[48];
   cal_path(p, sizeof(p), name);
   cal_path(t, sizeof(t), name, true);
-  if (!g_cal->exists(p) && g_cal->exists(t)) g_cal->rename(t, p);  // cut off between write and rename
+  recover_tmp(p, t);
   File f = g_cal->open(p, "r");
   if (!f && !strcmp(name, "calendar") && g_fat && FFat.exists(kLegacy)) f = FFat.open(kLegacy, "r");
   if (!f) return nullptr;
@@ -277,6 +313,7 @@ bool calendar_write(const char *name, const uint8_t *buf, size_t len) {
   char p[48], t[48];
   cal_path(p, sizeof(p), name);
   cal_path(t, sizeof(t), name, true);
+  recover_tmp(p, t);  // before the .tmp is overwritten, in case it is the only copy
   File f = g_cal->open(t, "w");
   if (!f) return false;
   bool ok = f.write(buf, len) == len;
@@ -284,6 +321,144 @@ bool calendar_write(const char *name, const uint8_t *buf, size_t len) {
   if (!ok) return false;
   g_cal->remove(p);
   return g_cal->rename(t, p);
+}
+
+bool calendar_append(const char *name, const char *header, const char *line) {
+  if (!g_cal) return false;
+  char p[48], t[48];
+  cal_path(p, sizeof(p), name);
+  cal_path(t, sizeof(t), name, true);
+  recover_tmp(p, t);
+  // A power cut can leave the last line without its line end; the new line must not merge into it.
+  bool need_nl = false;
+  {
+    File r = g_cal->open(p, "r");
+    if (r) {
+      size_t sz = r.size();
+      if (sz > 0 && r.seek(sz - 1)) {
+        int last = r.read();
+        need_nl = last >= 0 && last != '\n';
+      }
+      r.close();
+    }
+  }
+  File f = g_cal->open(p, "a");
+  if (!f) {
+    elog("calendar: couldn't open %s to append", p);
+    return false;
+  }
+  // The header and the line come with their own line ends (comfort.h).
+  bool ok = true;
+  if (need_nl) ok = f.print("\n") == 1;
+  if (f.size() == 0 && header && *header) ok = f.print(header) == strlen(header);
+  ok = ok && f.print(line) == strlen(line);
+  f.close();
+  if (!ok) elog("calendar: appending to %s failed", p);
+  return ok;
+}
+
+// calendar_set_field: the file is copied line by line into a temporary file, the one line's column
+// replaced on the way. Mike, 2026-11-06: a comfort file grows for years, so it's never held whole.
+static bool put_bytes(File &f, const char *p, size_t n) { return n == 0 || f.write((const uint8_t *)p, n) == n; }
+
+// True when the line's first column is the number n (digits only, so the header never is).
+static bool line_is_n(const char *line, size_t len, uint32_t n) {
+  uint64_t v = 0;
+  size_t digits = 0;
+  for (; digits < len && line[digits] != ','; digits++) {
+    if (line[digits] < '0' || line[digits] > '9' || digits >= 10) return false;
+    v = v * 10 + (uint64_t)(line[digits] - '0');
+  }
+  return digits > 0 && v == n;
+}
+
+// The line with its column (0-based) replaced by value, into out; false if the line has no such
+// column or the result doesn't fit.
+static bool line_set_column(const char *line, size_t len, int column, const char *value, char *out, size_t cap,
+                            size_t &total) {
+  size_t start = 0;
+  for (int c = 0; c < column; c++) {
+    const char *comma = (const char *)memchr(line + start, ',', len - start);
+    if (!comma) return false;
+    start = (size_t)(comma - line) + 1;
+  }
+  size_t end = start;
+  while (end < len && line[end] != ',') end++;
+  size_t vl = strlen(value);
+  total = start + vl + (len - end);
+  if (total > cap) return false;
+  memcpy(out, line, start);
+  memcpy(out + start, value, vl);
+  memcpy(out + start + vl, line + end, len - end);
+  return true;
+}
+
+// Writes one line (its line end too, when nl) to out, with the column replaced when it's the line
+// for n. found is set when it is. False if a write failed or the column is missing.
+static bool put_line(File &out, const char *line, size_t len, bool nl, uint32_t n, int column, const char *value,
+                     bool &found) {
+  char edited[2 * tc::kComfortLineMax];
+  const char *p = line;
+  size_t m = len;
+  if (!found && line_is_n(line, len, n)) {
+    found = true;
+    if (!line_set_column(line, len, column, value, edited, sizeof(edited), m)) return false;
+    p = edited;
+  }
+  return put_bytes(out, p, m) && (!nl || put_bytes(out, "\n", 1));
+}
+
+bool calendar_set_field(const char *name, uint32_t n, int column, const char *value) {
+  if (!g_cal || !value || column < 0 || strchr(value, ',') || strchr(value, '\n') || strlen(value) > tc::kComfortLineMax)
+    return false;
+  char p[48], t[48];
+  cal_path(p, sizeof(p), name);
+  cal_path(t, sizeof(t), name, true);
+  recover_tmp(p, t);
+  File in = g_cal->open(p, "r");
+  if (!in) {
+    elog("calendar: couldn't open %s to set a field", p);
+    return false;
+  }
+  File out = g_cal->open(t, "w");
+  if (!out) {
+    in.close();
+    elog("calendar: couldn't open %s to write", t);
+    return false;
+  }
+  bool ok = true, found = false, raw = false;  // raw: a line too long to hold, copied as it comes
+  char line[tc::kComfortLineMax];
+  size_t len = 0;
+  uint8_t chunk[256];
+  for (int got; ok && (got = in.read(chunk, sizeof(chunk))) > 0;) {
+    for (int i = 0; ok && i < got; i++) {
+      char c = (char)chunk[i];
+      if (c == '\n') {
+        ok = raw ? put_bytes(out, &c, 1) : put_line(out, line, len, true, n, column, value, found);
+        len = 0;
+        raw = false;
+      } else if (raw) {
+        ok = put_bytes(out, &c, 1);
+      } else if (len < sizeof(line)) {
+        line[len++] = c;
+      } else {  // too long to hold: what's held goes out as it is, and the rest of the line after it
+        raw = true;
+        ok = put_bytes(out, line, len) && put_bytes(out, &c, 1);
+      }
+    }
+  }
+  if (ok && !raw && len > 0) ok = put_line(out, line, len, false, n, column, value, found);  // no line end
+  in.close();
+  out.close();
+  if (!ok || !found) {
+    g_cal->remove(t);
+    elog("calendar: %s line %lu not changed: %s", p, (unsigned long)n, ok ? "no such line" : "a write failed or no such column");
+    return false;
+  }
+  g_cal->remove(p);
+  ok = g_cal->rename(t, p);
+  elog("calendar: %s line %lu column %d %s", p, (unsigned long)n, column, ok ? "set" : "NOT SET (rename failed)");
+  return ok;
 }
 
 bool calendar_fs_info(CalendarFs &o) {

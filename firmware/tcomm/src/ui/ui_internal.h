@@ -100,6 +100,9 @@ void close_sheet();
 lv_obj_t *new_sheet(Sheet s, bool dim_overlay);
 bool settings_family_open();
 void open_status_sheet();
+void open_comfort_survey();  // the downstairs tenant's "how does it feel?" column (ui_comfort.cpp)
+void open_comfort_chart();   // the comfort chart (ui_chart.cpp), on either panel
+void comfort_refresh();      // its live reading, and its idle close (called from render)
 void open_timer_sheet(tc::Status s);
 void open_settings();
 void open_time_date();

@@ -25,12 +25,22 @@ struct FloorTile {
   Floor floor;
   int slot;  // its ArtSlot
   lv_obj_t *cont, *img_bot, *img_top, *floor_lbl, *word, *line, *chev, *chev_img, *badge, *inside, *temp, *hum, *drop, *zone;
+  lv_obj_t *wzone = nullptr;  // DOWNSTAIRS only: the weather zone's touch area, which opens the comfort survey
   Art art;  // on screen; a new one is drawn into the spare, then faded in (see Spare)
   Art badge_art, chev_art, drop_art;
   // The mail badge, on the DOWNSTAIRS tile only: its touch area, the outline and the solid one.
   lv_obj_t *mail = nullptr, *mail_ghost = nullptr, *mail_solid = nullptr;
   Art mail_ghost_art, mail_solid_art;
   int mail_mode = -1;  // see mail_render
+  // The heat and cooling arrows on both panels' UPSTAIRS tile (requests.h): the touch area over them,
+  // one picture per arrow (lit and dim, for the urgent flash), and what each one shows now.
+  lv_obj_t *req = nullptr, *req_img[tc::kMaxArrows] = {};
+  Art req_lit[tc::kMaxArrows], req_dim[tc::kMaxArrows];
+  int req_sig[tc::kMaxArrows] = {-1, -1, -1}, req_dimmed[tc::kMaxArrows] = {-1, -1, -1};
+  int req_n = -1;
+  // "Action taken on temperature" in place of the since line (downstairs panel): its touch area.
+  lv_obj_t *acted = nullptr;
+  int acted_font = 0;  // 0 = B20, 1 = B18
   int key = -1;      // what the front art shows (status * 4 + mode); -1 = nothing yet
   FloorView shown = {};  // the words that go with it, kept until the new art is ready
   int font_ns = -1;  // which state-word font is set: 1 = the 54 px one, for words over 8 letters
@@ -149,9 +159,23 @@ void center_x(lv_obj_t *o, int cx, int w) { set_x(o, cx - w / 2); }
 // Floor tiles
 
 void zone_clicked(lv_event_t *) { open_status_sheet(); }
+// Mike, 2026-11-06: a short tap on the downstairs INSIDE area opens the survey (downstairs panel only);
+// a long press opens the comfort chart on either panel. LVGL sends CLICKED after a long press too,
+// so the survey listens for SHORT_CLICKED.
+void wzone_clicked(lv_event_t *e) {
+  FloorTile *t = (FloorTile *)lv_event_get_user_data(e);
+  if (t && t->mine == 1) open_comfort_survey();
+}
+void wzone_long(lv_event_t *) { open_comfort_chart(); }
 
 void mail_clicked(lv_event_t *) {
   if (g_act) g_act->tap_mail();
+}
+void req_clicked(lv_event_t *) {
+  if (g_act) g_act->tap_requests();
+}
+void acted_clicked(lv_event_t *) {
+  if (g_act) g_act->tap_acted();
 }
 
 // The mail badge (Mike, 2026-10-26): in the status zone's top right corner, on the DOWNSTAIRS
@@ -163,6 +187,12 @@ constexpr int kMailCx = art::kStatusW - kMailInset - art::kMail / 2, kMailCy = k
 // Its touch area: 90 x 90, like the gear and dog button (design brief 4), in the zone's top right
 // corner. Downstairs, while mail waits, that corner of the own status zone takes the mail tap.
 constexpr int kMailHitW = 90, kMailHitH = 90, kMailHitX = art::kStatusW - kMailHitW;
+// The request arrows (Mike, 2026-11-06): at the mail badge's spot mirrored to the UPSTAIRS tile, up
+// to three 38 px apart, newest on the right. Their touch area is 90 px tall like the mail badge's,
+// and grows left with each arrow.
+constexpr int kReqStep = 38, kReqHitH = 90, kReqHitMinW = 90;
+constexpr lv_opa_t kReqDimOpa = 90;  // the dim half of an urgent arrow's flash
+constexpr const char *kActedText = "Action taken on temperature";
 constexpr lv_opa_t kMailGhostOpa = 102;        // the faint outline upstairs: 40 percent
 
 void tile_build(FloorTile &t, Floor f, int x, int y) {
@@ -199,6 +229,22 @@ void tile_build(FloorTile &t, Floor f, int x, int y) {
   // On the own tile the whole status zone is the touch target (brief 10.2), not just the chevron.
   t.zone = plain(t.cont, 0, 0, art::kStatusW, art::kFloorH);
   lv_obj_add_event_cb(t.zone, zone_clicked, LV_EVENT_CLICKED, nullptr);
+  // After the zone, so a tap on the arrows is theirs (upstairs, the zone is the own tile's).
+  if (f == Floor::Upstairs) {
+    t.req = plain(t.cont, art::kStatusW - kReqHitMinW, 0, kReqHitMinW, kReqHitH);
+    lv_obj_add_flag(t.req, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(t.req, req_clicked, LV_EVENT_CLICKED, nullptr);
+    for (int i = 0; i < tc::kMaxArrows; i++) {
+      t.req_lit[i].make(art::kArrow, art::kArrow, true);
+      t.req_dim[i].make(art::kArrow, art::kArrow, true);
+      t.req_img[i] = image(t.req, 0, 0);
+    }
+    show(t.req, false);
+    t.acted = plain(t.cont, 0, 136, 300, 50);
+    lv_obj_add_flag(t.acted, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(t.acted, acted_clicked, LV_EVENT_CLICKED, nullptr);
+    show(t.acted, false);
+  }
   // After the zone, so a tap on the badge is the badge's (downstairs, the zone is the own tile's).
   if (f == Floor::Downstairs) {
     t.mail = plain(t.cont, kMailHitX, 0, kMailHitW, kMailHitH);
@@ -209,6 +255,12 @@ void tile_build(FloorTile &t, Floor f, int x, int y) {
     t.mail_ghost = image(t.mail, kMailCx - kMailHitX - art::kMail / 2, kMailCy - art::kMail / 2);
     t.mail_solid = image(t.mail, kMailCx - kMailHitX - art::kMail / 2, kMailCy - art::kMail / 2);
     show(t.mail, false);
+    // The weather zone asks how it feels (Mike, 2026-11-06). Right of the status zone, so it can't take
+    // the badge's tap.
+    t.wzone = plain(t.cont, art::kStatusW, 0, art::kFloorW - art::kStatusW, art::kFloorH);
+    lv_obj_add_event_cb(t.wzone, wzone_clicked, LV_EVENT_SHORT_CLICKED, &t);
+    lv_obj_add_event_cb(t.wzone, wzone_long, LV_EVENT_LONG_PRESSED, nullptr);
+    lv_obj_add_flag(t.wzone, LV_OBJ_FLAG_CLICKABLE);
   }
 }
 
@@ -263,7 +315,7 @@ void tile_apply(FloorTile &t, int key) {
   if (first) show(t.cont, true);
 }
 
-void tile_render(FloorTile &t, const FloorView &fv) {
+void tile_render(FloorTile &t, const FloorView &fv, bool acted = false) {
   int st = fv.no_signal ? theme::kNoSignal : (int)fv.status;
   int key = st * 4 + (int)g_mode;
   ArtSlot &slot = g_art[t.slot];
@@ -295,10 +347,15 @@ void tile_render(FloorTile &t, const FloorView &fv) {
   // Until the new art is ready the tile keeps its old words, so words and colors change together.
   if (key == t.key) t.shown = fv;
   const FloorView &u = t.shown;
-  // The other floor's tile and the weather zones don't respond to touch (handoff).
+  // The other floor's tile doesn't respond to touch (handoff), nor does the outside tile. The own
+  // DOWNSTAIRS tile's weather zone opens the comfort survey (Mike, 2026-11-06); upstairs has none.
   if (t.mine != (int)fv.mine) {
     if (fv.mine) lv_obj_add_flag(t.zone, LV_OBJ_FLAG_CLICKABLE);
     else lv_obj_clear_flag(t.zone, LV_OBJ_FLAG_CLICKABLE);
+    if (t.wzone) {
+      lv_obj_add_flag(t.wzone, LV_OBJ_FLAG_CLICKABLE);  // upstairs too: the long press opens the chart
+      // (a short tap upstairs does nothing: wzone_clicked checks the floor)
+    }
     t.mine = fv.mine;
   }
   // Spec 4a: the state word at 64 px; one longer than 8 letters (NO SIGNAL) at 54 px so it fits.
@@ -310,7 +367,16 @@ void tile_render(FloorTile &t, const FloorView &fv) {
   }
   set_text(t.word, u.word);
   bool line_changed = strcmp(lv_label_get_text(t.line), u.line) != 0;
-  set_text(t.line, u.line);
+  set_text(t.line, acted ? kActedText : u.line);
+  // Mike, 2026-11-06: plain text in the line's own colour; it must end before the status badge.
+  if (t.acted) {
+    int af = acted && 24 + text_width(kActedText, B20) > 285 ? 1 : 0;
+    if (t.acted_font != af) {
+      lv_obj_set_style_text_font(t.line, af ? B18 : B20, 0);
+      t.acted_font = af;
+    }
+    show(t.acted, acted);
+  }
   show(t.chev, u.mine);
   if (u.mine && line_changed) set_x(t.chev, 24 + text_width(u.line, B20) + 14);
   if (strcmp(lv_label_get_text(t.temp), u.temp) != 0) {
@@ -353,6 +419,45 @@ void mail_render(const MailView &mv) {
   lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
   lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
   lv_anim_start(&a);
+}
+
+// The arrows on the UPSTAIRS tile. A picture is drawn again only when its arrow changes; an urgent
+// one flashes (lit, then dim, kFlashHalfMs each) by swapping its picture, so nothing else redraws.
+void req_render(const RequestView &rv, uint32_t mono_ms) {
+  FloorTile &t = g_tile[0];
+  if (!t.req) return;
+  int n = rv.n > tc::kMaxArrows ? tc::kMaxArrows : rv.n;
+  if (n != t.req_n) {
+    t.req_n = n;
+    show(t.req, n > 0);
+    int w = kReqHitMinW + kReqStep * (n > 0 ? n - 1 : 0);
+    lv_obj_set_pos(t.req, art::kStatusW - w, 0);
+    lv_obj_set_size(t.req, w, kReqHitH);
+    for (int i = 0; i < tc::kMaxArrows; i++) {
+      show(t.req_img[i], i < n);
+      t.req_sig[i] = -1;
+      t.req_dimmed[i] = -1;
+    }
+  }
+  bool dim_half = (mono_ms / tc::kFlashHalfMs) & 1;
+  for (int i = 0; i < n; i++) {
+    int sig = (int)rv.ask[i] * 4 + (int)rv.source[i];
+    if (sig != t.req_sig[i]) {
+      t.req_sig[i] = sig;
+      t.req_dimmed[i] = -1;
+      art::request_arrow(t.req_lit[i].cv, rv.ask[i], rv.source[i], 255);
+      if (tc::ask_urgent(rv.ask[i])) art::request_arrow(t.req_dim[i].cv, rv.ask[i], rv.source[i], kReqDimOpa);
+      // The newest is the last, on the right at the badge's spot; the older ones step left.
+      int w = kReqHitMinW + kReqStep * (n - 1);
+      int cx = kMailCx - kReqStep * (n - 1 - i);
+      lv_obj_set_pos(t.req_img[i], cx - art::kArrow / 2 - (art::kStatusW - w), kMailCy - art::kArrow / 2);
+    }
+    int dimmed = tc::ask_urgent(rv.ask[i]) && dim_half ? 1 : 0;
+    if (dimmed != t.req_dimmed[i]) {
+      t.req_dimmed[i] = dimmed;
+      (dimmed ? t.req_dim[i] : t.req_lit[i]).show(t.req_img[i]);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1204,13 +1309,15 @@ void render(const Frame &f) {
     else if (g_sheet == Sheet::Ringtone) open_ringtones();
     else if (g_sheet == Sheet::Screensaver) open_screensaver();
     else if (g_sheet == Sheet::Zambretti) open_zambretti_demo();
+    else if (g_sheet == Sheet::Comfort) open_comfort_survey();
   }
 
   render_sky(v);
   render_header(v, mode_changed);
-  tile_render(g_tile[0], v.floor[(int)Floor::Upstairs]);
+  tile_render(g_tile[0], v.floor[(int)Floor::Upstairs], v.req.acted);
   tile_render(g_tile[1], v.floor[(int)Floor::Downstairs]);
   mail_render(v.mail);
+  req_render(v.req, f.mono_ms);
   {
     // The Zambretti demo (Settings) shows its chosen sample on the real outside tile.
     static View pv;
@@ -1233,6 +1340,7 @@ void render(const Frame &f) {
   render_wake(v);
   keep_clean_screen_on_top();  // a doorbell still chimes, but the glass stays safe to wipe
   refresh_sheet();
+  comfort_refresh();
   g_prev = v;
   g_have_prev = true;
 }
@@ -1255,6 +1363,8 @@ void open_sheet(Sheet s, Status timed) {
     case Sheet::Ringtone: open_ringtones(); break;
     case Sheet::Screensaver: open_screensaver(); break;
     case Sheet::Zambretti: open_zambretti_demo(); break;
+    case Sheet::Comfort: open_comfort_survey(); break;
+    case Sheet::Chart: open_comfort_chart(); break;
     case Sheet::CleanScreen: start_clean_screen(); break;
     default: close_sheet(); break;
   }

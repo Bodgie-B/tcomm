@@ -14,6 +14,7 @@
 #include "app/mem_files.h"
 #include "app/panel_app.h"
 #include "core/civil.h"
+#include "core/comfort_chart.h"
 #include "lvgl.h"
 #include "ui/fonts/fonts.h"
 #include "ui/ui.h"
@@ -48,6 +49,40 @@ class SimPlatform : public Platform {
   uint32_t random32() override { return r = r * 1103515245u + 12345u; }
   uint8_t *read_file(const char *name, size_t &len) override { return files.read(*this, name, len); }
   void write_file(const char *name, uint8_t *buf, size_t len) override { files.write(*this, name, buf, len); }
+  // The SD card's append and edit, in memory (comfort.csv). Mike, 2026-11-06: the chart's REMOVE marks
+  // a line, it never erases one.
+  void append_line(const char *name, const char *header, const char *line) override {
+    std::vector<uint8_t> &f = files.files[name];
+    if (f.empty()) f.insert(f.end(), header, header + strlen(header));
+    f.insert(f.end(), line, line + strlen(line));
+  }
+  void set_csv_field(const char *name, uint32_t n, int column, const char *value) override {
+    auto it = files.files.find(name);
+    if (it == files.files.end()) return;
+    std::string text(it->second.begin(), it->second.end()), out;
+    char key[16];
+    std::snprintf(key, sizeof(key), "%u,", (unsigned)n);
+    size_t pos = 0;
+    while (pos < text.size()) {
+      size_t e = text.find('\n', pos);
+      if (e == std::string::npos) e = text.size() - 1;
+      std::string ln = text.substr(pos, e + 1 - pos);
+      if (ln.compare(0, strlen(key), key) == 0) {
+        size_t a = 0;
+        for (int c = 0; c < column && a != std::string::npos; c++) {
+          a = ln.find(',', a);
+          if (a != std::string::npos) a++;
+        }
+        if (a != std::string::npos) {
+          size_t b = ln.find_first_of(",\n", a);
+          ln = ln.substr(0, a) + value + ln.substr(b == std::string::npos ? ln.size() : b);
+        }
+      }
+      out += ln;
+      pos = e + 1;
+    }
+    it->second.assign(out.begin(), out.end());
+  }
   MemFiles files;
 };
 
@@ -69,6 +104,12 @@ class Proxy : public ui::Actions {
   void tap_bell() override { g_h->app.tap_bell(); }
   void tap_dog() override { g_h->app.tap_dog(); }
   void tap_mail() override { g_h->app.tap_mail(); }
+  void comfort_answer(Feel f, Ask a, AskSent s) override { g_h->app.comfort_answer(f, a, s); }
+  void tap_requests() override { g_h->app.tap_requests(); }
+  void tap_acted() override { g_h->app.tap_acted(); }
+  bool comfort_remove(uint32_t n) override { return g_h->app.comfort_remove(n); }
+  uint8_t *read_file(const char *name, size_t &len) override { return g_h->app.read_file(name, len); }
+  void free_file(uint8_t *p) override { g_h->app.free_file(p); }
   void answer(bool y) override { g_h->app.answer(y); }
   void dismiss_banner() override { g_h->app.dismiss_banner(); }
   void apply_settings(const Settings &s) override { g_h->app.apply_settings(s); }
@@ -105,6 +146,14 @@ static void tap(int x, int y, int after = 250) {
   pump(after);
 }
 
+static void long_press(int x, int y, int ms = 800, int after = 250) {
+  g_touch = {(lv_coord_t)x, (lv_coord_t)y};
+  g_pressed = true;
+  pump(ms);
+  g_pressed = false;
+  pump(after);
+}
+
 static void pump(int ms) {
   if (g_awake) lv_disp_trig_activity(nullptr);  // keep the sheets' idle timers from firing
   for (int t = 0; t < ms; t += 20) {
@@ -122,6 +171,21 @@ static void pump(int ms) {
 }
 
 static std::string g_out;
+
+// The heat and cooling arrows (requests.h) put straight into this panel's state, as if sent; the last
+// one is the newest. A shot of an urgent arrow waits for the lit half of its flash.
+static void put_arrows(std::initializer_list<Ask> asks, bool acted = false) {
+  RequestState rs = {};
+  uint32_t now = g_h->host.w.utc;
+  for (Ask a : asks) rs.a[rs.n++] = ReqArrow{(uint8_t)a, (uint8_t)ReqSource::Tenant, now};
+  if (acted) rs.acted = now;
+  rs.since = now;
+  rs.ver = 1;
+  g_h->panel.restore_requests(rs);
+}
+static void wait_lit() {
+  while ((g_h->host.mono / kFlashHalfMs) & 1) pump(20);
+}
 
 static void capture(const char *name) {
   lv_obj_invalidate(lv_scr_act());
@@ -142,6 +206,69 @@ static void capture(const char *name) {
 
 static uint32_t at(int y, int mo, int d, int hh, int mm, int32_t off) {
   return (uint32_t)(seconds_from_civil(y, mo, d, hh, mm, 0) - off);
+}
+
+// About 90 made-up comfort answers for the chart's shots (Mike, 2026-11-06): three weeks from
+// 2026-10-20, offset 0, each part of the day, all five answers; a hot or cold day gets the warm or
+// cool answers as in tools/temperature_mockups.py. Answers 17 and 52 were removed.
+struct SeedDot {
+  uint32_t n;
+  float t, rh;
+  bool removed;
+};
+static SeedDot g_seed[90];
+static void seed_comfort() {
+  static const int kHours[4] = {23, 7, 12, 19};  // NIGHT, MORNING, MIDDAY, EVENING
+  static const float kNeutral[4] = {68.8f, 72.2f, 71.0f, 70.4f};
+  uint32_t r = 11;
+  const auto rnd = [&r](float lo, float hi) {
+    r = r * 1103515245u + 12345u;
+    return lo + (hi - lo) * (float)((r >> 8) & 0xFFFF) / 65535.0f;
+  };
+  for (int i = 0; i < 90; i++) {
+    int part = i % 4 == 0 ? 0 : (i % 4 == 1 ? 1 : (i % 4 == 2 ? 3 : (i % 8 == 3 ? 2 : 3)));
+    ComfortAnswer a = {};
+    a.n = (uint32_t)i + 1;
+    int day = i * 21 / 90;
+    int mins = (int)rnd(0, 55);
+    a.utc = at(2026, 10, 20 + day, kHours[part] % 24, mins, 0);
+    a.offset = 0;
+    a.clock_q = kClockManual;
+    float t = rnd(62.5f, 79.0f), rh = rnd(0.33f, 0.62f);
+    float g = grains_per_lb(t, rh * 100);
+    float f = t + 0.045f * (g - 55) - kNeutral[part] + rnd(-1.3f, 1.3f);
+    a.feel = (uint8_t)(f < -5 ? Feel::MuchTooCold : f < -1.7f ? Feel::TooCool : f < 1.7f ? Feel::JustRight : f < 5 ? Feel::TooWarm : Feel::MuchTooHot);
+    a.status = (uint8_t)Status::Open;
+    a.have = kHaveInside;
+    a.in_t = (int16_t)(t * 10 + 0.5f);
+    a.in_h = (uint16_t)(rh * 1000 + 0.5f);
+    bool gone = a.n == 17 || a.n == 52;
+    if (gone) a.removed = a.utc + 3600;
+    g_seed[i] = SeedDot{a.n, a.in_t / 10.0f, a.in_h / 10.0f, gone};
+    char line[kComfortLineMax];
+    if (comfort_csv_line(a, line, sizeof(line))) g_h->host.append_line(kComfortFile, kComfortCsvHeader, line);
+  }
+  g_h->panel.set_comfort_count(90);  // as the panel restores it at start-up; REMOVE checks it
+}
+// Where answer n's dot sits on the chart's plot (screen pixels), and its number's tap point.
+static lv_point_t seed_xy(int i) {
+  float g = grains_per_lb(g_seed[i].t, g_seed[i].rh);
+  return {(lv_coord_t)(64 + (g_seed[i].t - kChartTMin) / (kChartTMax - kChartTMin) * 648 + 0.5f),
+          (lv_coord_t)(404 - g / kChartGrMax * 320 + 0.5f)};
+}
+// A dot of a kept answer that no other dot is near, so a tap picks it.
+static int lone_seed(int from) {
+  for (int i = from; i < 90; i++) {
+    if (g_seed[i].removed) continue;
+    lv_point_t a = seed_xy(i);
+    bool lone = a.x > 120 && a.x < 560;
+    for (int j = 0; j < 90 && lone; j++) {
+      lv_point_t b = seed_xy(j);
+      if (j != i && abs(a.x - b.x) < 30 && abs(a.y - b.y) < 30) lone = false;
+    }
+    if (lone) return i;
+  }
+  return from;
 }
 
 struct Setup {
@@ -292,6 +419,7 @@ static void type_keys(const char *s) {
   }
 }
 
+namespace ui { namespace detail { extern Sheet g_sheet; } }  // to see which sheet a touch opened
 static int g_fails = 0;
 static void check(bool ok, const char *what) {
   std::printf("  %s: %s\n", ok ? "ok" : "FAILED", what);
@@ -471,6 +599,40 @@ int main(int argc, char **argv) {
     ui::open_sheet(ui::Sheet::Screensaver);
     pump(300);
     capture("48_screensaver_wait_night");
+  }
+  // The comfort survey (Mike, 2026-11-06), downstairs only: by day, and by night.
+  start(p4); ui::open_sheet(ui::Sheet::Comfort); pump(400); capture("49_comfort_survey_day");
+  start(p1); ui::open_sheet(ui::Sheet::Comfort); pump(400); capture("50_comfort_survey_night");
+
+  // Heat and cooling arrows (Mike, 2026-11-06, stage 2): the survey after TOO WARM (mild cooling
+  // picked) and MUCH TOO COLD (urgent heat picked), then the arrows on the UPSTAIRS tile.
+  start(p4); ui::open_sheet(ui::Sheet::Comfort); pump(400); tap(131, 185); pump(400); capture("51_survey_too_warm");
+  start(p4); ui::open_sheet(ui::Sheet::Comfort); pump(400); tap(131, 419); pump(400); capture("52_survey_much_too_cold");
+  start(p4); put_arrows({Ask::MildCool}); pump(300); capture("53_downstairs_one_arrow");
+  start(p4); put_arrows({}, true); pump(300); capture("54_downstairs_action_taken");
+  Setup upn = p4;
+  upn.me = Floor::Upstairs;
+  start(upn); put_arrows({Ask::MildHeat}); pump(300); capture("55_upstairs_mild_heat");
+  start(upn); put_arrows({Ask::UrgentHeat}); pump(300); wait_lit(); pump(40); capture("56_upstairs_urgent_heat");
+  start(upn); put_arrows({Ask::MildHeat, Ask::MildHeat, Ask::UrgentHeat}); pump(300); wait_lit(); pump(40);
+  capture("57_upstairs_three_arrows");
+  upn = p1;
+  upn.me = Floor::Upstairs;
+  start(upn); put_arrows({Ask::UrgentCool}); pump(300); wait_lit(); pump(40); capture("58_upstairs_urgent_cooling_night");
+
+  // The comfort chart (Mike, 2026-11-06, stage 3): every answer as a dot, by chosen part of the day,
+  // a dot picked for removal (downstairs) or just shown (upstairs), and by night.
+  {
+    start(p4); seed_comfort(); ui::open_sheet(ui::Sheet::Chart); pump(500); capture("59_chart_all_answers");
+    tap(518, 37); pump(300); capture("60_chart_mornings_only");
+    int k = lone_seed(30);
+    start(p4); seed_comfort(); ui::open_sheet(ui::Sheet::Chart); pump(500);
+    tap(seed_xy(k).x, seed_xy(k).y); pump(300); capture("61_chart_remove_callout");
+    Setup upc = p4;
+    upc.me = Floor::Upstairs;
+    start(upc); seed_comfort(); ui::open_sheet(ui::Sheet::Chart); pump(500);
+    tap(seed_xy(k).x, seed_xy(k).y); pump(300); capture("62_chart_upstairs");
+    start(p1); seed_comfort(); ui::open_sheet(ui::Sheet::Chart); pump(500); capture("63_chart_night");
   }
 
   // Both dogs out (Mike, 2026-10-25: it happens now).
@@ -740,6 +902,123 @@ int main(int argc, char **argv) {
           "just this one: the series skips the 27th, an 11 AM event of its own takes its place");
     capture("cal_p6_after");
     std::printf("pickers by touch: %d failed\n", g_fails);
+  }
+
+  // The comfort survey by touch: INSIDE on the DOWNSTAIRS tile of the downstairs panel opens it; a
+  // tap on TOO WARM closes it; a tap outside the column closes it; no other tile, nor the upstairs
+  // panel, opens it.
+  {
+    std::printf("comfort survey by touch:\n");
+    const auto open = [] { return ui::detail::g_sheet == ui::Sheet::Comfort; };
+    start(p4);
+    tap(462, 170);  // INSIDE on the UPSTAIRS tile, seen from downstairs
+    check(!open(), "the upstairs tile's INSIDE does nothing on the downstairs panel");
+    tap(462, 375);
+    check(open(), "INSIDE on the DOWNSTAIRS tile opens the survey");
+    capture("comfort_t1_open");
+    tap(131, 185);  // TOO WARM
+    check(open(), "TOO WARM keeps it open for the ask column");  // Mike, 2026-11-06: any non-JUST RIGHT answer asks upstairs
+    tap(400, 30);  // outside the column and the card
+    check(!open(), "a tap outside closes it");
+    Setup up = p4;
+    up.me = Floor::Upstairs;
+    start(up);
+    tap(462, 375);
+    check(!open(), "INSIDE on the DOWNSTAIRS tile does nothing on the upstairs panel");
+    tap(462, 170);
+    check(!open(), "INSIDE on the upstairs panel's own tile does nothing");
+    std::printf("comfort survey by touch: %d failed\n", g_fails);
+  }
+
+  // The comfort chart by touch: a long press on INSIDE opens it (both panels), a short tap still opens
+  // the survey downstairs and nothing upstairs; MORNING picks a chip; a tap on a dot picks it; REMOVE
+  // marks its line in comfort.csv and the dot goes; the X closes.
+  {
+    std::printf("comfort chart by touch:\n");
+    const auto sheet = [] { return ui::detail::g_sheet; };
+    const auto csv = [] {
+      auto &f = g_h->host.files.files["comfort.csv"];
+      return std::string(f.begin(), f.end());
+    };
+    const auto px = [](int x, int y) { lv_refr_now(nullptr); return g_fb[y * 800 + x].full; };
+    start(p4);
+    seed_comfort();
+    tap(462, 375);
+    check(sheet() == ui::Sheet::Comfort, "a short tap on INSIDE still opens the survey downstairs");
+    tap(400, 30);
+    long_press(462, 375);
+    check(sheet() == ui::Sheet::Chart, "a long press on INSIDE opens the chart downstairs");
+    uint16_t before = px(518, 37);
+    tap(518, 37);
+    check(px(518, 37) != before, "MORNING takes the chosen chip");
+    int k = lone_seed(30);
+    lv_point_t d = seed_xy(k);
+    tap(357, 37);  // back to ALL
+    uint16_t dot_before = px(d.x, d.y);
+    tap(d.x, d.y);
+    pump(300);
+    uint16_t ring = px(d.x + 10, d.y);  // the gold ring round the dot: red high, green middling, blue low
+    check(((ring >> 11) & 31) > 24 && ((ring >> 5) & 63) > 30 && (ring & 31) < 10, "a tap on a dot picks it with a gold ring");
+    capture("chart_t1_picked");
+    tap(d.x + 147, d.y - 5);  // REMOVE
+    pump(300);
+    char key[24];
+    std::snprintf(key, sizeof(key), "\n%u,", (unsigned)g_seed[k].n);
+    std::string text = csv();
+    size_t at_line = text.find(key);
+    std::string ln = at_line == std::string::npos ? "" : text.substr(at_line + 1, text.find('\n', at_line + 1) - at_line - 1);
+    check(!ln.empty() && ln.back() != ',', "REMOVE fills the removed column in comfort.csv");
+    check(text.find(key) != std::string::npos, "and the line is still in the file");
+    capture("chart_t1_removed");
+    check(px(d.x, d.y) != dot_before, "the dot goes at once");
+    tap(756, 37);
+    check(sheet() == ui::Sheet::None, "the X closes the chart");
+    Setup up = p4;
+    up.me = Floor::Upstairs;
+    start(up);
+    seed_comfort();
+    tap(462, 375);
+    check(sheet() == ui::Sheet::None, "a short tap on INSIDE opens nothing upstairs");
+    long_press(462, 375);
+    check(sheet() == ui::Sheet::Chart, "a long press on INSIDE opens the chart upstairs");
+    std::printf("comfort chart by touch: %d failed\n", g_fails);
+  }
+
+  // The heat and cooling arrows by touch. Downstairs: TOO WARM then SEND puts one arrow on the
+  // UPSTAIRS tile; a tap on it takes it back. Upstairs: a tap clears them and the downstairs view
+  // shows the message; a tap on the message removes it.
+  {
+    std::printf("temperature arrows by touch:\n");
+    const auto shown = [] { return (int)g_h->panel.view().req.n; };
+    start(p4);
+    tap(462, 375);
+    tap(131, 185);  // TOO WARM
+    tap(400, 297);  // SEND
+    pump(300);
+    check(shown() == 1 && g_h->panel.view().req.ask[0] == Ask::MildCool, "TOO WARM then SEND puts one mild cooling arrow on the tile");
+    capture("req_t1_sent");
+    tap(374, 98);  // the arrow
+    check(shown() == 0 && g_h->panel.requests().n == 0, "a tap on the arrows downstairs takes them back");
+    start(p4);
+    put_arrows({Ask::MildHeat});
+    pump(300);
+    check(shown() == 1, "an arrow is up downstairs");
+    check(!g_h->panel.view().req.acted, "no message yet");
+    Setup up = p4;
+    up.me = Floor::Upstairs;
+    start(up);
+    put_arrows({Ask::MildHeat});
+    pump(300);
+    tap(374, 98);
+    check(shown() == 0, "a tap on the arrows upstairs clears them");
+    // The downstairs panel hears of it through the radio in the real units; here its own state.
+    start(p4);
+    put_arrows({}, true);
+    pump(300);
+    check(g_h->panel.view().req.acted, "the downstairs view shows the message");
+    tap(100, 235);  // the since line
+    check(!g_h->panel.view().req.acted, "a tap on the message removes it");
+    std::printf("temperature arrows by touch: %d failed\n", g_fails);
   }
 
   // Repeating events, birthdays and holidays in the views; today is Sam's birthday.

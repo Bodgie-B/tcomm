@@ -19,9 +19,19 @@
 //   EVENT_SUM count u16 | digest u32 | flags u8   (the sender's calendar in brief; 1 = please reply)
 //   MAIL    waiting u8 | since u32 | ver u32   (mail for downstairs: upstairs marks it, downstairs
 //           acknowledges it; ver = its change counter, as for a dog. See mail.h.)
+//   COMFORT one survey answer, 33 bytes: n u32 | utc u32 | offset i32 | clock_q u8 | feel u8 | ask u8 | sent u8 |
+//           status u8 | have u8 | in_t i16 | in_h u16 | up_t i16 | up_h u16 | out_t i16 | out_h u8 | removed u32
+//           (downstairs to upstairs; every answer matters, so none replaces another. See comfort.h.)
+//   REQUESTS the heat and cooling arrows, 32 bytes (Mike, 2026-11-06; requests.h): n u8 |
+//           3 x (ask u8, source u8, sent u32) | acted u32 | acted_dismissed u8 | since u32 | ver u32
+//           (unused slots zero; ver = the change counter, so like MAIL the later change wins)
+//   COMFORT_DEL 12 bytes (Mike, 2026-11-06; downstairs removed answer n by mistake): n u32 | removed u32 | offset i32
+//           (removed = when, UTC, 0 without a clock. Every removal matters, so none replaces another.)
 #pragma once
 #include "types.h"
 #include "events.h"
+#include "comfort.h"
+#include "requests.h"
 
 namespace tc {
 
@@ -31,7 +41,7 @@ constexpr size_t kMaxPhrase = 48;
 
 enum class MsgType : uint8_t {
   State = 1, Knock = 2, Reply = 3, Ack = 4, DogMsg = 5, Reading = 6, Lucy = 7, Outside = 8, EventMsg = 9, EventSum = 10,
-  Mail = 11
+  Mail = 11, Comfort = 12, Requests = 13, ComfortDel = 14
 };
 enum Sender : uint8_t { kSenderUpstairs = 0, kSenderDownstairs = 1, kSenderGateway = 2 };
 inline uint8_t sender_id(Floor f) { return f == Floor::Upstairs ? kSenderUpstairs : kSenderDownstairs; }
@@ -59,6 +69,9 @@ struct Msg {
     struct { uint8_t len; uint8_t data[kEventWireMax]; } event;  // checked by decode with event_read
     struct { uint16_t count; uint32_t digest; uint8_t flags; } sum;
     struct { uint8_t waiting; uint32_t since; uint32_t ver; } mail;
+    ComfortAnswer comfort;
+    RequestState req;
+    struct { uint32_t n, removed; int32_t offset; } comfort_del;
   } u;
   Msg() : u{} {}
 };

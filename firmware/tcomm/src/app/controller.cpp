@@ -98,12 +98,17 @@ void Controller::tick() {
     // HANDOFF: no ACK after every retry marks the other side as No signal.
     peer_.no_signal = true;
     if (r.type == MsgType::Knock) bell_out_.on_failed(r.knock_id, now);
+    if (r.type == MsgType::Comfort || r.type == MsgType::ComfortDel) {  // it stays in the outbox
+      for (int i = 0; i < comfort_out_n_; i++) if (comfort_out_[i].seq == r.seq) comfort_out_[i].seq = 0;
+    }
     char line[64];
     snprintf(line, sizeof(line), "%s seq %u: no ACK after %d tries, other panel marked No signal", msg_name(r.type),
              (unsigned)r.seq, RetryQueue::kTries);
     p_.log(line);
   }
 
+  send_comfort();
+  tick_requests(now);
   tick_events(now, w);
   build_view();
   if (!backlight_set_ || view_.backlight != last_backlight_) {
@@ -534,8 +539,10 @@ void Controller::heard_from_peer() {
     send_state(false);
     send_dog();
     if (mail_.state().ver) send_mail();
+    if (req_.state().ver) send_requests();
     if (reading_sent_) send_reading();
     send_outside();
+    send_comfort();  // answers that never got through
     send_sum(true);  // and compare calendars: changes on either side may not have arrived
   }
 }
@@ -560,7 +567,16 @@ void Controller::on_radio(const uint8_t *data, size_t len) {
 
   if (m.type == MsgType::Ack) {
     RetryQueue::Result r;
-    if (retry_.ack(m.u.ack.seq, r) && r.type == MsgType::Knock) bell_out_.on_delivered(r.knock_id, now);
+    bool acked = retry_.ack(m.u.ack.seq, r);
+    if (acked && r.type == MsgType::Knock) bell_out_.on_delivered(r.knock_id, now);
+    if (acked && (r.type == MsgType::Comfort || r.type == MsgType::ComfortDel)) {
+      for (int i = 0; i < comfort_out_n_; i++) {
+        if (comfort_out_[i].seq != m.u.ack.seq) continue;
+        for (int j = i + 1; j < comfort_out_n_; j++) comfort_out_[j - 1] = comfort_out_[j];
+        comfort_out_n_--;
+        break;
+      }
+    }
     return;
   }
   // ACK everything else, duplicates included: our first ACK may be the thing that got lost.
@@ -608,8 +624,10 @@ void Controller::handle(const Msg &m) {
         send_state(false);
         send_dog();
         if (mail_.state().ver) send_mail();
+        if (req_.state().ver) send_requests();
         if (reading_sent_) send_reading();
         send_outside();
+        send_comfort();  // the other panel has just started: answers still waiting
       }
       break;
     }
@@ -645,6 +663,37 @@ void Controller::handle(const Msg &m) {
       if (!(in.dog[0] == dog_.state().dog[0]) || !(in.dog[1] == dog_.state().dog[1])) send_dog();
       break;
     }
+    case MsgType::Comfort: {
+      // Mike, 2026-11-06: upstairs keeps the same file. Each answer is numbered; a resend is skipped.
+      if (m.sender != peer || settings_.floor != Floor::Upstairs) return;
+      const ComfortAnswer &a = m.u.comfort;
+      if (a.n <= comfort_count_) return;
+      char line[kComfortLineMax];
+      if (a.n > comfort_count_ + 1) {
+        snprintf(line, sizeof(line), "comfort: answers %u to %u never arrived", (unsigned)comfort_count_ + 1, (unsigned)a.n - 1);
+        p_.log(line);
+      }
+      size_t len = comfort_csv_line(a, line, sizeof(line));
+      if (len) p_.append_line(kComfortFile, kComfortCsvHeader, line);
+      comfort_count_ = a.n;
+      p_.save_comfort_count(a.n);
+      break;
+    }
+    case MsgType::ComfortDel: {
+      // Mike, 2026-11-06: the tenant's removal is marked in upstairs' file too, with the same text.
+      if (m.sender != peer || settings_.floor != Floor::Upstairs) return;
+      uint32_t n = m.u.comfort_del.n;
+      char line[kComfortLineMax];
+      if (n < 1 || n > comfort_count_) {
+        snprintf(line, sizeof(line), "comfort: removal of answer %u ignored, only %u here", (unsigned)n, (unsigned)comfort_count_);
+        p_.log(line);
+        return;
+      }
+      char text[24];
+      comfort_removed_text(m.u.comfort_del.removed, m.u.comfort_del.offset, text, sizeof(text));
+      p_.set_csv_field(kComfortFile, n, kComfortRemovedColumn, text);
+      break;
+    }
     case MsgType::Mail: {
       if (m.sender != peer) return;
       MailState in;
@@ -657,6 +706,34 @@ void Controller::handle(const Msg &m) {
         if (!was_waiting && mail_.state().waiting && settings_.floor == Floor::Downstairs) mail_alert();
       }
       if (!(in == mail_.state())) send_mail();  // ours is newer: share it
+      break;
+    }
+    case MsgType::Requests: {
+      // Mike, 2026-11-06: the arrows are kept like the mail badge, the higher counter wins.
+      if (m.sender != peer) return;
+      uint32_t utc = w.valid ? w.utc : 0;
+      bool down = settings_.floor == Floor::Downstairs;
+      req_age_log();
+      RequestState in = m.u.req;
+      ReqArrow old[kMaxArrows], cur[kMaxArrows];
+      int on = req_.showing(utc, old);
+      if (req_.apply_remote(in)) {
+        p_.save_requests(req_.state());
+        int cn = req_.showing(utc, cur);
+        if (down) {  // upstairs only ever clears: the arrows that went are Mike's doing
+          uint32_t at = req_.state().acted > 1 ? req_.state().acted : utc;
+          for (int i = 0; i < on; i++) {
+            bool kept = false;
+            for (int j = 0; j < cn; j++) kept |= old[i].ask == cur[j].ask && old[i].source == cur[j].source && old[i].sent == cur[j].sent;
+            if (!kept) req_log(old[i], ReqEnd::Cleared, at);
+          }
+        } else if (cn && ask_urgent((Ask)cur[cn - 1].ask) &&
+                   (!on || old[on - 1].ask != cur[cn - 1].ask || old[on - 1].sent != cur[cn - 1].sent)) {
+          req_ding();  // a new urgent arrow: wakes the screen (build_view) and dings at once
+        }
+        req_snapshot(false);
+      }
+      if (!(in == req_.state())) send_requests();  // ours is newer: share it
       break;
     }
     case MsgType::Reading:
@@ -789,6 +866,206 @@ bool Controller::tap_dog() {
   if (!dog_.tap(settings_.floor, p_.wall())) return false;
   p_.save_dog(dog_.state());
   send_dog();
+  return true;
+}
+
+// Mike, 2026-11-06: every answer is kept forever and copied upstairs, with the readings then.
+bool Controller::comfort_answer(Feel f, Ask ask, AskSent sent) {
+  if (settings_.floor != Floor::Downstairs || !feel_valid((uint8_t)f)) return false;
+  touch();
+  WallTime w = p_.wall();
+  uint32_t now = p_.mono_ms();
+  ComfortAnswer a = {};
+  a.n = comfort_count_ + 1;
+  a.utc = w.valid ? w.utc : 0;
+  a.offset = a.utc ? p_.utc_offset(a.utc) : 0;
+  a.clock_q = w.valid ? w.quality : (uint8_t)kClockNone;
+  a.feel = (uint8_t)f;
+  a.ask = (uint8_t)ask;  // stage 2: SEND also puts the arrow up, below
+  a.sent = (uint8_t)sent;
+  a.status = (uint8_t)status_.state().status;
+  if (reading_valid_) { a.have |= kHaveInside; a.in_t = reading_temp_; a.in_h = reading_hum_; }
+  if (peer_.known && peer_.reading && !peer_.no_signal) { a.have |= kHaveUpstairs; a.up_t = peer_.temp; a.up_h = peer_.hum; }
+  if (outside_fresh(now)) { a.have |= kHaveOutside; a.out_t = outside_.temp; a.out_h = outside_.hum; }
+  comfort_count_ = a.n;
+  p_.save_comfort_count(a.n);
+  char line[kComfortLineMax];
+  size_t len = comfort_csv_line(a, line, sizeof(line));
+  if (len) p_.append_line(kComfortFile, kComfortCsvHeader, line);
+  snprintf(line, sizeof(line), "comfort: answer %u %s", (unsigned)a.n, feel_code(f));
+  p_.log(line);
+  comfort_out_add(a, false);
+  // Mike, 2026-11-06: SEND also puts the arrow up. A fourth pushes the oldest off.
+  if (sent == AskSent::Send && ask != Ask::None && ask_valid((uint8_t)ask)) {
+    req_age_log();
+    ReqArrow pushed = {};
+    bool did_push = false;
+    req_.add(ask, ReqSource::Tenant, w, &pushed, &did_push);
+    if (did_push) req_log(pushed, ReqEnd::PushedOff, w.valid ? w.utc : 0);
+    p_.save_requests(req_.state());
+    send_requests();
+    req_snapshot(false);
+  }
+  return true;
+}
+
+// Sends waiting answers, oldest first, one at a time (kComfortInFlight). Not while
+// the other panel has no signal: it is sent again when that panel is heard (no timer retries).
+void Controller::send_comfort() {
+  if (settings_.floor != Floor::Downstairs || peer_.no_signal) return;
+  for (int i = 0; i < comfort_out_n_ && retry_.pending(MsgType::Comfort) + retry_.pending(MsgType::ComfortDel) < kComfortInFlight; i++) {
+    if (comfort_out_[i].seq) continue;
+    // A removal goes only when everything before it is ACKed, so it can't arrive before its answer.
+    if (comfort_out_[i].del && i > 0) return;
+    Msg m;
+    if (comfort_out_[i].del) {
+      m.type = MsgType::ComfortDel;
+      m.u.comfort_del = {comfort_out_[i].a.n, comfort_out_[i].a.removed, comfort_out_[i].a.offset};
+    } else {
+      m.type = MsgType::Comfort;
+      m.u.comfort = comfort_out_[i].a;
+    }
+    uint16_t seq = retry_.push(m, me(), p_.mono_ms());
+    if (!seq) return;  // the queue is full: tick tries again
+    comfort_out_[i].seq = seq;
+  }
+}
+
+void Controller::comfort_out_add(const ComfortAnswer &a, bool del) {
+  if (comfort_out_n_ == kComfortOutbox) {
+    p_.log("comfort: outbox full, the oldest entry will reach upstairs only from the SD card");
+    for (int i = 1; i < comfort_out_n_; i++) comfort_out_[i - 1] = comfort_out_[i];
+    comfort_out_n_--;
+  }
+  comfort_out_[comfort_out_n_++] = ComfortOut{a, 0, del};
+  send_comfort();
+}
+
+// ---------------------------------------------------------------------------------------------
+// The heat and cooling arrows (requests.h)
+
+void Controller::send_requests() {
+  Msg m;
+  m.type = MsgType::Requests;
+  m.u.req = req_.state();
+  send(m);
+}
+
+void Controller::req_log(const ReqArrow &a, ReqEnd why, uint32_t ended_utc) {
+  if (settings_.floor != Floor::Downstairs) return;
+  uint32_t at = ended_utc ? ended_utc : a.sent;
+  char line[kComfortLineMax];
+  size_t n = request_csv_line(a, why, ended_utc, at ? p_.utc_offset(at) : 0, line, sizeof(line));
+  if (n) p_.append_line(kRequestsFile, kRequestsCsvHeader, line);
+}
+
+// Remembers the arrows showing (raw: all that are held, for a restart) so tick can tell when one
+// timed out, which is no state change and so nobody else would log it.
+void Controller::req_snapshot(bool raw) {
+  WallTime w = p_.wall();
+  if (raw) {
+    const RequestState &s = req_.state();
+    req_prev_n_ = s.n > kMaxArrows ? kMaxArrows : s.n;
+    for (int i = 0; i < req_prev_n_; i++) req_prev_[i] = s.a[i];
+  } else {
+    req_prev_n_ = req_.showing(w.valid ? w.utc : 0, req_prev_);
+  }
+  req_prev_ver_ = req_.state().ver;
+}
+
+void Controller::req_age_log() {
+  if (settings_.floor != Floor::Downstairs) return;
+  WallTime w = p_.wall();
+  if (req_.state().ver == req_prev_ver_) {
+    ReqArrow cur[kMaxArrows];
+    int cn = req_.showing(w.valid ? w.utc : 0, cur);
+    for (int i = 0; i < req_prev_n_; i++) {
+      bool kept = false;
+      for (int j = 0; j < cn; j++)
+        kept |= req_prev_[i].ask == cur[j].ask && req_prev_[i].source == cur[j].source && req_prev_[i].sent == cur[j].sent;
+      if (!kept) req_log(req_prev_[i], ReqEnd::TimedOut, req_prev_[i].sent ? req_prev_[i].sent + kArrowLifeS : (w.valid ? w.utc : 0));
+    }
+  }
+  req_snapshot(false);
+}
+
+// Busy's soft chime level (the knock rule): the volume less soft_chime_drop.
+uint8_t Controller::soft_volume() {
+  uint8_t v = current_volume();
+  return v > settings_.soft_chime_drop ? (uint8_t)(v - settings_.soft_chime_drop) : 0;
+}
+
+// Upstairs, an urgent arrow dings (Mike, 2026-11-06) at the Busy soft chime level, even when
+// Mike is Busy, but not in the screen's dark hours. The screen is lit by build_view meanwhile.
+void Controller::req_ding() {
+  req_urgent_ = true;
+  req_ding_at_ = p_.mono_ms();
+  WallTime w = p_.wall();
+  if (w.valid && in_screen_off_hours(settings_, minutes_of_day((int64_t)w.utc + p_.utc_offset(w.utc)))) return;
+  p_.play(Sound::SoftChime, soft_volume());
+}
+
+void Controller::tick_requests(uint32_t now) {
+  WallTime w = p_.wall();
+  if (settings_.floor == Floor::Downstairs) {
+    // Arrows sent before the clock was set get its time now, so the 4-hour limit holds for them too.
+    if (req_.stamp_unknown(w)) {
+      p_.save_requests(req_.state());
+      send_requests();
+    }
+    req_age_log();  // after the stamp: its new counter means nothing is mistaken for timed out
+    return;
+  }
+  if (!req_.any_urgent(w.valid ? w.utc : 0)) {
+    req_urgent_ = false;
+  } else if (!req_urgent_ || ms_diff(now, req_ding_at_) >= (int32_t)kUrgentDingMs) {
+    req_ding();
+  }
+}
+
+// One tap on the arrows (Mike, 2026-11-06): upstairs it clears them all; downstairs the tenant
+// takes them back.
+bool Controller::tap_requests() {
+  touch();
+  req_age_log();
+  WallTime w = p_.wall();
+  ReqArrow shown[kMaxArrows];
+  int n = req_.showing(w.valid ? w.utc : 0, shown);
+  bool up = settings_.floor == Floor::Upstairs;
+  if (!(up ? req_.clear(w) : req_.take_back(w))) return false;
+  if (!up)
+    for (int i = 0; i < n; i++) req_log(shown[i], ReqEnd::TakenBack, w.valid ? w.utc : 0);
+  p_.save_requests(req_.state());
+  send_requests();
+  req_snapshot(false);
+  return true;
+}
+
+bool Controller::tap_acted() {
+  touch();
+  if (settings_.floor != Floor::Downstairs || !req_.dismiss_acted(p_.wall())) return false;
+  p_.save_requests(req_.state());
+  send_requests();
+  req_snapshot(false);
+  return true;
+}
+
+// Mike, 2026-11-06: a mistaken answer is marked removed (with the time) in both files, never erased.
+bool Controller::comfort_remove(uint32_t n) {
+  if (settings_.floor != Floor::Downstairs || n < 1 || n > comfort_count_) return false;
+  touch();
+  WallTime w = p_.wall();
+  ComfortAnswer a = {};
+  a.n = n;
+  a.removed = w.valid ? w.utc : 0;
+  a.offset = a.removed ? p_.utc_offset(a.removed) : 0;
+  char text[24];
+  comfort_removed_text(a.removed, a.offset, text, sizeof(text));
+  p_.set_csv_field(kComfortFile, n, kComfortRemovedColumn, text);
+  char line[64];
+  snprintf(line, sizeof(line), "comfort: answer %u removed", (unsigned)n);
+  p_.log(line);
+  comfort_out_add(a, true);
   return true;
 }
 
@@ -1068,6 +1345,20 @@ void Controller::build_view() {
   v.mail.show = upstairs || v.mail.solid;
   v.mail.pulse = !upstairs && v.mail.solid;
 
+  // The heat and cooling arrows
+  {
+    uint32_t utc = w.valid ? w.utc : 0;
+    ReqArrow ra[kMaxArrows];
+    int n = req_.showing(utc, ra);
+    v.req.n = (uint8_t)n;
+    for (int i = 0; i < n; i++) {
+      v.req.ask[i] = (Ask)ra[i].ask;
+      v.req.source[i] = (ReqSource)ra[i].source;
+    }
+    v.req.flash = req_.any_urgent(utc);
+    v.req.acted = !upstairs && req_.acted_showing(utc);
+  }
+
   // Banner
   v.banner.kind = bell_in_.banner();
   if (v.banner.kind != BannerKind::None) {
@@ -1088,7 +1379,7 @@ void Controller::build_view() {
   bi.clock_unknown = !w.valid && forced_phase_ > 5;
   bi.minute_of_day = w.valid ? minutes_of_day((int64_t)w.utc + p_.utc_offset(w.utc)) : -1;  // the dark hours go by the clock
   bi.doorbell_wake = v.banner.kind != BannerKind::None;
-  bi.mail_wake = mail_wake_;
+  bi.mail_wake = mail_wake_ || (upstairs && v.req.flash);  // urgent arrows keep it lit (Mike, 2026-11-06)
   bi.clean_screen = clean_screen_;
   v.backlight = backlight_for(settings_, bi);
 }
