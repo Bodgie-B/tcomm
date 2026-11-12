@@ -41,6 +41,8 @@ Options (`./ss_preview --help` lists them all):
 | `--mood F` | 0 night, 1 dawn, 2 morning, 3 day, 4 golden, 5 dusk |
 | `--weather NAME` | clear rain snow wind heat fog chill (omit: core picks) |
 | `--overcast F`, `--fog F` | weather tint, 0..1 |
+| `--rain-dark F` | how dark a raining sky is, 0..1 (0: the scene's own level, `kRainDark` in `core/scene/weather.cpp`) |
+| `--sky SAZ SALT MAZ MALT PHASE` | the real sun and moon: bearing and height of each in degrees (90 east, 180 south, 270 west; under 0 is set) and the moon's phase (0 new, 0.5 full). Omit: the old sky, parked by mood |
 | `--night` | night mode on, night_dim 1 |
 | `--lookout` | inside the sunset window |
 | `--status N`, `--dog N` | other floor status, dog out |

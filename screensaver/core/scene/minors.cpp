@@ -1226,10 +1226,11 @@ int heldCritters(const World& w) {
   return n;
 }
 
-// Anyone else's critter in the scene (a dinner guest still fleeing, a major's).
+// Anyone else's critter in the scene (a dinner guest still fleeing, a major's). Lucy and Copper don't
+// count: they are part of the camp while they are out.
 bool othersCritters(const World& w) {
   for (const CritterSlot& s : w.crit)
-    if (s.in_use && s.tag != CT_MINOR) return true;
+    if (s.in_use && s.tag != CT_MINOR && s.tag != CT_HOUSEDOG) return true;
   return false;
 }
 

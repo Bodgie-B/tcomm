@@ -271,7 +271,7 @@ static void test_checks() {
       {"{\"type\":\"weather\",\"id\":1}", "{\"error\":\"unknown_type\"}"},
       {"{\"id\":1}", "{\"error\":\"unknown_type\"}"},
       {"{\"cmd\":\"reboot\"}", "{\"error\":\"unknown_type\"}"},
-      {"{\"cmd\":\"hello\"}", "{\"boot\":false,\"mac\":\"aa:bb:cc:dd:ee:ff\",\"channel\":1,\"fw\":\"gateway-c6 0.1\"}"},
+      {"{\"cmd\":\"hello\"}", "{\"boot\":false,\"mac\":\"aa:bb:cc:dd:ee:ff\",\"channel\":1,\"fw\":\"gateway-c6 0.3\"}"},
   };
   for (auto &c : cases) {
     io.clear();
@@ -298,7 +298,7 @@ static void test_checks() {
   CHECK(io.lines.empty() && io.frames.size() == 1);
   io.clear();
   g.boot();
-  CHECK(io.lines.size() == 1 && io.lines[0] == "{\"boot\":true,\"mac\":\"aa:bb:cc:dd:ee:ff\",\"channel\":1,\"fw\":\"gateway-c6 0.1\"}");
+  CHECK(io.lines.size() == 1 && io.lines[0] == "{\"boot\":true,\"mac\":\"aa:bb:cc:dd:ee:ff\",\"channel\":1,\"fw\":\"gateway-c6 0.3\"}");
 }
 
 static void test_json() {
@@ -314,6 +314,163 @@ static void test_json() {
   for (const char *b : bad) CHECK(!gw::json_parse_object(b, std::strlen(b), o));
 }
 
+// Mike, 2026-11-07: the Pi's {"type":"update"} line becomes an UPDATE frame (type 15, one reserved
+// byte 0) to the upstairs panel, with the usual retries and one final reply.
+static void test_update() {
+  FakeIO io;
+  gw::Gateway g(io, "aa:bb:cc:dd:ee:ff", 0x2000);
+  line(g, "{\"type\":\"update\",\"id\":21}");
+  CHECK(io.lines.empty() && io.frames.size() == 1 && g.in_flight() == 1);
+  CHECK(hex(io.frames[0].bytes) == "01 0F 02 00 20 00");  // version, UPDATE, gateway, seq 0x2000, reserved 0
+  tc::Msg m;
+  CHECK(tc::decode(io.frames[0].bytes.data(), io.frames[0].bytes.size(), m) && m.type == tc::MsgType::Update &&
+        m.sender == tc::kSenderGateway && m.seq == 0x2000);
+  // A repeat while it waits: answered busy, nothing more sent, the first keeps its reply.
+  run(g, io, 50);
+  size_t sent = io.frames.size();
+  line(g, "{\"type\":\"update\",\"id\":22}");
+  CHECK(io.lines.size() == 1 && io.lines[0] == "{\"type\":\"update\",\"id\":22,\"busy\":true,\"seq\":8192}");
+  CHECK(io.frames.size() == sent && g.in_flight() == 1);
+  // The ACK carries the UPDATE type (15) and the frame's seq; one for another type or seq is ignored.
+  std::vector<uint8_t> ack = bytes("01 04 00 00 00 00 20 0F");
+  ack[7] = 8;
+  g.on_frame(gw::kUpstairs, ack.data(), ack.size());
+  ack[7] = 15;
+  ack[5] = 0x01;
+  g.on_frame(gw::kUpstairs, ack.data(), ack.size());
+  CHECK(io.lines.size() == 1 && g.in_flight() == 1);
+  ack[5] = 0x00;
+  io.now += 7;
+  g.on_frame(gw::kUpstairs, ack.data(), ack.size());
+  CHECK(io.lines.size() == 2 && io.lines[1] == "{\"type\":\"update\",\"id\":21,\"acked\":\"upstairs\",\"seq\":8192,\"ms\":57}");
+  CHECK(g.in_flight() == 0 && !std::strcmp(g.status().last, "update acked 57ms"));
+  // Now free again: a new request gets a new seq.
+  line(g, "{\"type\":\"update\",\"id\":23}");
+  CHECK(hex(io.frames.back().bytes) == "01 0F 02 01 20 00");
+  // An UPDATE does not disturb an OUTSIDE or a LUCY in flight, and gives up on the usual schedule.
+  FakeIO io2;
+  gw::Gateway g2(io2, "aa:bb:cc:dd:ee:ff", 0x2100);
+  line(g2, "{\"type\":\"lucy\",\"id\":1,\"out\":1,\"since\":0}");
+  line(g2, "{\"type\":\"update\",\"id\":2}");
+  CHECK(g2.in_flight() == 2 && io2.lines.empty());
+  uint32_t t0 = io2.frames[1].at;
+  run(g2, io2, 1600);
+  CHECK(io2.lines.size() == 2);
+  CHECK(io2.lines[0] == "{\"type\":\"lucy\",\"id\":1,\"failed\":\"upstairs\",\"seq\":8448}");
+  CHECK(io2.lines[1] == "{\"type\":\"update\",\"id\":2,\"failed\":\"upstairs\",\"seq\":8449}");
+  CHECK(io2.frames.size() == 10 && io2.frames[9].at - t0 >= 1100 && g2.in_flight() == 0);
+  CHECK(!std::strcmp(g2.status().last, "update failed") && g2.status().failed == 2);
+  // Bad ids are rejected the way the other types are; extra fields are ignored.
+  FakeIO io3;
+  gw::Gateway g3(io3, "aa:bb:cc:dd:ee:ff", 0x2200);
+  line(g3, "{\"type\":\"update\"}");
+  line(g3, "{\"type\":\"update\",\"id\":0}");
+  CHECK(io3.lines.size() == 2 && io3.frames.empty() && g3.status().rejected == 2);
+  CHECK(io3.lines[0] == "{\"type\":\"update\",\"rejected\":\"id must be a positive whole number\"}");
+  line(g3, "{\"type\":\"update\",\"id\":5,\"whatever\":\"x\"}");
+  CHECK(io3.frames.size() == 1 && g3.in_flight() == 1);
+}
+
+
+// A NOTICE from the upstairs panel: ACKed like a panel would, printed once as an "event" line.
+static std::vector<uint8_t> notice_frame(uint8_t sender, uint16_t seq, uint8_t kind, uint8_t floor, int16_t value, uint32_t time,
+                                         const char *text) {
+  tc::Msg m;
+  m.type = tc::MsgType::Notice;
+  m.sender = sender;
+  m.seq = seq;
+  m.u.notice.kind = kind;
+  m.u.notice.floor = floor;
+  m.u.notice.value = value;
+  m.u.notice.time = time;
+  std::strncpy(m.u.notice.text, text, tc::kNoticeTextMax);
+  m.u.notice.text[tc::kNoticeTextMax] = 0;
+  uint8_t buf[tc::kMaxMsg];
+  size_t n = tc::encode(m, buf, sizeof(buf));
+  return std::vector<uint8_t>(buf, buf + n);
+}
+
+static void test_notices() {
+  FakeIO io;
+  gw::Gateway g(io, "aa:bb:cc:dd:ee:ff", 0x3000);
+  auto send = [&](int from, const std::vector<uint8_t> &f) { g.on_frame(from, f.data(), f.size()); };
+  // The line, and the ACK the gateway sends back: ACK, from the gateway, seq 0, naming the NOTICE's seq and type.
+  send(gw::kUpstairs, notice_frame(tc::kSenderUpstairs, 0x1234, 1, 1, 0, 1793000000u, ""));
+  CHECK(io.lines.size() == 1);
+  CHECK(io.lines[0] == "{\"event\":\"notice\",\"kind\":\"knock\",\"floor\":\"downstairs\",\"value\":0,\"time\":1793000000,\"text\":\"\"}");
+  CHECK(io.frames.size() == 1 && hex(io.frames[0].bytes) == "01 04 02 00 00 34 12 11");
+  // A retry of the same frame (our ACK was lost): ACKed again, printed once.
+  send(gw::kUpstairs, notice_frame(tc::kSenderUpstairs, 0x1234, 1, 1, 0, 1793000000u, ""));
+  CHECK(io.lines.size() == 1 && io.frames.size() == 2 && io.frames[1].bytes == io.frames[0].bytes);
+  // Every kind, by its word; the value signed; the text as sent.
+  const char *words[] = {"knock", "arrow_urgent", "arrow_mild", "mail", "dog_out", "status", "note"};
+  for (int k = 1; k <= 7; k++) {
+    io.clear();
+    send(gw::kUpstairs, notice_frame(tc::kSenderUpstairs, (uint16_t)(100 + k), (uint8_t)k, 0, (int16_t)(k == 2 ? -1 : k), 5, "hi"));
+    char want[200];
+    std::snprintf(want, sizeof(want), "{\"event\":\"notice\",\"kind\":\"%s\",\"floor\":\"upstairs\",\"value\":%d,\"time\":5,\"text\":\"hi\"}",
+                  words[k - 1], k == 2 ? -1 : k);
+    CHECK(io.lines.size() == 1 && io.lines[0] == want);
+  }
+  // Escaping: quote and backslash, and the longest text (40 characters, all of them needing it) stays well inside a line.
+  io.clear();
+  send(gw::kUpstairs, notice_frame(tc::kSenderUpstairs, 200, 7, 1, 0, 9, "say \"hi\" \\ bye"));
+  CHECK(io.lines.size() == 1 && io.lines[0] ==
+        "{\"event\":\"notice\",\"kind\":\"note\",\"floor\":\"downstairs\",\"value\":0,\"time\":9,\"text\":\"say \\\"hi\\\" \\\\ bye\"}");
+  io.clear();
+  std::string nasty = std::string(20, '"') + std::string(20, '\\');
+  send(gw::kUpstairs, notice_frame(tc::kSenderUpstairs, 201, 7, 1, 0, 9, nasty.c_str()));
+  CHECK(io.lines.size() == 1 && io.lines[0].size() < gw::kMaxLine && io.lines[0].find("\"text\":\"\\\"\\\"") != std::string::npos);
+  CHECK(io.lines[0].back() == '}');
+  // A control character or non-ASCII byte in the text arrives as '?' (decode), never raw on the serial line.
+  io.clear();
+  {
+    std::vector<uint8_t> f = notice_frame(tc::kSenderUpstairs, 202, 7, 0, 0, 9, "abc");
+    f[f.size() - 2] = 0x0A;  // a newline inside the text would split the line
+    f[f.size() - 1] = 0xC3;
+    send(gw::kUpstairs, f);
+    CHECK(io.lines.size() == 1 && io.lines[0].find("\"text\":\"a??\"") != std::string::npos);
+    CHECK(io.lines[0].find('\n') == std::string::npos);
+  }
+  // The same seq long after is a new notice (the panel's counter came round, or it restarted).
+  io.clear();
+  send(gw::kUpstairs, notice_frame(tc::kSenderUpstairs, 300, 4, 1, 1, 77, ""));
+  send(gw::kUpstairs, notice_frame(tc::kSenderUpstairs, 300, 4, 1, 1, 77, ""));
+  CHECK(io.lines.size() == 1);
+  io.now += 11000;
+  send(gw::kUpstairs, notice_frame(tc::kSenderUpstairs, 300, 4, 1, 1, 78, ""));
+  CHECK(io.lines.size() == 2 && io.lines[1].find("\"time\":78") != std::string::npos);
+  // Unknown MAC (-1), the downstairs panel, or a sender byte that does not match the MAC: no line, no ACK.
+  io.clear();
+  send(-1, notice_frame(tc::kSenderUpstairs, 400, 1, 0, 0, 1, ""));
+  send(gw::kDownstairs, notice_frame(tc::kSenderDownstairs, 401, 1, 0, 0, 1, ""));
+  send(gw::kUpstairs, notice_frame(tc::kSenderDownstairs, 402, 1, 0, 0, 1, ""));
+  CHECK(io.lines.empty() && io.frames.empty());
+  // Malformed: a kind of 0 or 8, a bad floor, a cut frame, trailing bytes: ignored, no ACK.
+  std::vector<uint8_t> f = notice_frame(tc::kSenderUpstairs, 410, 1, 0, 0, 1, "ab");
+  std::vector<uint8_t> bad = f;
+  bad[5] = 0;
+  send(gw::kUpstairs, bad);
+  bad = f;
+  bad[5] = 8;
+  send(gw::kUpstairs, bad);
+  bad = f;
+  bad[6] = 2;
+  send(gw::kUpstairs, bad);
+  bad = f;
+  bad.pop_back();
+  send(gw::kUpstairs, bad);
+  bad = f;
+  bad.push_back(0);
+  send(gw::kUpstairs, bad);
+  CHECK(io.lines.empty() && io.frames.empty());
+  // A notice does not touch the requests: nothing in flight, no counters, and an UPDATE still works.
+  CHECK(g.in_flight() == 0 && g.status().acked == 0 && g.status().requests == 0);
+  line(g, "{\"type\":\"update\",\"id\":1}");
+  send(gw::kUpstairs, notice_frame(tc::kSenderUpstairs, 500, 1, 0, 0, 1, ""));
+  CHECK(g.in_flight() == 1 && io.lines.size() == 1);
+}
+
 int main() {
   test_json();
   test_frames();
@@ -322,6 +479,8 @@ int main() {
   test_types_apart();
   test_one_reply_each();
   test_checks();
+  test_update();
+  test_notices();
   std::printf("gateway: %d passed, %d failed\n", g_pass, g_fail);
   return g_fail ? 1 : 0;
 }

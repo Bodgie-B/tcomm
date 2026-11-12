@@ -74,6 +74,13 @@ lv_obj_t *box(lv_obj_t *parent, int x, int y, int w, int h, gfx::Color bg, int r
 lv_obj_t *plain(lv_obj_t *parent, int x, int y, int w, int h);
 lv_obj_t *label(lv_obj_t *parent, const lv_font_t *font, gfx::Color col, int x, int y, const char *text = "");
 int text_width(const char *t, const lv_font_t *font, int letter_space = 0);
+// The width a tile message's line may fill (note.h, Mike 2026-11-07): as wide as "Action taken on
+// temperature" in the line's font, which just fits before the tile's badge. Two such lines at most.
+inline int note_line_w() { return text_width("Action taken on temperature", B20); }
+// How a tile message wraps (ui_note.cpp): greedy at spaces, a word wider than the line breaks
+// mid-word, B20, note_line_w() wide. Returns the number of lines (3 means it needs a third: too
+// long); line i is text[start[i], end[i]) with its trailing spaces dropped. start and end hold 3.
+int note_wrap(const char *text, int start[3], int end[3]);
 // The label y that puts a text's baseline where a board has it, given the top of the text's line
 // box on the board (its CSS content area).
 int board_y(const lv_font_t *font, float css_top);
@@ -102,6 +109,8 @@ bool settings_family_open();
 void open_status_sheet();
 void open_comfort_survey();  // the downstairs tenant's "how does it feel?" column (ui_comfort.cpp)
 void open_comfort_chart();   // the comfort chart (ui_chart.cpp), on either panel
+void open_note_editor();     // this panel's tile message: the keyboard (ui_note.cpp)
+void open_outside_chart();   // the outside history chart (ui_outside.cpp), on either panel
 void comfort_refresh();      // its live reading, and its idle close (called from render)
 void open_timer_sheet(tc::Status s);
 void open_settings();
@@ -109,12 +118,40 @@ void open_time_date();
 void open_test_panel();
 void open_ringtones();
 void open_screensaver();  // Settings > SCREENSAVER: the minutes before it starts
+void open_presence();     // Settings > PRESENCE SENSOR: fitted, active level, hold time, and the sensor live
 void start_clean_screen();
 void refresh_sheet();  // live values while a sheet is open (called from render)
 void open_zambretti_demo();
 // While the Zambretti demo is open: the sample to show on the outside tile instead of the real
 // reading (false when it's closed).
 bool zambretti_preview(tc::OutsideView &ov, bool &night);
+
+// The on-screen keyboard (built in ui_calendar.cpp), shared by the calendar's event editor and the
+// tile message editor (ui_note.cpp, Mike 2026-11-07). The owner gives three callbacks and keeps the
+// field the text goes to: on_char gets the character already in its case and says whether it took it
+// (shift only clears after a letter that went in), on_back removes one, on_done is the Done key.
+// keypad_build makes the keys as children of `parent` at y (192 px shown); free it by deleting
+// kp.obj, and set kp.nkeys = 0 and kp.obj = nullptr.
+struct Keypad;
+struct KeypadKey {
+  uint8_t kind;
+  char ch;    // a character key's place in its row's letters (row * 16 + column)
+  int16_t w;  // LVGL's own width isn't there until its next layout
+  lv_obj_t *obj, *lbl;
+  Keypad *kp;
+};
+struct Keypad {
+  lv_obj_t *obj = nullptr;
+  KeypadKey keys[34] = {};
+  int nkeys = 0;
+  bool shift = false, sym = false;
+  tc::Mode mode = tc::Mode::Day;
+  bool (*on_char)(char ch) = nullptr;
+  void (*on_back)() = nullptr;
+  void (*on_done)() = nullptr;
+};
+void keypad_build(Keypad &kp, lv_obj_t *parent, int32_t y, tc::Mode mode);
+void keypad_refresh(Keypad &kp);  // after the owner changes kp.shift or kp.sym
 
 // The calendar roll-down (ui_calendar.cpp)
 bool cal_is_open();

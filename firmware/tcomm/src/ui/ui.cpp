@@ -41,6 +41,11 @@ struct FloorTile {
   // "Action taken on temperature" in place of the since line (downstairs panel): its touch area.
   lv_obj_t *acted = nullptr;
   int acted_font = 0;  // 0 = B20, 1 = B18
+  // The tile message (note.h, Mike 2026-11-07): the touch area around the line on the OWN tile, whether
+  // one shows now, and how many lines it takes (the line label moves up a line for a second one).
+  lv_obj_t *note_hit = nullptr;
+  bool note_on = false;
+  int note_lines = 1;
   int key = -1;      // what the front art shows (status * 4 + mode); -1 = nothing yet
   FloorView shown = {};  // the words that go with it, kept until the new art is ready
   int font_ns = -1;  // which state-word font is set: 1 = the 54 px one, for words over 8 letters
@@ -120,6 +125,8 @@ lv_obj_t *g_cal_chev, *g_cal_chev_img;
 Art g_chev_up;
 int g_cal_chev_state = -1;
 bool g_ice_drawn = false;
+uint32_t g_ice_cold_at = 0;  // when cold was last true
+int g_ice_free_frames = 0;
 lv_obj_t *g_bell_cont, *g_bell_img, *g_bell_word, *g_bell_line;
 // The bell itself, over the tile's picture: it shakes for each ring sent or received, and it's red
 // while an incoming ring waits (Mike, 2026-10-26).
@@ -152,6 +159,7 @@ bool g_gear_consumed = false;
 uint32_t g_gear_down = 0;
 int g_dog_from = 56;
 int g_dog_out = -1;
+bool g_dog_pulse = false;  // the pill is pulsing: a dog is out too long (Mike, 2026-11-11)
 
 void center_x(lv_obj_t *o, int cx, int w) { set_x(o, cx - w / 2); }
 
@@ -167,6 +175,9 @@ void wzone_clicked(lv_event_t *e) {
   if (t && t->mine == 1) open_comfort_survey();
 }
 void wzone_long(lv_event_t *) { open_comfort_chart(); }
+// Mike, 2026-11-07: a long press on the Outside tile opens the outside history chart on either panel;
+// a short tap does nothing.
+void out_long(lv_event_t *) { open_outside_chart(); }
 
 void mail_clicked(lv_event_t *) {
   if (g_act) g_act->tap_mail();
@@ -177,6 +188,21 @@ void req_clicked(lv_event_t *) {
 void acted_clicked(lv_event_t *) {
   if (g_act) g_act->tap_acted();
 }
+// Mike, 2026-11-07: a tap on the own tile's line takes this floor's message away, or, with none
+// showing, opens the keyboard to write one.
+// Mike, 2026-11-07: the chevron still opens the status sheet; it sits in front of the note's touch area.
+void chev_clicked(lv_event_t *) { open_status_sheet(); }
+void note_clicked(lv_event_t *e) {
+  FloorTile *t = (FloorTile *)lv_event_get_user_data(e);
+  if (t && t->note_on) {
+    if (g_act) g_act->clear_note();
+  } else {
+    open_note_editor();
+  }
+}
+// The touch area around the line: from a little above the (one-line) line to the tile's bottom,
+// left of the status badge (x 289).
+constexpr int kNoteHitX = 0, kNoteHitY = 124, kNoteHitW = 285;
 
 // The mail badge (Mike, 2026-10-26): in the status zone's top right corner, on the DOWNSTAIRS
 // word's line, as far from the top as from the zone's right edge (Mike, the same day). That makes
@@ -229,6 +255,13 @@ void tile_build(FloorTile &t, Floor f, int x, int y) {
   // On the own tile the whole status zone is the touch target (brief 10.2), not just the chevron.
   t.zone = plain(t.cont, 0, 0, art::kStatusW, art::kFloorH);
   lv_obj_add_event_cb(t.zone, zone_clicked, LV_EVENT_CLICKED, nullptr);
+  // After the zone, so the line's area takes the tap there; before the arrows and the mail badge,
+  // so theirs win (Mike, 2026-11-07).
+  t.note_hit = plain(t.cont, kNoteHitX, kNoteHitY, kNoteHitW, art::kFloorH - kNoteHitY);
+  lv_obj_add_event_cb(t.note_hit, note_clicked, LV_EVENT_CLICKED, &t);
+  lv_obj_add_flag(t.chev, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(t.chev, chev_clicked, LV_EVENT_CLICKED, nullptr);
+  lv_obj_move_foreground(t.chev);  // in front of note_hit (it covers the chevron's place)
   // After the zone, so a tap on the arrows is theirs (upstairs, the zone is the own tile's).
   if (f == Floor::Upstairs) {
     t.req = plain(t.cont, art::kStatusW - kReqHitMinW, 0, kReqHitMinW, kReqHitH);
@@ -352,6 +385,9 @@ void tile_render(FloorTile &t, const FloorView &fv, bool acted = false) {
   if (t.mine != (int)fv.mine) {
     if (fv.mine) lv_obj_add_flag(t.zone, LV_OBJ_FLAG_CLICKABLE);
     else lv_obj_clear_flag(t.zone, LV_OBJ_FLAG_CLICKABLE);
+    // The other floor's message line is not touchable.
+    if (fv.mine) lv_obj_add_flag(t.note_hit, LV_OBJ_FLAG_CLICKABLE);
+    else lv_obj_clear_flag(t.note_hit, LV_OBJ_FLAG_CLICKABLE);
     if (t.wzone) {
       lv_obj_add_flag(t.wzone, LV_OBJ_FLAG_CLICKABLE);  // upstairs too: the long press opens the chart
       // (a short tap upstairs does nothing: wzone_clicked checks the floor)
@@ -366,8 +402,54 @@ void tile_render(FloorTile &t, const FloorView &fv, bool acted = false) {
     t.font_ns = ns;
   }
   set_text(t.word, u.word);
-  bool line_changed = strcmp(lv_label_get_text(t.line), u.line) != 0;
-  set_text(t.line, acted ? kActedText : u.line);
+  // Mike, 2026-11-07: the floor's message shows in place of the line, in up to two lines; the
+  // confirmation "Action taken on temperature" keeps its spot (the controller drops the message
+  // then, but if both arrive it wins).
+  const bool note_shown = u.note && !acted;
+  char wrapped[kNoteTextMax + 4] = "";
+  int nl = 1;
+  if (note_shown) {  // the editor's own wrapper (ui_note.cpp), so the tile matches it exactly
+    int st[3] = {}, en[3] = {};
+    nl = note_wrap(u.note_text, st, en);
+    if (nl > 2) nl = 2;
+    if (nl < 1) nl = 1;
+    size_t o = 0;
+    for (int i = 0; i < nl; i++) {
+      if (i) wrapped[o++] = '\n';
+      int len = en[i] - st[i];
+      if (o + (size_t)len >= sizeof(wrapped)) len = (int)(sizeof(wrapped) - o - 1);
+      memcpy(wrapped + o, u.note_text + st[i], (size_t)len);
+      o += (size_t)len;
+    }
+    wrapped[o] = 0;
+  }
+  t.note_on = note_shown;
+  // Mike, 2026-11-11: with nothing above it, the floor's next calendar item today replaces the since
+  // line ("Dentist 2:30 PM"; an all-day event is just its title). The title is cut with "..." to the
+  // tile message's width, and on the own tile to leave room for the chevron, which follows the text
+  // and must end before the status badge (tile x 289). A tap on it is a tap on the line: the editor.
+  char agenda[kEventTitleMax + 16] = "";
+  const bool agenda_shown = u.agenda && !note_shown && !acted;
+  if (agenda_shown) {
+    const int fit = u.mine ? 211 : 261;
+    const int max_w = fit < note_line_w() ? fit : note_line_w();
+    size_t tl = strlen(u.agenda_title);
+    bool cut = false;
+    for (;;) {
+      snprintf(agenda, sizeof(agenda), "%.*s%s%s%s", (int)tl, u.agenda_title, cut ? "..." : "", u.agenda_when[0] ? " " : "",
+               u.agenda_when);
+      if (tl <= 1 || text_width(agenda, B20) <= max_w) break;
+      tl--;
+      cut = true;
+    }
+  }
+  const char *plain_line = agenda_shown ? agenda : u.line;
+  bool line_changed = strcmp(lv_label_get_text(t.line), plain_line) != 0;
+  set_text(t.line, acted ? kActedText : (note_shown ? wrapped : plain_line));
+  if (t.note_lines != nl) {  // two lines: the label moves up a line so both end where one did
+    lv_obj_set_y(t.line, board_y(B20, 153.4f) - (nl - 1) * (int)lv_font_get_line_height(B20));
+    t.note_lines = nl;
+  }
   // Mike, 2026-11-06: plain text in the line's own colour; it must end before the status badge.
   if (t.acted) {
     int af = acted && 24 + text_width(kActedText, B20) > 285 ? 1 : 0;
@@ -377,8 +459,8 @@ void tile_render(FloorTile &t, const FloorView &fv, bool acted = false) {
     }
     show(t.acted, acted);
   }
-  show(t.chev, u.mine);
-  if (u.mine && line_changed) set_x(t.chev, 24 + text_width(u.line, B20) + 14);
+  show(t.chev, u.mine && !note_shown);
+  if (u.mine && line_changed && !note_shown) set_x(t.chev, 24 + text_width(plain_line, B20) + 14);
   if (strcmp(lv_label_get_text(t.temp), u.temp) != 0) {
     set_text(t.temp, u.temp);
     center_x(t.temp, 450, text_width(u.temp, J50));
@@ -391,6 +473,7 @@ void tile_render(FloorTile &t, const FloorView &fv, bool acted = false) {
   }
 }
 
+void dog_opa(void *o, int32_t v) { lv_obj_set_style_opa((lv_obj_t *)o, (lv_opa_t)v, 0); }
 void mail_opa(void *o, int32_t v) { lv_obj_set_style_img_opa((lv_obj_t *)o, (lv_opa_t)v, 0); }
 
 // The mail badge: 0 hidden; 1 the faint outline (upstairs, nothing waiting); 2 solid (upstairs,
@@ -717,6 +800,8 @@ void build_main() {
   lv_obj_t *out = g_out_cont = plain(scr, 538, 74, art::kSideW, art::kFloorH);
   show(out, false);  // until its art is drawn
   g_outside_art.make(art::kSideW, art::kFloorH, true);
+  lv_obj_add_flag(out, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(out, out_long, LV_EVENT_LONG_PRESSED, nullptr);
   g_out_img = image(out, 0, 0);
   g_out_title = label(out, B14, hex(0), 0, board_y(B14, 9.2f), "OUTSIDE");
   lv_obj_set_style_text_letter_space(g_out_title, 2, 0);  // 0.16 em (2.24 px)
@@ -876,6 +961,25 @@ void render_header(const View &v, bool mode_changed) {
     g_dog_from = lv_obj_get_width(g_dog);
     if (g_have_prev) anim(g_dog, g_dog_from, dog_w, 200, set_w);  // brief 10.6: a slide, no bounce
     else lv_obj_set_width(g_dog, dog_w);
+  }
+  // A dog out too long (Mike, 2026-11-11): the pill fades down and up, slowly, like the downstairs
+  // mail badge, until the dog is in. Only the pill's own pixels change.
+  if (v.dog.alert != g_dog_pulse) {
+    g_dog_pulse = v.dog.alert;
+    lv_anim_del(g_dog, dog_opa);
+    dog_opa(g_dog, LV_OPA_COVER);
+    if (g_dog_pulse) {
+      lv_anim_t a;
+      lv_anim_init(&a);
+      lv_anim_set_var(&a, g_dog);
+      lv_anim_set_exec_cb(&a, dog_opa);
+      lv_anim_set_values(&a, LV_OPA_COVER, 110);
+      lv_anim_set_time(&a, 900);
+      lv_anim_set_playback_time(&a, 900);
+      lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+      lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
+      lv_anim_start(&a);
+    }
   }
   // The date strip runs from 10 px after the dog to 10 px before the gear (brief 10.6). While the
   // pill slides, the strip keeps to the wider of the two widths so they never overlap.
@@ -1096,14 +1200,26 @@ void render_outside(const View &v) {
     set_text(g_out_phrase, fit.text);
     lv_obj_set_y(g_out_phrase, board_y(fit.font, 86 - (fit.px * 1.24f + (fit.lines - 1) * pitch) / 2));
   }
-  // Danger cold: icicles, drawn the first time they're needed and kept.
+  // Danger cold: icicles, drawn when first needed. Their picture (240 KB of PSRAM) goes once cold has
+  // been over for a minute, so a flickering flag doesn't thrash the allocator, and not in the frame
+  // the image is hidden: a few frames later, as the comfort arrows do. Cold again, and it's redrawn.
   bool cold = v.outside.valid && v.outside.cold;
-  if (cold && !g_ice_drawn && g_ice_art.make(art::kScreenW, art::kIciclesH, true)) {
-    art::icicles(g_ice_art.cv);
-    g_ice_art.show(g_ice_img);
-    g_ice_drawn = true;
+  if (cold) {
+    g_ice_cold_at = lv_tick_get();
+    g_ice_free_frames = 0;
+    if (!g_ice_drawn && g_ice_art.make(art::kScreenW, art::kIciclesH, true)) {
+      art::icicles(g_ice_art.cv);
+      g_ice_art.show(g_ice_img);
+      g_ice_drawn = true;
+    }
   }
   show(g_ice_img, cold && g_ice_drawn);
+  if (!cold && g_ice_drawn && lv_tick_elaps(g_ice_cold_at) >= 60000 && ++g_ice_free_frames >= 3) {
+    lv_img_cache_invalidate_src(&g_ice_art.dsc);  // the image is hidden and nothing else reads it
+    g_ice_art.cv.destroy();
+    g_ice_drawn = false;
+    g_ice_free_frames = 0;
+  }
   // Spec 4c: the temperature, 16 px, the drop, 3 px, the humidity, centred on the tile as one.
   if (strcmp(lv_label_get_text(g_out_temp), v.outside.temp) != 0 || strcmp(lv_label_get_text(g_out_hum), v.outside.hum) != 0) {
     set_text(g_out_temp, v.outside.temp);
@@ -1308,6 +1424,7 @@ void render(const Frame &f) {
     else if (g_sheet == Sheet::Test) open_test_panel();
     else if (g_sheet == Sheet::Ringtone) open_ringtones();
     else if (g_sheet == Sheet::Screensaver) open_screensaver();
+    else if (g_sheet == Sheet::Presence) open_presence();
     else if (g_sheet == Sheet::Zambretti) open_zambretti_demo();
     else if (g_sheet == Sheet::Comfort) open_comfort_survey();
   }
@@ -1362,9 +1479,12 @@ void open_sheet(Sheet s, Status timed) {
     case Sheet::Test: open_test_panel(); break;
     case Sheet::Ringtone: open_ringtones(); break;
     case Sheet::Screensaver: open_screensaver(); break;
+    case Sheet::Presence: open_presence(); break;
     case Sheet::Zambretti: open_zambretti_demo(); break;
     case Sheet::Comfort: open_comfort_survey(); break;
     case Sheet::Chart: open_comfort_chart(); break;
+    case Sheet::Note: open_note_editor(); break;
+    case Sheet::Outside: open_outside_chart(); break;
     case Sheet::CleanScreen: start_clean_screen(); break;
     default: close_sheet(); break;
   }

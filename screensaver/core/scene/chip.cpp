@@ -19,6 +19,7 @@
 #include "chip.h"
 #include "chip_font.h"
 #include "../anim/ease.h"
+#include "../ss_app.h"
 
 #include <string.h>
 
@@ -206,6 +207,69 @@ void drawBadge(Surface& s, float cx, uint8_t pop, bool copper, Pixel outline, Pi
   drawDog(s, Xf{cx + 1.0f * k, kChipCy + 0.6f * k, k}, ink, copper, clip);
 }
 
+// ---- the request arrows -------------------------------------------------------
+
+// The firmware's art::request_arrow (art.cpp), shape for shape and colour for colour: a disc (the
+// tenant's dark plum, or a predicted arrow's own colour), the arrow on it in units of s about the
+// disc's centre, cooling the same shape upside down; urgent ones are bigger with a doubled head. On
+// the scene it gets the badges' thin outline so a plum disc still reads on a dark night ground, and
+// at night every colour moves a little toward the night badge, as the chip's own colours do.
+// `dim`: the dim half of an urgent arrow's flash (the arrow faded toward its disc, the tile's
+// kReqDimOpa 90 of 255).
+void drawArrow(Surface& s, float cx, float cy, uint8_t req, bool dim, uint8_t night, Pixel outline, const Rect& clip) {
+  const int ask = req & 0x0F;
+  const bool urgent = ask == 1 || ask == 4, heat = ask == 1 || ask == 2, tenant = (req & SS_REQ_PREDICTED) == 0;
+  const Pixel plum = rgb565_hex(0x3B1D2B), cream = rgb565_hex(0xFFFAF0);
+  Pixel col;
+  if (tenant) col = urgent ? (heat ? rgb565_hex(0xFF4D4D) : rgb565_hex(0x4DA3FF)) : (heat ? rgb565_hex(0xFFA0A0) : rgb565_hex(0x96C8FF));
+  else col = urgent ? (heat ? rgb565_hex(0xFF7A1A) : rgb565_hex(0xA66BFF)) : (heat ? rgb565_hex(0xFFC88C) : rgb565_hex(0xDAC6FF));
+  Pixel disc = tenant ? plum : col;
+  Pixel ink = tenant ? col : (urgent ? cream : plum);
+  if (night) {   // a step toward the night badge: no bright discs or white at night
+    const float k = 0.25f * (float)night * (1.0f / 255.0f);
+    disc = mixRGB(disc, kBadgeNight, k);
+    ink = mixRGB(ink, kBadgeNight, k);
+  }
+  const Pixel arrow = dim ? mixRGB(disc, ink, 90.0f / 255.0f) : ink;
+  const float r = 0.5f * (float)kChipArrowD;
+  fillCircle(s, Vec2{cx, cy}, r, outline, clip);
+  fillCircle(s, Vec2{cx, cy}, r - kOutlineWidth, disc, clip);
+  const float sz = r * (urgent ? 1.3f : 1.15f), dir = heat ? 1.0f : -1.0f;
+  const float ox = cx, oy = cy + dir * r * 0.03f;
+  auto pt = [&](float x, float y) { return Vec2{ox + x * sz, oy + dir * y * sz}; };
+  auto head = [&](float top, float hw, float hh, float grow, Pixel k) {
+    const Vec2 p[3] = {pt(0.f, top - grow), pt(hw + grow * 1.3f, top + hh + grow * 0.7f), pt(-hw - grow * 1.3f, top + hh + grow * 0.7f)};
+    fillPolygon(s, p, 3, k, clip);
+  };
+  const float y0 = urgent ? 0.3f : -0.02f, y1 = 0.5f;
+  const Vec2 shaft[4] = {pt(-0.13f, y0), pt(0.13f, y0), pt(0.13f, y1), pt(-0.13f, y1)};
+  fillPolygon(s, shaft, 4, arrow, clip);
+  if (urgent) {
+    head(-0.1f, 0.5f, 0.42f, 0.f, arrow);
+    head(-0.56f, 0.5f, 0.42f, 0.1f, disc);   // a thin gap round the upper head, so there are two
+    head(-0.56f, 0.5f, 0.42f, 0.f, arrow);
+  } else {
+    head(-0.5f, 0.44f, 0.44f, 0.f, arrow);
+  }
+}
+
+inline bool reqUrgent(uint8_t req) { return (req & 0x0F) == 1 || (req & 0x0F) == 4; }
+
+// The left edge of what sits right of the arrows: the badges, or the chip itself.
+int arrowAnchor(const ChipLook& L) {
+  const int n = dogSlots(L.dogs);
+  if (n == 0) return kChipX0;
+  return kChipX0 - kChipBadgeGap - n * kChipBadgeD - (n - 1) * kChipBadgeStep;
+}
+
+Rect arrowsRect(const ChipLook& L) {
+  if (L.req_n == 0) return Rect{0, 0, 0, 0};
+  const int right = arrowAnchor(L) - kChipArrowGap;
+  const int left = right - kChipArrowD - (L.req_n - 1) * kChipArrowStep;
+  const int cy = (int)kChipCy;
+  return Rect{left - 1, cy - kChipArrowD / 2 - 1, right + 1, cy + kChipArrowD / 2 + 1};
+}
+
 // ---- the pulse ring ---------------------------------------------------------
 
 // Closed outline of a capsule (centers (ax, cy) and (bx, cy), radius r): the
@@ -274,10 +338,28 @@ Rect chipBounds(const ChipState& c) {
     const int x0 = kChipX0 - kChipBadgeGap - n * kChipBadgeD - (n - 1) * kChipBadgeStep;
     if (x0 < r.x0) r.x0 = x0;
   }
+  const Rect a = arrowsRect(L);
+  if (!a.empty()) r = unite(r, a);
   return r;
 }
 
 void chipDoorbell(ChipState& c) { c.pulse_t = 0.f; }
+
+void chipRequests(ChipState& c, const uint8_t* req, int n) {
+  if (n < 0) n = 0;
+  if (n > 3) {   // the newest three
+    req += n - 3;
+    n = 3;
+  }
+  c.req_want_n = (uint8_t)n;
+  for (int i = 0; i < 3; ++i) c.req_want[i] = i < n ? req[i] : 0;
+}
+
+float chipArrowX(const ChipState& c, int i) {
+  const ChipLook& L = c.look;
+  const float newest = (float)(arrowAnchor(L) - kChipArrowGap) - 0.5f * (float)kChipArrowD;
+  return newest - (float)((L.req_n - 1 - i) * kChipArrowStep);
+}
 
 Rect chipUpdate(ChipState& c, int status, int dog_out, bool night, float dt) {
   const Rect before = chipBounds(c);
@@ -328,6 +410,21 @@ Rect chipUpdate(ChipState& c, int status, int dog_out, bool night, float dt) {
   }
   L.dogs = dogs;
 
+  // The request arrows: as asked; the urgent ones flash on the chip's own clock.
+  bool any_urgent = false;
+  L.req_n = c.req_want_n;
+  for (int i = 0; i < 3; ++i) {
+    L.req[i] = i < L.req_n ? c.req_want[i] : 0;
+    if (i < L.req_n && reqUrgent(L.req[i])) any_urgent = true;
+  }
+  if (any_urgent) {
+    c.flash_t += dt;
+    if (c.flash_t >= 2.f * kChipFlashHalf) c.flash_t -= 2.f * kChipFlashHalf;
+  } else {
+    c.flash_t = 0.f;
+  }
+  L.req_dim = any_urgent && c.flash_t >= kChipFlashHalf ? 1 : 0;
+
   // Pulse: kChipPulseCount rings in kChipPulseSeconds. Each period a ring grows
   // from the chip's edge and fades, and the chip brightens to a peak at its start.
   L.glow = 0;
@@ -355,6 +452,11 @@ Rect chipUpdate(ChipState& c, int status, int dog_out, bool night, float dt) {
   }
 
   if (memcmp(&old, &L, sizeof(ChipLook)) == 0) return Rect{0, 0, 0, 0};
+  {   // only the flash moved: just the arrows (it is twice a second)
+    ChipLook a = old;
+    a.req_dim = L.req_dim;
+    if (memcmp(&a, &L, sizeof(ChipLook)) == 0) return arrowsRect(L);
+  }
   return unite(before, chipBounds(c));
 }
 
@@ -397,6 +499,14 @@ void chipDraw(const ChipState& c, Surface& strip, const Rect& clip, const Palett
     const float cx = (float)(kChipX0 - kChipBadgeGap) - kBadgeR - (float)(slot * (kChipBadgeD + kChipBadgeStep));
     drawBadge(strip, cx, L.pop[i], i == 1, outline, ink, badge_fill, cl);
     ++slot;
+  }
+
+  // The request arrows, the newest nearest the badges.
+  for (int i = 0; i < L.req_n; ++i) {
+    const float cx = chipArrowX(c, i);
+    const float r = 0.5f * (float)kChipArrowD + 1.f;
+    if (cx + r < (float)cl.x0 || cx - r > (float)cl.x1) continue;
+    drawArrow(strip, cx, kChipCy, L.req[i], L.req_dim && reqUrgent(L.req[i]), nt, outline, cl);
   }
 }
 

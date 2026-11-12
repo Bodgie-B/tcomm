@@ -46,6 +46,28 @@ constexpr float kRollB = 0.15f, kRollU = 0.315f, kRollR = 0.05f;
 
 constexpr float kRimW = 0.018f, kRimMinPx = 1.2f;
 
+// The visitors (HikerLook): body widths times the hiker's, the pack's size and colour, a bedroll.
+struct LookDef {
+  float torso, limb;   // torso and thigh width, times the hiker's
+  float pack;          // the pack outline, times the hiker's
+  Slot pack_slot;
+  bool roll;
+};
+const LookDef kLooks[LOOK_COUNT] = {
+    {1.f, 1.f, 1.f, ACTOR, true},           // the hiker (drawn by his own unchanged path)
+    {0.82f, 0.9f, 0.8f, MUSHROOM, false},   // Ann: slight, a small red daypack
+    {1.28f, 1.15f, 1.08f, WATER, true},     // Ben: broad, a big blue pack and bedroll
+};
+// Ann's hair (revised 2026-11-12: the red beanie read as an orange blob): chestnut, a bob round
+// the top and back of her head, tied in a thick ponytail that hangs behind her neck and swings as
+// she walks, a darker shade down its inner side. kHairR is the bob's radius, kTailLen and kTailW
+// the ponytail's length and width at its widest, all in units of height.
+constexpr float kHairR = 0.07f, kTailLen = 0.19f, kTailW = 0.075f;
+constexpr float kHairMix = 0.65f;   // the hair: MUSHROOM's red-orange this much toward TRUNK's dark brown
+// Two colours that are not palette slots, only for Ann's hair (hikerDraw mixes them per frame).
+constexpr Slot HAIR = (Slot)SLOT_COUNT, HAIR_DARK = (Slot)(SLOT_COUNT + 1);
+constexpr float kCapR = 0.068f, kBillLen = 0.085f, kBillW = 0.026f;
+
 // The rod: off the near forearm by kRodRel (so a raised arm raises it), its
 // butt kRodButt behind the near hand; the outer kRodOuter of it bows with
 // rod_bend by up to kRodBow radians. The stick is thicker and kinked.
@@ -236,8 +258,8 @@ void cap(Prims& ps, Vec2 a, Vec2 b, float w, Slot slot = ACTOR) {
 void circle(Prims& ps, Vec2 c, float r, Slot slot = ACTOR) {
   if (Prim* p = push(ps, PRIM_CIRCLE, slot)) { p->p[0] = c; p->n = 1; p->w = r; }
 }
-void poly(Prims& ps, const Vec2* pts, int n) {
-  if (Prim* p = push(ps, PRIM_POLY, ACTOR)) {
+void poly(Prims& ps, const Vec2* pts, int n, Slot slot = ACTOR) {
+  if (Prim* p = push(ps, PRIM_POLY, slot)) {
     p->n = (uint8_t)(n > kMaxPolyPts ? kMaxPolyPts : n);
     for (int i = 0; i < p->n; ++i) p->p[i] = pts[i];
   }
@@ -406,18 +428,53 @@ void build(const Hiker& h, Prims& ps, Vec2* rod_tip = nullptr, RimAxis* rim_out 
   cap(ps, hip, knee[1], kThighW * H);
   cap(ps, knee[1], ankle[1], kShinW * H);
   cap(ps, heel[1], toe[1], kFootW * H);
-  if (h.pack_on) {
+  const LookDef& L = kLooks[h.look < LOOK_COUNT ? h.look : 0];
+  if (h.pack_on && h.look != LOOK_HIKER) {   // a visitor's pack: its own size and colour
+    for (int i = 0; i < 8; ++i)
+      pack[i] = add(hip, add(mul(bk, kPack[i][0] * L.pack * H), mul(up, kPack[i][1] * L.pack * H + breath + bob)));
+    poly(ps, pack, 8, L.pack_slot);
+    if (L.roll)
+      circle(ps, add(hip, add(mul(bk, kRollB * L.pack * H), mul(up, kRollU * L.pack * H + breath + bob))), kRollR * H);
+  } else if (h.pack_on) {
     poly(ps, pack, 8);
     circle(ps, add(hip, add(mul(bk, kRollB * H), mul(up, kRollU * H + breath + bob))), kRollR * H);
   }
-  cap(ps, hip, chest, kTorsoW * H);
-  cap(ps, hip, knee[0], kThighW * H);
+  cap(ps, hip, chest, h.look ? kTorsoW * L.torso * H : kTorsoW * H);
+  cap(ps, hip, knee[0], h.look ? kThighW * L.limb * H : kThighW * H);
   cap(ps, knee[0], ankle[0], kShinW * H);
   cap(ps, heel[0], toe[0], kFootW * H);
   circle(ps, head, headR);
   const Vec2 brim = add(head, mul(hu, kBrimUp * H));
-  if (h.hat_on) cap(ps, sub(brim, mul(hf, kBrimBack * H)), add(brim, mul(hf, kBrimFront * H)), kBrimW * H);
-  if (h.hat_on) {
+  if (h.look == LOOK_ANN && h.hat_on) {   // her hair: a bob round the top and back of her head, a ponytail
+    // The ponytail first (the hair covers its root): tied at the back of the crown, it hangs down
+    // behind her neck, full in the middle and pointed at the end, and swings with her stride.
+    const float swing = 0.03f * h.walk_w * sinT(2.f * h.walk_phase + 0.15f) + 0.005f * sinT(h.breath_phase);
+    const Vec2 root = add(head, add(mul(hf, -0.055f * H), mul(hu, 0.04f * H)));
+    const Vec2 belly = add(root, add(mul(hf, (-0.05f - swing) * H), mul(hu, -0.065f * H)));
+    const Vec2 tip = add(root, add(mul(hf, (-0.035f - 2.f * swing) * H), mul(hu, -kTailLen * H)));
+    const float tw = 0.5f * kTailW * H;
+    const Vec2 tail[6] = {add(root, mul(hf, 0.4f * tw)), add(root, add(mul(hf, -0.5f * tw), mul(hu, 0.3f * tw))),
+                          add(belly, mul(hf, -tw)), tip, add(belly, mul(hf, 0.75f * tw)), add(root, mul(hu, -0.6f * tw))};
+    poly(ps, tail, 6, HAIR);
+    cap(ps, add(belly, add(mul(hf, 0.35f * tw), mul(hu, 0.2f * tw))), add(tip, mul(hu, 0.6f * tw)), maxf(0.55f * tw, 1.3f),
+        HAIR_DARK);   // the shade down its inner side
+    // The bob: a disc of hair a little bigger than the head and set back and up, then her face again
+    // over its front, so the hair shows as a thick crescent over the crown and down the back.
+    circle(ps, add(head, add(mul(hf, -0.016f * H), mul(hu, 0.012f * H))), kHairR * H, HAIR);
+    circle(ps, add(head, add(mul(hf, 0.016f * H), mul(hu, -0.016f * H))), 0.85f * headR);
+  } else if (h.look == LOOK_BEN && h.hat_on) {   // the ball cap: a dome and a bill to the front
+    const Vec2 c = add(head, mul(hu, 0.008f * H));
+    Vec2 dome[5];
+    for (int i = 0; i < 5; ++i) {
+      const float a = 0.5f * (float)i / 4.f;
+      dome[i] = add(c, add(mul(hf, -cosT(a) * kCapR * H), mul(hu, sinT(a) * kCapR * H)));
+    }
+    poly(ps, dome, 5);
+    const Vec2 b0 = add(c, add(mul(hf, 0.04f * H), mul(hu, 0.004f * H)));
+    cap(ps, b0, add(b0, add(mul(hf, kBillLen * H), mul(hu, -0.008f * H))), kBillW * H);
+  }
+  if (h.look == LOOK_HIKER && h.hat_on) cap(ps, sub(brim, mul(hf, kBrimBack * H)), add(brim, mul(hf, kBrimFront * H)), kBrimW * H);
+  if (h.look == LOOK_HIKER && h.hat_on) {
     const Vec2 b0 = add(brim, mul(hu, 0.01f * H));
     const Vec2 t0 = add(b0, mul(hu, kCrownH * H));
     const Vec2 crown[5] = {sub(b0, mul(hf, kCrownBase * H)), add(b0, mul(hf, kCrownBase * H)),
@@ -488,6 +545,7 @@ void hikerInit(Hiker& h, Vec2 feet, int facing) {
   h.pack_on = true;
   h.lit_from = 0;
   h.hat_on = true;
+  h.look = LOOK_HIKER;
   h.rod_len = 0.75f;
   h.rod_bend = h.rod_tilt = 0.f;
   h.rod_stick = h.rod_line = h.rod_float = false;
@@ -703,7 +761,9 @@ void hikerDraw(const Hiker& h, Surface& s, const Palette& pal, const Rect& clip)
     float x0, y0, x1, y1;
     primExtent(p, x0, y0, x1, y1);
     if (x1 < (float)clip.x0 || x0 > (float)clip.x1 || y1 < (float)clip.y0 || y0 > (float)clip.y1) continue;
-    const Pixel c = pal[p.slot];
+    const Pixel c = p.slot == HAIR        ? mixRGB(pal[MUSHROOM], pal[TRUNK], kHairMix)
+                    : p.slot == HAIR_DARK ? mixRGB(pal[MUSHROOM], pal[ACTOR], 0.72f)
+                                          : pal[p.slot];
     switch (p.kind) {
       case PRIM_CAP: strokeCapsule(s, p.p[0], p.p[1], p.w, c, clip); break;
       case PRIM_CIRCLE: fillCircle(s, p.p[0], p.w, c, clip); break;

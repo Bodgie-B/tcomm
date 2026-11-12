@@ -40,6 +40,8 @@ class PanelApp : public ui::Actions {
   bool updater_installed() override { return p_.updater_installed(); }
   void start_updater() override { p_.start_updater(); }
   void start_updater_both() override { c_.update_both(); }
+  void set_note(const char *text, uint32_t duration_s) override { c_.set_note(text, duration_s); }
+  void clear_note() override { c_.clear_note(); }
 
   void apply_settings(const Settings &in) override {
     Settings s = in;

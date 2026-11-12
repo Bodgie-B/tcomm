@@ -327,6 +327,58 @@ static void sensor_info() {
 }
 #endif
 
+// ---- The presence sensor (Mike, 2026-11-11; docs/presence-sensor.md) ----
+// One plain on/off sensor on the isolated input DI0 (expander pin EXIO0), upstairs only, and only
+// once Settings says it is fitted. Read from the loop task about every 100 ms (one I2C read, never
+// from the LVGL task), debounced by two agreeing reads, and handed to the platform; the controller
+// asks for it there. Settings are read without the LVGL lock: single bytes.
+static tc::PresenceFilter g_pres;
+static uint32_t g_pres_next = 0;
+static bool g_pres_was_on = false;
+
+static void presence_tick() {
+  uint32_t now = millis();
+  if ((int32_t)(now - g_pres_next) < 0) return;
+  g_pres_next = now + tc::kPresencePollMs;
+  const tc::Settings &s = g_ctrl.settings();
+  const bool on = s.presence_fitted && s.floor == tc::Floor::Upstairs;
+  if (!on) {
+    if (g_pres_was_on) {  // switched off: forget it
+      g_pres.reset();
+      g_platform.set_presence(false, -1);
+      g_pres_was_on = false;
+    }
+    return;
+  }
+  g_pres_was_on = true;
+  uint8_t pins = 0;
+  bool ok = board::expander_read(0x04, pins);  // the pins' levels; bit 0 is DI0 (EXIO0)
+  g_pres.feed(ok, (pins & 1) != 0, s.presence_active_high);
+  g_platform.set_presence(g_pres.present(), g_pres.have_level() ? (g_pres.level() ? 1 : 0) : -1);
+}
+
+// "presence": the raw level, the debounced state and the minutes since it last saw anyone.
+static void presence_report() {
+  const tc::Settings &s = g_ctrl.settings();
+  const tc::View::PresenceView &pv = g_ctrl.view().presence;
+  Serial.printf("presence: %s (floor %s); sensor %s on DI0, active %s, hold %u s\n", s.presence_fitted ? "fitted" : "NOT fitted",
+                tc::floor_word(s.floor), s.floor == tc::Floor::Upstairs ? "read" : "not read here",
+                s.presence_active_high ? "high" : "low", (unsigned)s.presence_hold_s);
+  int raw = g_platform.presence_raw();
+  Serial.printf("presence: raw level %s, debounced %s%s, occupied %s; %lu failed reads\n",
+                raw < 0 ? "not read" : raw ? "high" : "low", g_platform.presence_debounced() ? "present" : "absent",
+                g_platform.presence_sim() >= 0 ? " (forced by presence sim)" : "", pv.occupied ? "yes" : "no",
+                (unsigned long)g_pres.errors());
+  if (pv.since_min < 0) Serial.println("presence: not seen since this start");
+  else Serial.printf("presence: last seen %ld min ago\n", (long)pv.since_min);
+}
+
+// "presence sim 0|1|off": forces the sensor absent or present, or lets the real one back in.
+static void presence_sim(int v) {
+  g_platform.set_presence_sim(v < 0 ? -1 : (v ? 1 : 0));
+  Serial.printf("presence sim: %s\n", v < 0 ? "off, the sensor again" : v ? "forced present" : "forced absent");
+}
+
 void setup() {
   Serial.begin(115200);
   // With a laptop attached but not reading, the USB serial port blocks each write for up to the TX
@@ -341,7 +393,7 @@ void setup() {
   tc::OwnState own;
   tc::DogState dog;
   tc::MailState mail;
-  bool have_settings = board::load_settings(settings);
+  bool have_settings = board::load_settings(settings);  // an older saved layout is read too (settings_migrate.h)
 #if defined(TCOMM_LATITUDE) && defined(TCOMM_LONGITUDE)
   // The location for sunrise and sunset lives in the untracked secrets.h, not the public repo. It
   // wins over a saved copy, so changing it there and reflashing is enough.
@@ -418,6 +470,10 @@ void setup() {
     }
     tc::RequestState requests;  // the arrows held when the panel last saved them (requests.h)
     if (board::load_requests(requests)) g_ctrl.restore_requests(requests);
+    // The tile messages (note.h, Mike 2026-11-07): each floor's text and times come back, so a restart
+    // keeps a message that hasn't run out yet on both panels.
+    tc::NoteState notes[2];
+    if (board::load_notes(notes)) g_ctrl.restore_notes(notes);
     if (!have_settings) g_platform.save_settings(settings);
 #if TCOMM_DEMO
     g_demo.begin(g_ctrl);
@@ -556,6 +612,33 @@ static void req_report() {
                 r.acted_dismissed ? "yes" : "no");
 }
 
+// "note": both floors' tile messages and the minutes each has left (note.h). The clock is read here,
+// as the screen's own is. With no clock a message stays until it is tapped away (Mike, 2026-11-07).
+static void note_report() {
+  const tc::WallTime w = g_platform.wall();
+  for (int i = 0; i < 2; i++) {
+    const tc::Floor f = (tc::Floor)i;
+    const tc::NoteState &n = g_ctrl.note(f);
+    Serial.printf("note %s: ", tc::floor_lower(f));
+    if (!n.text[0]) Serial.println("none");
+    else if (!n.until) Serial.printf("\"%s\", until tapped away\n", n.text);
+    else if (!w.valid) Serial.printf("\"%s\", (clock not set)\n", n.text);
+    else if (n.until <= w.utc) Serial.printf("\"%s\", time up\n", n.text);
+    else Serial.printf("\"%s\", %lu min left\n", n.text, (unsigned long)((n.until - w.utc + 59) / 60));
+  }
+}
+
+// "note <text>": this panel's floor message for the longest time (4 hours, note.h). The model drops
+// spaces at either end and keeps at most kNoteTextMax bytes.
+static void note_send(const char *text) {
+  while (*text == ' ') text++;
+  if (!*text) {
+    Serial.println("note: give the text, as note <text>, or note clear");
+    return;
+  }
+  Serial.println(g_ctrl.set_note(text, tc::kNoteMaxS) ? "note: set for 4 hours" : "note: nothing changed");
+}
+
 // "time YYYY-MM-DD HH:MM[:SS]" into f: year, month, day, hour, minute, second (left as it was if
 // not given).
 static bool cmd_time(const char *s, int f[6]) {
@@ -605,10 +688,12 @@ static void command(char *s) {
                    "JUST RIGHT, TOO COOL, MUCH TOO COLD; downstairs only) | comfort remove N (answer N marked removed, as the chart's REMOVE)");
     Serial.println("req (the arrows held) | req send 0-3 (the tenant sends urgent heat, mild heat, mild cooling, urgent cooling; "
                    "downstairs only) | req tap (a tap on the arrows) | req acted (a tap on Action taken)");
+    Serial.println("note (both floors' tile messages, and the minutes left) | note <text> (this panel's floor's message, 4 hours) | note clear (take it away)");
     Serial.println("gear (as a tap on the gear: Settings rolls down or up) | knock (the other floor rings, as if by radio)");
+    Serial.println("presence (the presence sensor on DI0: raw level, debounced state, minutes since last seen; upstairs, once "
+                   "fitted in Settings) | presence sim 0 / 1 / off (force absent or present for tests, or the real sensor again)");
     Serial.println("update both (the other panel and this one restart into the Wi-Fi updater, as Settings > Update over Wi-Fi > BOTH PANELS does)");
     Serial.println("update (restart into the Wi-Fi updater, as Settings > Update over Wi-Fi does)");
-    Serial.println("timesync (ask the internet for the time now; the result shows in log and radio)");
     Serial.println("phase N (the sky as if it were 0 night, 1 dawn, 2 morning, 3 midday, 4 golden hour, 5 dusk: the palette, "
                    "the backlight and the screensaver follow; 6 = the clock again)");
     Serial.println("screensaver (on by itself after 10 min without a touch): ss (on or off now, no reveal) | ss seed N | "
@@ -635,6 +720,11 @@ static void command(char *s) {
   }
   if (!strcmp(s, "sd")) {
     board::sd_report();
+    return;
+  }
+  if (!strncmp(s, "sd fail ", 8)) {  // test only: 1 the card fails for good, 2 fails once, 0 back to normal
+    board::storage_test_fail(atoi(s + 8));
+    Serial.printf("sd fail %d\n", atoi(s + 8));
     return;
   }
   if (!strcmp(s, "sd format yes")) {  // only formats a card that can't be mounted as it is
@@ -704,11 +794,17 @@ static void command(char *s) {
     Serial.println(g_ctrl.tap_acted() ? "req acted: put away" : "req acted: nothing to put away");
   else if (cmd_int(s, "comfort", v) && tc::feel_valid((uint8_t)v))
     Serial.printf("comfort: %s\n", g_ctrl.comfort_answer((tc::Feel)v) ? "answer taken" : "not taken (upstairs, or the survey isn't asking)");
+  else if (!strcmp(s, "note")) note_report();
+  else if (!strcmp(s, "note clear")) Serial.println(g_ctrl.clear_note() ? "note: taken away" : "note: nothing showing here to take away");
+  else if (!strncmp(s, "note ", 5)) note_send(s + 5);
+  else if (!strcmp(s, "presence")) presence_report();
+  else if (!strcmp(s, "presence sim 0")) presence_sim(0);
+  else if (!strcmp(s, "presence sim 1")) presence_sim(1);
+  else if (!strcmp(s, "presence sim off")) presence_sim(-1);
   else if (!strcmp(s, "gear")) ui::tap_gear();
   else if (!strcmp(s, "update both"))  // Mike, 2026-11-07: the same as Settings > Update over Wi-Fi > BOTH PANELS
     Serial.println(g_ctrl.update_both() ? "update both: asking the other panel, then this one restarts" : "update both: this panel has no updater installed");
   else if (!strcmp(s, "update")) board::restart_into_updater();
-  else if (!strcmp(s, "timesync")) Serial.println(board::time_sync_start() ? "time: asking" : "time: can't ask now");
   else if (!strcmp(s, "knock")) knock_from_other_floor();
   else if (cmd_int(s, "phase", v) && v >= 0 && v <= 6) {
     g_ctrl.force_phase(v);   // the controller's test hook: 6 (or anything past 5) follows the clock
@@ -820,33 +916,6 @@ static void command(char *s) {
   lvgl_port_unlock();
 }
 
-#if TCOMM_RADIO_ESPNOW
-// Internet time (board_radio.cpp). While the clock is unset, or set from a source less sure than
-// the internet (the other panel, the gateway's weather time, by hand), ask half a minute after
-// start-up, then less and less often: 2, 4, 8 ... minutes, at most hourly. Once the internet has
-// set it, nothing more until the next start-up.
-static void time_tick() {
-  static uint32_t next = 30000, wait = 120000;
-  uint32_t utc = board::time_sync_poll();
-  if (utc) {
-    if (lvgl_port_lock(1000)) {  // the controller reads the clock in the LVGL task
-      g_platform.set_wall(utc, tc::kClockNetwork);
-      lvgl_port_unlock();
-    }
-    return;
-  }
-  if (board::time_sync_busy() || (int32_t)(millis() - next) < 0) return;
-  tc::WallTime w = g_platform.wall();
-  if (w.valid && w.quality >= tc::kClockNetwork) return;
-  if (board::time_sync_start()) {
-    next = millis() + wait;
-    wait = wait < 1800000u ? wait * 2 : 3600000u;
-  } else {
-    next = millis() + 60000;  // no Wi-Fi set up, or a try still under way
-  }
-}
-#endif
-
 void loop() {
   static char buf[64];
   static int len = 0;
@@ -862,9 +931,6 @@ void loop() {
   }
   g_platform.flush_saves();  // NVS writes happen here, not in the LVGL task
   board::elog_flush();       // and so do writes to USB serial
-#if TCOMM_RADIO_ESPNOW
-  time_tick();
-#endif
   static bool healthy = false;
   if (!healthy && millis() > 60000) {  // a minute up: whatever crashed before is behind us
     healthy = true;
@@ -873,6 +939,7 @@ void loop() {
 #if TCOMM_SENSOR
   sensor_tick();
 #endif
+  presence_tick();
   static uint32_t ss_log = 0;   // the screensaver's frame stats, every 5 s while it runs (ss log)
   if (g_ss_log && ui::screensaver_running() && millis() - ss_log >= 5000) {
     ss_log = millis();

@@ -89,16 +89,42 @@ struct Landscape {
 
 void landscapeGenerate(Landscape& ls, Rng& rng);
 
+// What the sky layer shows besides its bands, in whole pixels and small steps, so the app can
+// tell when the picture changes (it repaints only the rows a body moved in, app.cpp). Made by
+// landscapeSky from the host's real sun and moon; all zero is the old sky: one body parked by mood.
+struct SkyDraw {
+  bool real;               // the host gave real positions (Inputs::sky.have)
+  bool sun, moon;          // each drawn at all (up, or just under the ridges; the moon also not near new)
+  bool dark;               // no moon in the sky: more and bigger stars
+  int16_t sun_x, sun_y, sun_r;
+  int16_t moon_x, moon_y;
+  uint8_t moon_phase;      // 64ths of the moon's month: 0 new, 16 first quarter, 32 full, 48 last quarter
+  uint8_t cover;           // cloud cover in eighths: under 2 none, 2-3 a few high clouds, 4 and up a deck
+};
+#define LS_MOON_R 16
+#define LS_EXTRA_STARS 16  // the stars a moonless night adds (placed by a hash, not stored)
+
+// `mood` (palette.h) says how much of a night it is: by day the moon is a pale disc and needs to
+// be a good part lit to show. `cover` 0..1 is the cloud cover (the palette's overcast, or more
+// when it rains).
+SkyDraw landscapeSky(const SkyInputs& in, float mood, float cover);
+bool landscapeSkySame(const SkyDraw& a, const SkyDraw& b);
+// The frame area the sun and the moon cover (empty when not drawn). The moon's includes the ring
+// around it kept clear of stars.
+Rect landscapeSunBounds(const SkyDraw& s);
+Rect landscapeMoonBounds(const SkyDraw& s);
+
 // Draw the layers the build state says the cache holds into `frame` (full
-// frame, origin_y 0). `mood` places the sun or moon and decides whether stars
-// show. Before the sky is cached the frame is the flat horizon color.
+// frame, origin_y 0; or a band of whole rows of it). `mood` decides whether
+// stars show and, with no `sky`, places the sun or moon. Before the sky is
+// cached the frame is the flat horizon color.
 void landscapeDrawStatic(const Landscape& ls, Surface& frame, const Palette& pal, float mood,
-                         const BuildState& b);
+                         const BuildState& b, const SkyDraw* sky = nullptr);
 
 // Draw, clipped to `clip`, the layers in [first, last] that are built or
 // animating but not in the cache, each in its current build pose.
 void landscapeDrawLayers(const Landscape& ls, Surface& s, const Rect& clip, const Palette& pal,
-                         float mood, const BuildState& b, int first, int last);
+                         float mood, const BuildState& b, int first, int last, const SkyDraw* sky = nullptr);
 
 // Stream centerline sample at fractional point index `s` (0 = off the right
 // edge, LS_STREAM_PTS - 1 = off the left), linearly interpolated; the normal is
@@ -116,6 +142,9 @@ bool landscapeStreamSpan(const Landscape& ls, float x, float& cy, float& half);
 // again over that actor, clipped to the actor's bounds.
 Rect landscapeFgPineBounds(const Landscape& ls, int k);
 void landscapeDrawFgPine(const Landscape& ls, int k, Surface& s, const Rect& clip, const Palette& pal);
+// Foreground pine k's tier i (0 the top) as drawn grown: its base row and half width (the icicles of
+// fire and ice hang from it).
+void landscapeFgPineTier(const Landscape& ls, int k, int i, float& base_y, float& half_w);
 
 // The weather (weather.cpp) draws its fog bands over the cached far layers
 // and then the near pines again over them (they stand in front of the fog),

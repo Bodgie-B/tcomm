@@ -20,6 +20,7 @@
 
 #include "../anim/ease.h"
 #include "director.h"
+#include "housedogs.h"
 #include "landscape.h"
 #include "memory.h"
 #include "world.h"
@@ -732,13 +733,17 @@ void dogTick(World& w, float) {
 }
 
 // The second dog: in after the first, then it shadows it, a little behind and in front, and sits when it sits.
+// It is Copper when both house dogs are out (housedogs.h), whatever the plan thought at the loop's start;
+// with one out, or none, there is no second dog.
 void dog2Tick(World& w) {
   MajorState& m = M(w);
-  if (!(m.var & FETCH_SECOND)) return;
   const Vec2 s = spot(w);
   if (m.c[1] < 0 && m.stage[1] == 0) {
-    if (has(m, kGo) && m.t - m.tc >= 1.6f) {
-      if (spawnDog(w, 1, Vec2{-72.f, s.y + 9.f}, 1, 1, 0.8f) >= 0) {
+    if (has(m, kSpawned) && m.t - m.tc >= 1.6f) {
+      const int tone = houseDogsFetchTone(w, 1);
+      if (tone < 0) return;
+      if (spawnDog(w, 1, Vec2{-72.f, s.y + 9.f}, 1, (uint8_t)tone, dogToneScale((uint8_t)tone)) >= 0) {
+        w.dogs.fetch_tone[1] = (uint8_t)(tone + 1);
         dogWalk(w, 1, homeOf2(w), 62.f, CA_MOVE);
         stageTo(w, 1, 1);
       } else {
@@ -795,7 +800,8 @@ void branchTick(World& w) {
       if (m.st[0] >= 3.4f) {
         const float x = (float)SS_WIDTH + 70.f;
         const float y = scriptGroundAt(w, s.x + 60.f, s.y + 5.f);
-        if (spawnDog(w, 0, Vec2{x, y}, -1, 0, 1.f) < 0) {
+        const uint8_t tone = w.dogs.fetch_tone[0] ? (uint8_t)(w.dogs.fetch_tone[0] - 1) : (uint8_t)DT_CAMP;   // the same dog
+        if (spawnDog(w, 0, Vec2{x, y}, -1, tone, dogToneScale(tone)) < 0) {
           failScene(w);
           return;
         }
@@ -842,12 +848,14 @@ uint8_t fetchPlanVar(uint32_t r, int dog_out, bool forced) {
 }
 
 // PROPOSED seconds: the longest script seen over 8 seeds a variant (a bouncy dog trots back faster than a lazy one)
-// plus 4 s; tests/test_dog.cpp reads how early the script is done and wants 3 s.
+// plus 4 s; tests/test_dog.cpp reads how early the script is done and wants 3 s. A fetch planned because a house
+// dog is out gets 7 s more: Lucy or Copper first runs off out of sight before the fetch's dog trots in (fetchTick).
 int fetchSeconds(uint8_t var) {
+  const int extra = (var & FETCH_FORCED) ? 7 : 0;
   switch (var & 3u) {
-    case 0: return (var & FETCH_THREE) ? 59 : 50;
-    case 1: return 45;
-    default: return 55;
+    case 0: return extra + ((var & FETCH_THREE) ? 59 : 50);
+    case 1: return extra + 45;
+    default: return extra + 55;
   }
 }
 
@@ -897,10 +905,16 @@ void fetchTick(World& w, float dt) {
   stickTick(w);
   ageGlyphs(w, dt);
   if (!has(m, kGo)) return;
-  if (!has(m, kSpawned)) {   // the dog trots in from the left edge with a stick in its mouth
+  // The dog trots in from the left edge with a stick in its mouth: Lucy, or Copper, when a house dog is out
+  // (the house dogs have run off to the left as the fetch began: it waits until they are out of sight, at most
+  // 6 s), else the camp dog.
+  if (!has(m, kSpawned) && (houseDogsClear(w) || m.t - m.tc >= 6.f)) {
     fire(m, kSpawned);
+    m.tc = m.t;   // the second dog follows 1.6 s after this
     const Vec2 d0 = dropLeft(w);
-    if (spawnDog(w, 0, Vec2{-72.f, d0.y}, 1, 0, 1.f) < 0) {
+    const uint8_t tone = (uint8_t)houseDogsFetchTone(w, 0);
+    w.dogs.fetch_tone[0] = (uint8_t)(tone + 1);
+    if (spawnDog(w, 0, Vec2{-72.f, d0.y}, 1, tone, dogToneScale(tone)) < 0) {
       failScene(w);
       return;
     }

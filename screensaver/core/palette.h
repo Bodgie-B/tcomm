@@ -52,6 +52,22 @@ struct WeatherTint {
   // the PC preview's look. The panel's backlight already dims at night, and on it 0.55 left only the
   // stream readable (Mike, 2026-11-05), so the panel asks for more; the caps below hold either way.
   float night_gain;
+  // Rain: how dark a raining sky is, 0..1. The host's choice; 0 means the scene's own
+  // (scene/weather.cpp kRainDark), so a zeroed struct plays the default.
+  float rain_dark;
+  // The darkening the palette applies, 0..1: the scene sets it while it rains or storms
+  // (weatherTint). A host leaves it 0.
+  float gloom;
+};
+
+// Where the sun and the moon really are (ss_app.h Inputs::sky). The host works them out from its
+// clock and its place; the core only draws them. Degrees: az clockwise from north (90 east, 180
+// south, 270 west), alt above the horizon. The scene looks south, so east is on the left.
+struct SkyInputs {
+  bool have;         // false (a zeroed struct): the sun and moon parked by mood, as before
+  float sun_az, sun_alt;
+  float moon_az, moon_alt;
+  float moon_phase;  // 0 new, 0.25 first quarter, 0.5 full, 0.75 last quarter
 };
 
 // Night rule limits (brief section 11: no large bright areas, no pure white),

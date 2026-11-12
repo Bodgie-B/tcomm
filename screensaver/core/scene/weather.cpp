@@ -506,7 +506,7 @@ void weatherPlan(World& w, uint64_t loop_seed, const Inputs& in, uint32_t loop_t
     x.kind = randomKind(x.rng, in);
     // The Lookout draws no precipitation, so a random rain, snow, fog or
     // storm would tint its sunset with nothing to show for it.
-    if (w.plan.family == SF_LOOKOUT && x.kind != WX_WIND && x.kind != WX_HEAT && x.kind != WX_CHILL) x.kind = WX_CLEAR;
+    if (spineSetPiece(w.plan.family) && x.kind != WX_WIND && x.kind != WX_HEAT && x.kind != WX_CHILL) x.kind = WX_CLEAR;
   }
   // One rng call per statement from here on.
   const float er = x.rng.uniform();
@@ -707,7 +707,8 @@ void weatherStep(World& w) {
   }
 
   stepBits(w);
-  if (w.react.active) return;   // his doorbell reaction: the gags about him wait with the story (react.h)
+  // His doorbell reaction, or fire and ice: the gags about him wait with the story (react.h, fireice.h).
+  if (w.react.active || w.fi.on) return;
   stepAboutHim(w);
   stepOverlay(w);
 }
@@ -736,6 +737,12 @@ void weatherEaseRain(World& w, float k, float hold) {
   x.ease_until = storyTick(w) + ticksOf(hold);
 }
 
+// How dark the sky goes while it rains, 0 (no darker than a dry gray day) to 1. Mike picks the
+// level from the stage 12 stills: light 0.25, medium 0.45, dark 0.65. A host can set its own
+// (WeatherTint::rain_dark; the preview's --rain-dark). A storm is this much darker again.
+constexpr float kRainDark = 0.45f;
+constexpr float kStormDarker = 0.25f;
+
 float weatherTint(const World& w, WeatherTint& t) {
   const Weather& x = w.weather;
   if (x.kind == WX_CLEAR && x.extra == WXE_NONE) return 0.f;
@@ -744,6 +751,12 @@ float weatherTint(const World& w, WeatherTint& t) {
   else if (x.kind == WX_STORM) oc = 0.8f;
   else if (x.kind == WX_SNOW) oc = 0.7f;
   if (oc > t.overcast) t.overcast = oc;
+  // The Lookout draws no rain, so its sunset is not darkened for one.
+  if ((x.kind == WX_RAIN || x.kind == WX_STORM) && !spineSetPiece(w.plan.family)) {
+    const float level = t.rain_dark > 0.f ? clamp01(t.rain_dark) : kRainDark;
+    const float g = x.kind == WX_STORM ? minf(1.f, level + kStormDarker) : level;
+    if (g > t.gloom) t.gloom = g;
+  }
   // Fog: screened over what is there (the morning's own lifting fog keeps
   // every one of its 0.05 steps a visible step: 0.05 x 0.55 > the app's 0.02).
   if (x.kind == WX_FOG) t.fog = 1.f - (1.f - clamp01(t.fog)) * (1.f - 0.45f);
@@ -751,6 +764,16 @@ float weatherTint(const World& w, WeatherTint& t) {
   static const float kFlashNight[3] = {0.f, 0.15f, 0.3f};
   const float* fl = weatherNight(w) ? kFlashNight : kFlash;
   return fl[x.flash_q < 3 ? x.flash_q : 2];
+}
+
+float weatherCloudCover(const World& w) {
+  if (spineSetPiece(w.plan.family)) return 0.f;
+  switch (w.weather.kind) {
+    case WX_STORM: return 1.f;
+    case WX_RAIN: return 0.9f;
+    case WX_SNOW: return 0.7f;
+    default: return 0.f;
+  }
 }
 
 float weatherSwayMul(const World& w) {
@@ -969,7 +992,10 @@ void weatherDrawFog(const World& w, Surface& s, const Rect& clip, const Palette&
     }
     // The near pines stand in front of the fog.
     const Rect b = Rect{cx - (int)rx - 1, ya, cx + (int)rx + 2, yb}.clipped(clip);
-    if (!b.empty()) landscapeDrawNearPines(w.land, s, b, pal);
+    if (!b.empty()) {
+      landscapeDrawNearPines(w.land, s, b, pal);
+      fireIceDrawIcicles(w, s, b, pal, 7);   // and their icicles in the cold
+    }
   }
 }
 

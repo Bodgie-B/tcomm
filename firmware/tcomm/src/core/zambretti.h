@@ -12,6 +12,10 @@ namespace tc {
 Forecast zambretti_symbol(char letter);
 // The letter's text, as WeatherGate words it ("Rain at Times, Worse Later"); "" if none.
 const char *zambretti_text(char letter);
+// The other way: a letter whose text this is ('A' to 'Z'; the first when several share a text,
+// upper or lower case alike), or 0 for any other text ("No Pressure Data", the snow wordings).
+// The screensaver picks its weather from it (Mike, 2026-11-11: by the words, not the icon).
+char zambretti_letter(const char *text);
 // WeatherGate's symbol keys ("sunny", "partly_cloudy", ... "storm") and back.
 Forecast forecast_from_key(const char *key);
 const char *forecast_key(Forecast f);  // "" for Unknown and Moon

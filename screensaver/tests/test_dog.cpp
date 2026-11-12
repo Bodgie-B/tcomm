@@ -10,8 +10,9 @@
 //       events seen (the catch, the wading and the spray, the branch)
 //   [4] dog_out forces a fetch into every midday loop (and never into the
 //       other families); the plan reads it at loop start only
-//   [5] with both dogs out a second, smaller dog in a darker brown joins; with
-//       one out, none
+//   [5] with both dogs out a second, smaller dog joins: Lucy plays the fetch
+//       and Copper is the second dog (stage 13, housedogs.h); with one out, that
+//       dog alone
 //   [6] the doorbell freeze: the dog, the stick and the beat's clock stand still
 //       for the whole reaction and then carry on
 //   [7] drawn tick by tick the beat equals a full render; the strips it costs
@@ -153,10 +154,11 @@ static void testRig() {
   for (int a : kActs) {
     CHECK(critterSupports(CR_DOG, (CritterAction)a), "the dog does not support %s", critterActionName((CritterAction)a));
     for (int facing = -1; facing <= 1; facing += 2)
-      for (int variant = 0; variant < 3; ++variant)
+      for (int variant = 0; variant < 5; ++variant)
         for (int ph = 0; ph < 4; ++ph) {
-          const float scale = variant == 2 ? 0.8f : 1.f;
-          const uint8_t tone = variant == 1 ? 1 : 0;
+          // the camp dog, its darker brown, a smaller one; Lucy and Copper at their own sizes
+          const uint8_t tone = variant == 1 ? DT_CAMP2 : (variant == 3 ? DT_LUCY : (variant == 4 ? DT_COPPER : DT_CAMP));
+          const float scale = variant == 2 ? 0.8f : dogToneScale(tone);
           Critter c = dogIn(a, 0.1f + 0.25f * (float)ph, facing, scale, tone, kCarries[(ph + variant) % 3], kTails[(ph + a) % 3]);
           c.feet = Vec2{200.f, 130.f};
           critterTick(c, 0.f);
@@ -574,6 +576,8 @@ static void testSecondDog() {
     CHECK(a.two_dogs, "seed %d: dog_out 3 and never two dogs at once", (int)seed);
     if (a.two_dogs) {
       CHECK(a.tones[0] != a.tones[1], "seed %d: the two dogs are the same brown", (int)seed);
+      CHECK((a.tones[0] == DT_LUCY && a.tones[1] == DT_COPPER) || (a.tones[0] == DT_COPPER && a.tones[1] == DT_LUCY),
+            "seed %d: the fetch's dogs are not Lucy and Copper (tones %d, %d)", (int)seed, a.tones[0], a.tones[1]);
       CHECK((a.scales[0] < a.scales[1] ? a.scales[0] : a.scales[1]) < 0.9f, "seed %d: the second dog is not smaller (%.2f, %.2f)", (int)seed,
             (double)a.scales[0], (double)a.scales[1]);
     }
@@ -581,7 +585,15 @@ static void testSecondDog() {
     CHECK(a.overruns == 0 && a.critters_end == 0 && a.in_chip == 0, "seed %d, two dogs: overruns %d, left %d, chip %d", (int)seed, a.overruns,
           a.critters_end, a.in_chip);
     CHECK(a.slack_s >= 3.f, "seed %d, two dogs: slack %.1f s", (int)seed, (double)a.slack_s);
-    if (playFetch(seed, 1, b, nullptr)) one_two += b.two_dogs;
+    if (playFetch(seed, 1, b, nullptr)) {
+      one_two += b.two_dogs;
+      CHECK(b.tones[0] == DT_LUCY, "seed %d: Lucy out, and the fetch's dog is tone %d", (int)seed, b.tones[0]);
+    }
+    Play c;
+    if (playFetch(seed, 2, c, nullptr)) {
+      one_two += c.two_dogs;
+      CHECK(c.tones[0] == DT_COPPER, "seed %d: Copper out, and the fetch's dog is tone %d", (int)seed, c.tones[0]);
+    }
   }
   printf("  %d fetches with both out, two dogs in %d; with one out, two dogs in %d; the dogs get up to %.0f px apart\n", plays, two, one_two,
          (double)apart);

@@ -39,7 +39,7 @@ struct Reader {
 
 bool latest_wins(MsgType t) {
   return t == MsgType::State || t == MsgType::DogMsg || t == MsgType::Reading || t == MsgType::Outside ||
-         t == MsgType::EventSum || t == MsgType::Mail || t == MsgType::Requests;
+         t == MsgType::EventSum || t == MsgType::Mail || t == MsgType::Requests || t == MsgType::Note || t == MsgType::Notice;
 }
 
 }  // namespace
@@ -89,6 +89,21 @@ size_t encode(const Msg &m, uint8_t *out, size_t cap) {
       w.u32(m.u.comfort_del.n); w.u32(m.u.comfort_del.removed); w.u32((uint32_t)m.u.comfort_del.offset);
       break;
     case MsgType::Update: w.u8(0); break;  // one reserved byte
+    case MsgType::Notice: {
+      const auto &n = m.u.notice;
+      if (n.kind < 1 || n.kind > kNoticeKinds || n.floor > 1) return 0;
+      size_t len = strnlen(n.text, kNoticeTextMax);
+      w.u8(n.kind); w.u8(n.floor); w.u16((uint16_t)n.value); w.u32(n.time); w.u8((uint8_t)len); w.bytes(n.text, len);
+      break;
+    }
+    case MsgType::Note: {
+      const NoteState &n = m.u.note.st;
+      if (m.u.note.floor > 1) return 0;
+      size_t len = strnlen(n.text, kNoteTextMax);
+      w.u8(m.u.note.floor); w.u8((uint8_t)len); w.bytes(n.text, len);
+      w.u32(n.set); w.u32(n.until); w.u32(n.since); w.u32(n.ver);
+      break;
+    }
     case MsgType::Requests: {
       const RequestState &r = m.u.req;
       if (r.n > kMaxArrows) return 0;
@@ -182,6 +197,33 @@ bool decode(const uint8_t *in, size_t len, Msg &m) {
       m.u.comfort_del.n = r.u32(); m.u.comfort_del.removed = r.u32(); m.u.comfort_del.offset = (int32_t)r.u32();
       if (m.u.comfort_del.n == 0) return false;
       break;
+    case MsgType::Note: {
+      uint8_t floor = r.u8();
+      uint8_t tlen = r.u8();
+      if (floor > 1 || tlen > kNoteTextMax) return false;
+      NoteState &n = m.u.note.st;
+      for (int i = 0; i < tlen; i++) {
+        char c = (char)r.u8();
+        if (c == 0) return false;  // no NUL inside the text
+        n.text[i] = c;
+      }
+      n.text[tlen] = 0;
+      m.u.note.floor = floor;
+      n.set = r.u32(); n.until = r.u32(); n.since = r.u32(); n.ver = r.u32();
+      break;
+    }
+    case MsgType::Notice: {
+      auto &n = m.u.notice;
+      n.kind = r.u8(); n.floor = r.u8(); n.value = (int16_t)r.u16(); n.time = r.u32(); n.text_len = r.u8();
+      if (n.kind < 1 || n.kind > kNoticeKinds || n.floor > 1 || n.text_len > kNoticeTextMax) return false;
+      for (uint8_t i = 0; i < n.text_len; i++) {
+        char c = (char)r.u8();
+        if ((uint8_t)c < 0x20 || (uint8_t)c > 0x7E) c = '?';  // printable ASCII only, like OUTSIDE's phrase
+        n.text[i] = c;
+      }
+      n.text[n.text_len] = 0;
+      break;
+    }
     case MsgType::Update:
       r.u8();  // the reserved byte: any value is accepted, so a later use can't break this version
       break;
@@ -225,9 +267,15 @@ bool Dedup::seen(uint8_t sender, uint16_t seq, uint32_t mono_ms) {
 
 uint16_t RetryQueue::push(Msg m, uint8_t sender, uint32_t mono_ms) {
   Slot *slot = nullptr;
+  // A NOTE is latest-wins per floor (Mike, 2026-11-07), so the floor is part of the match.
+  // A NOTICE replaces an unsent one of the same kind and floor, and at most kNoticeQueueMax wait at
+  // once (Mike, 2026-11-11): a newer one beyond that is dropped, never queued behind panel traffic.
+  const uint8_t key = m.type == MsgType::Note ? m.u.note.floor
+                      : m.type == MsgType::Notice ? (uint8_t)((m.u.notice.kind << 1) | (m.u.notice.floor & 1)) : 0;
   if (latest_wins(m.type)) {
-    for (auto &s : s_) if (s.used && s.f.type == m.type) { slot = &s; break; }
+    for (auto &s : s_) if (s.used && s.f.type == m.type && s.key == key) { slot = &s; break; }
   }
+  if (!slot && m.type == MsgType::Notice && pending(MsgType::Notice) >= kNoticeQueueMax) return 0;
   if (!slot) for (auto &s : s_) if (!s.used) { slot = &s; break; }
   if (!slot) return 0;
   m.sender = sender;
@@ -241,6 +289,7 @@ uint16_t RetryQueue::push(Msg m, uint8_t sender, uint32_t mono_ms) {
   slot->f.seq = m.seq;
   slot->f.type = m.type;
   slot->tries = 0;
+  slot->key = key;
   slot->first = mono_ms;
   slot->knock_id = m.type == MsgType::Knock ? m.u.knock.id : m.type == MsgType::Reply ? m.u.reply.id : 0;
   return m.seq;
@@ -252,14 +301,18 @@ uint32_t RetryQueue::next_at(const Slot &s) {
 }
 
 const RetryQueue::Frame *RetryQueue::due(uint32_t mono_ms) {
-  const Slot *best = nullptr;
-  for (const auto &s : s_) {
-    if (!s.used || s.tries >= kTries) continue;
-    uint32_t at = next_at(s);
-    if (!ms_reached(mono_ms, at)) continue;
-    if (!best || ms_diff(at, next_at(*best)) < 0) best = &s;
+  // Two passes: panel traffic first, and a NOTICE only when none of that is due.
+  for (int pass = 0; pass < 2; pass++) {
+    const Slot *best = nullptr;
+    for (const auto &s : s_) {
+      if (!s.used || s.tries >= kTries || (s.f.type == MsgType::Notice) != (pass == 1)) continue;
+      uint32_t at = next_at(s);
+      if (!ms_reached(mono_ms, at)) continue;
+      if (!best || ms_diff(at, next_at(*best)) < 0) best = &s;
+    }
+    if (best) return &best->f;
   }
-  return best ? &best->f : nullptr;
+  return nullptr;
 }
 
 void RetryQueue::sent(uint16_t seq, uint32_t mono_ms) {
@@ -297,7 +350,7 @@ bool RetryQueue::expired(uint32_t mono_ms, Result &r) {
 
 int RetryQueue::pending() const {
   int n = 0;
-  for (const auto &s : s_) n += s.used;
+  for (const auto &s : s_) n += s.used && s.f.type != MsgType::Notice;
   return n;
 }
 
@@ -324,6 +377,8 @@ const char *msg_name(MsgType t) {
     case MsgType::Requests: return "REQUESTS";
     case MsgType::ComfortDel: return "COMFORT_DEL";
     case MsgType::Update: return "UPDATE";
+    case MsgType::Note: return "NOTE";
+    case MsgType::Notice: return "NOTICE";
   }
   return "?";
 }

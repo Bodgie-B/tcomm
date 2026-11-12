@@ -22,14 +22,14 @@ namespace {
 // (kTileColour).
 // SCREENSAVER (Mike, 2026-11-05) sits beside SCREEN AT NIGHT; its colour differs from the three
 // tiles around it.
-enum TileId { kTime, kTemp, kUnit, kRing, kVol, kNight, kScreen, kSaver, kQuiet, kUpdate, kZambretti, kTest, kTiles };
+enum TileId { kTime, kTemp, kUnit, kRing, kVol, kNight, kScreen, kSaver, kQuiet, kUpdate, kZambretti, kPresence, kTest, kTiles };
 const char *const kTileLabel[kTiles] = {"TIME & DATE",  "TEMP OFFSET",     "THIS UNIT IS",   "RINGTONE",
                                         "VOLUME",       "NIGHT LIGHT",     "SCREEN AT NIGHT", "SCREENSAVER",
-                                        "QUIET HOURS",  "UPDATE OVER WI-FI", "ZAMBRETTI DEMO", "TEST PANEL"};
+                                        "QUIET HOURS",  "UPDATE OVER WI-FI", "ZAMBRETTI DEMO", "PRESENCE SENSOR", "TEST PANEL"};
 const char *const kTileSym[kTiles] = {LV_SYMBOL_LOOP,       LV_SYMBOL_TINT,      LV_SYMBOL_HOME,  LV_SYMBOL_BELL,
                                       LV_SYMBOL_VOLUME_MAX, LV_SYMBOL_EYE_CLOSE, LV_SYMBOL_POWER, LV_SYMBOL_VIDEO,
-                                      LV_SYMBOL_MUTE,       LV_SYMBOL_DOWNLOAD,  LV_SYMBOL_IMAGE, LV_SYMBOL_SETTINGS};
-const int kTileColour[kTiles] = {1, 4, 5, 6, 7, 8, 9, 3, 10, 0, 11, 12};  // theme::settings_tile
+                                      LV_SYMBOL_MUTE,       LV_SYMBOL_DOWNLOAD,  LV_SYMBOL_IMAGE, LV_SYMBOL_EYE_OPEN,  LV_SYMBOL_SETTINGS};
+const int kTileColour[kTiles] = {1, 4, 5, 6, 7, 8, 9, 3, 10, 0, 11, 2, 12};  // theme::settings_tile
 bool g_updater = false;  // the Wi-Fi updater is installed (checked once, when Settings opens)
 lv_obj_t *g_val[kTiles] = {};
 lv_obj_t *g_confirm = nullptr;
@@ -40,6 +40,7 @@ uint32_t g_clean_start = 0;
 lv_obj_t *g_clean_lbl = nullptr;
 uint32_t g_done_down = 0;
 lv_obj_t *g_saver_val = nullptr;
+lv_obj_t *g_pres_val = nullptr, *g_pres_btn[3] = {}, *g_pres_hold = nullptr;  // the presence page
 
 // The screensaver's wait: "10 min", "1 hr", "1 hr 5 min" (the tile), or in words for its page.
 void saver_text(char *out, size_t n, unsigned m, bool words) {
@@ -89,6 +90,11 @@ void tile_value(int id, char *out, size_t n) {
       break;
     case kRing: snprintf(out, n, "%s", ringtone_name(g_set.ringtone)); break;
     case kZambretti: snprintf(out, n, "All the forecasts"); break;
+    case kPresence:  // Mike, 2026-11-11: the sensor is on the upstairs panel only
+      if (g_set.floor != Floor::Upstairs) snprintf(out, n, "Upstairs panel only");
+      else if (!g_set.presence_fitted) snprintf(out, n, "Not fitted");
+      else snprintf(out, n, "%s", g_f.view && g_f.view->presence.seen_now ? "On: seen now" : "On: nobody now");
+      break;
     case kUpdate: snprintf(out, n, "%s", g_updater ? "Tap to start" : "Updater not installed"); break;
     case kVol: {  // 60, 70, 80, 90, 100 are levels 1 to 5; anything stored below 60 shows as level 1
       int lvl = g_set.volume < 60 ? 1 : (g_set.volume - 50 + 5) / 10;
@@ -236,6 +242,7 @@ void tile_clicked(lv_event_t *e) {
     case kScreen: s.screen_off_overnight = !s.screen_off_overnight; apply(s); return;
     case kRing: open_ringtones(); return;
     case kZambretti: open_zambretti_demo(); return;
+    case kPresence: open_presence(); return;
     case kSaver: open_screensaver(); return;
     case kUpdate: ask_update(); return;
     default: return;  // quiet hours aren't editable yet
@@ -263,7 +270,7 @@ void build_settings(lv_obj_t *root) {
     bool edge_buttons = id == kTemp || id == kVol || id == kNight || (id == kUnit && !(g_act && g_act->floor_locked()));
     if (edge_buttons) lv_obj_set_style_clip_corner(t, true, 0);
     bool tappable = id == kTime || id == kTest || id == kScreen || id == kSaver || id == kRing || id == kZambretti ||
-                    (id == kUpdate && g_updater);
+                    (id == kUpdate && g_updater) || (id == kPresence && g_set.floor == Floor::Upstairs);
     if (tappable) {
       pressable(t, face, 90);
       lv_obj_add_event_cb(t, tile_clicked, LV_EVENT_CLICKED, (void *)(intptr_t)id);
@@ -353,6 +360,27 @@ void saver_step(lv_event_t *e) {
   if (m == (int)g_set.screensaver_min) return;
   Settings s = g_set;
   s.screensaver_min = (uint16_t)m;
+  apply(s);
+  refresh_sheet();
+}
+
+// --- The presence sensor (Mike, 2026-11-11) ---
+// Fitted on or off, the level that means someone is there, and the hold time in 10 s steps (hold a
+// button to repeat); the line at the top shows the sensor live, for checking the wiring. Each change
+// is saved at once, as volume is. User data: 0 fitted, 1 active level, 2 hold less, 3 hold more.
+void presence_act(lv_event_t *e) {
+  const int what = (int)(intptr_t)lv_event_get_user_data(e);
+  Settings s = g_set;
+  if (what == 0) {
+    s.presence_fitted = !s.presence_fitted;
+  } else if (what == 1) {
+    s.presence_active_high = !s.presence_active_high;
+  } else {
+    int h = (int)s.presence_hold_s + (what == 3 ? (int)kPresenceHoldStep : -(int)kPresenceHoldStep);
+    if (h < (int)kPresenceHoldLeast) h = kPresenceHoldLeast;
+    if (h > (int)kPresenceHoldMost) h = kPresenceHoldMost;
+    s.presence_hold_s = (uint16_t)h;
+  }
   apply(s);
   refresh_sheet();
 }
@@ -489,6 +517,27 @@ void open_time_date() {
   theme::StatusColors open = theme::status_colors(0, g_mode);
   button(bg, 12, 306, 250, 90, chip(), k, "Cancel", J30, edit_done, (void *)0);
   button(bg, 274, 306, 514, 90, open.tile, open.text, "Save", J30, edit_done, (void *)1);
+  refresh_sheet();
+}
+
+void open_presence() {
+  lv_obj_t *root = new_sheet(Sheet::Presence, false);
+  Color k = ink();
+  lv_obj_t *bg = box(root, 0, 74, 800, 406, theme::sheet_bg(g_mode), 0);
+  lv_obj_add_flag(bg, LV_OBJ_FLAG_CLICKABLE);
+  label(bg, B16, k, 16, 14, "PRESENCE SENSOR ON THE ISOLATED INPUT DI0 (UPSTAIRS PANEL)");
+  g_pres_val = label(bg, J44, k, 16, 34, "");
+  g_pres_btn[0] = button(bg, 12, 96, 382, 90, chip(), k, "Fitted", B24, presence_act, (void *)(intptr_t)0);
+  g_pres_btn[1] = button(bg, 406, 96, 382, 90, chip(), k, "Active", B24, presence_act, (void *)(intptr_t)1);
+  lv_obj_t *less = button(bg, 12, 198, 252, 90, chip(), k, "- 10 s", B24, presence_act, (void *)(intptr_t)2);
+  lv_obj_add_event_cb(less, presence_act, LV_EVENT_LONG_PRESSED_REPEAT, (void *)(intptr_t)2);
+  lv_obj_t *show_hold = box(bg, 274, 198, 252, 90, chip(), 18);  // the hold time, not a button
+  g_pres_hold = label(show_hold, B24, k, 0, 0, "Hold");
+  lv_obj_center(g_pres_hold);
+  lv_obj_t *more = button(bg, 538, 198, 250, 90, chip(), k, "+ 10 s", B24, presence_act, (void *)(intptr_t)3);
+  lv_obj_add_event_cb(more, presence_act, LV_EVENT_LONG_PRESSED_REPEAT, (void *)(intptr_t)3);
+  g_pres_btn[2] = show_hold;
+  button(bg, 12, 306, 776, 90, chip(), k, "Back to Settings", J30, back_to_settings, nullptr);
   refresh_sheet();
 }
 
@@ -699,6 +748,22 @@ void refresh_sheet() {
       char t[40];
       saver_text(t, sizeof(t), g_set.screensaver_min, true);
       set_text(g_saver_val, t);
+      break;
+    }
+    case Sheet::Presence: {
+      if (idle > 60000) { close_sheet(); break; }
+      const View::PresenceView pv = g_f.view ? g_f.view->presence : View::PresenceView();
+      char t[48];
+      if (!g_set.presence_fitted) snprintf(t, sizeof(t), "Not switched on");
+      else if (pv.seen_now) snprintf(t, sizeof(t), "Seen now");
+      else if (pv.since_min < 0) snprintf(t, sizeof(t), "Not seen since start");
+      else if (pv.since_min == 0) snprintf(t, sizeof(t), "Last seen under a minute ago");
+      else snprintf(t, sizeof(t), "Last seen %d min ago", (int)pv.since_min);
+      set_text(g_pres_val, t);
+      set_text(lv_obj_get_child(g_pres_btn[0], 0), g_set.presence_fitted ? "Fitted: YES" : "Fitted: NO");
+      set_text(lv_obj_get_child(g_pres_btn[1], 0), g_set.presence_active_high ? "Active level: HIGH" : "Active level: LOW");
+      snprintf(t, sizeof(t), "Hold %u s", (unsigned)g_set.presence_hold_s);
+      set_text(g_pres_hold, t);
       break;
     }
     case Sheet::Ringtone:

@@ -270,6 +270,30 @@ void computePalette(float mood, const WeatherTint& w, float flash, Palette& out)
     out.c[STAR] = mixRGB(out.c[STAR], out.c[SKY1], 0.85f * oc);   // the cloud deck hides the stars too
   }
 
+  // Rain gloom: a raining sky is darker than a dry gray one. The sky and the clouds most, the
+  // far land less, the camp least; the fire and the lit tent stay as they are (they glow more
+  // against it). How dark is one number, the scene's kRainDark (scene/weather.cpp).
+  const float gl = clamp01(w.gloom);
+  if (gl > 0.f) {
+    static const Slot kSkySlots[] = {SKY0, SKY1, SKY2, SKY3, SKY4, SUN, STAR, CLOUD_LIT, CLOUD_SHADE};
+    static const Slot kFarSlots[] = {RIDGE_FAR, RIDGE_MID, RIDGE_NEAR, TREES_FAR, TREES_MID};
+    static const Slot kGlow[] = {FIRE, FIRE_CORE, TENT_LIT, ACTOR_LIGHT};
+    const float k_sky = 1.f - 0.55f * gl, k_land = 1.f - 0.40f * gl, k_camp = 1.f - 0.22f * gl;
+    uint32_t done = 0;
+    for (Slot s : kSkySlots) {
+      out.c[s] = scalePx(out.c[s], k_sky);
+      done |= 1u << s;
+    }
+    for (Slot s : kFarSlots) {
+      out.c[s] = scalePx(out.c[s], k_land);
+      done |= 1u << s;
+    }
+    for (Slot s : kGlow) done |= 1u << s;
+    for (int s = 0; s < SLOT_COUNT; ++s) {
+      if (!(done & (1u << s))) out.c[s] = scalePx(out.c[s], k_camp);
+    }
+  }
+
   // Fog: far layers lift toward the (post-overcast) horizon band.
   const float fg = clamp01(w.fog);
   if (fg > 0.f) {

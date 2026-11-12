@@ -5,8 +5,12 @@
 // from it, calls sceneWeatherFromOutside, and copies the result into Inputs
 // (ss_app.h): code -> weather_code, have_outside -> have_outside, overcast and
 // fog -> weather.overcast and weather.fog. night_dim is not here: the host
-// sets it from its own night rule. The table behind the mapping is at the top
-// of house_weather.cpp; it is a proposal, easy to edit.
+// sets it from its own night rule. The tables behind the mapping are at the top
+// of house_weather.cpp.
+//
+// The forecast's words decide first (Mike, 2026-11-11): the icon alone made it
+// rain in the scene on a "rain later" forecast. The icon code is used only when
+// the words are not one of the 26 Zambretti texts.
 //
 // Standalone: no panel headers. The OutsideReading fields say which firmware
 // names they come from (firmware/tcomm/src).
@@ -30,6 +34,10 @@ enum SceneWeatherCode { SWC_CLEAR = 0, SWC_RAIN, SWC_SNOW, SWC_WIND, SWC_HEAT, S
 struct OutsideReading {
   bool valid;         // OutsideView::valid (app/controller.h): a reading under Settings::outside_stale_min (15 min) old
   int forecast;       // the OUTSIDE forecast byte, OutsideData::code (OutsideForecastCode); 0 none
+  // The forecast text as its Zambretti letter, 'A' to 'Z' (firmware core/zambretti.h
+  // zambretti_letter(OutsideView::phrase)); 0 when the text is not one of the 26
+  // ("No Pressure Data", a snow wording): then the forecast code decides, as before.
+  char phrase;
   float temp_f;       // OutsideData::temp is tenths of a degree F; this is degrees F
   float humidity;     // OutsideData::hum, percent 0..100
   bool danger_heat;   // kOutsideDangerHeat (core/protocol.h): heat index 100 F or more. A dry sky plays heat
@@ -43,9 +51,11 @@ struct SceneWeather {
   bool have_outside;  // Inputs::have_outside: false means the core picks its own weather
 };
 
-// No reading (not valid), no forecast (0) or a forecast code not in the table:
-// have_outside false, code 0, no tint. Otherwise the forecast's row, then for a
-// dry forecast the temperature and humidity may turn it to fog, heat or chill.
+// No reading (not valid): have_outside false, code 0, no tint, and the core
+// picks its own weather. A reading with a known text plays the text's row; one
+// with only a known forecast code plays the code's row; one with neither plays
+// a clear sky (never the core's random weather: that snowed in July). For a dry
+// row the temperature and humidity may then turn it to fog, heat or chill.
 SceneWeather sceneWeatherFromOutside(const OutsideReading& r);
 
 }  // namespace ss

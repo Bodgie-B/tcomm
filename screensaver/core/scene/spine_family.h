@@ -132,4 +132,18 @@ uint32_t lookoutLoopTicks(const LoopPlan& p);
 int lookoutFormatPlan(const LoopPlan& p, char* buf, size_t n);
 const char* lookoutBeatName(int beat);
 
+// ---- the sunrise (sunrise.cpp) ---------------------------------------------------------
+
+enum SunriseBeatId : uint8_t {
+  RB_ARRIVE = 0, RB_SETTLE, RB_POUR, RB_DAWN, RB_SUNBREAK, RB_LIGHT, RB_LINGER, RB_LEAVE, RB_COUNT
+};
+
+// The plan's own draws (the dawn's length and steps, the linger); the walks are fitted in
+// sunriseBeginLoop once the slab is known.
+void sunrisePlan(LoopPlan& p, Rng& rng, const Inputs& in);
+void sunriseBuildTimeline(Timeline& tl, const LoopPlan& p);
+uint32_t sunriseLoopTicks(const LoopPlan& p);
+int sunriseFormatPlan(const LoopPlan& p, char* buf, size_t n);
+const char* sunriseBeatName(int beat);
+
 }  // namespace ss

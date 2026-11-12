@@ -6,9 +6,37 @@ namespace ss {
 namespace {
 
 // ---------------------------------------------------------------------------
-// The mapping. PROPOSED: none of these numbers has been signed off; change
-// them here and nothing else needs to know.
+// The mapping; change it here and nothing else needs to know.
 //
+// First, by the forecast's words (Mike approved these groups, 2026-11-11). One
+// letter per Zambretti text, A to Z, in firmware core/zambretti.cpp's order:
+//   t storm (rain, lightning, the darkest sky):  S "Stormy, Much Rain"
+//   r rain (a darker sky, heavy cloud):          G "Rain at Times, Worse Later", H "Rain at Times,
+//       Becoming Very Unsettled", I and R "Very Unsettled, Rain", Q "Rain at Frequent Intervals"
+//   g gray and dry (heavy cloud, no rain):       E "Showery, Becoming More Unsettled", F "Unsettled,
+//       Rain Later", N "Showery, Bright Intervals", O "Changeable, Some Rain", P "Unsettled, Rain at Times"
+//   s some cloud, dry:                           C "Fine, Becoming Less Settled", D "Fairly Fine,
+//       Showery Later", L "Fine, Possibly Showers", M "Fairly Fine, Showers Likely", X "Fairly Fine,
+//       Possibly Showers", Z "Changeable, Mending"
+//   f fine or clearing: the forecast code's row below, as before (A B J K T U V W Y)
+//                          ABCDEFGHIJKLMNOPQRSTUVWXYZ
+const char kPhraseGroup[] = "ffssggrrrffssgggrrtffffsfs";
+
+struct PhraseRow {
+  char group;
+  int code;         // SceneWeatherCode
+  float overcast;
+  bool dry;
+};
+
+const PhraseRow kPhrases[] = {
+    {'t', SWC_STORM, 1.0f, false},
+    {'r', SWC_RAIN, 0.9f, false},
+    {'g', SWC_CLEAR, 0.7f, true},
+    {'s', SWC_CLEAR, 0.3f, true},
+};
+
+// Then, for a text that is not one of the 26 (or a fine one), by the icon.
 // One row per forecast code: the scene code it plays, the overcast it sets
 // (0..1), and whether the sky is dry (the temperature and humidity may then
 // override it, see kOverrides). A forecast code with no row is treated as none.
@@ -62,17 +90,31 @@ const Override kOverrides[] = {
 SceneWeather sceneWeatherFromOutside(const OutsideReading& r) {
   const SceneWeather none = {SWC_CLEAR, 0.0f, 0.0f, false};
   if (!r.valid) return none;
-  const ForecastRow* row = nullptr;
-  for (const ForecastRow& f : kForecasts) {
-    if (f.forecast != r.forecast) continue;
-    row = &f;
-    break;
-  }
-  if (!row) return none;   // none (0), the boards' night (6) or a code we do not know
 
-  SceneWeather out = {row->code, row->overcast, 0.0f, true};
-  if (row->forecast == OFC_SNOW && r.temp_f > kSnowTurnsToRainF) out.code = SWC_RAIN;
-  if (row->dry) {
+  // A reading we can't place (no forecast, the boards' night, an unknown code and
+  // unknown words) is still a reading: a clear, dry sky, never random weather.
+  SceneWeather out = {SWC_CLEAR, 0.0f, 0.0f, true};
+  bool dry = true;
+  const char group = r.phrase >= 'A' && r.phrase <= 'Z' ? kPhraseGroup[r.phrase - 'A'] : 'f';
+  const PhraseRow* words = nullptr;
+  for (const PhraseRow& p : kPhrases) {
+    if (p.group == group) words = &p;
+  }
+  if (words) {
+    out.code = words->code;
+    out.overcast = words->overcast;
+    dry = words->dry;
+  } else {
+    for (const ForecastRow& f : kForecasts) {
+      if (f.forecast != r.forecast) continue;
+      out.code = f.code;
+      out.overcast = f.overcast;
+      dry = f.dry;
+      if (f.forecast == OFC_SNOW && r.temp_f > kSnowTurnsToRainF) out.code = SWC_RAIN;
+      break;
+    }
+  }
+  if (dry) {
     bool matched = false;
     for (const Override& o : kOverrides) {
       // Written as "inside", so a temperature or humidity that is not a number matches nothing.

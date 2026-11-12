@@ -3,6 +3,7 @@
 // build script turns them into PNGs in docs/screens.
 //   sim.exe <output folder>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <functional>
@@ -15,9 +16,11 @@
 #include "app/panel_app.h"
 #include "core/civil.h"
 #include "core/comfort_chart.h"
+#include "core/outside_log.h"
 #include "lvgl.h"
 #include "ui/fonts/fonts.h"
 #include "ui/ui.h"
+#include "ui/ui_internal.h"  // text_width and B20, to find the own tile's chevron
 
 using namespace tc;
 
@@ -46,6 +49,8 @@ class SimPlatform : public Platform {
   }
   void play(Sound, uint8_t) override {}
   void set_backlight(uint8_t) override {}
+  bool pres = false;  // the presence sensor, as a shot sets it (Mike, 2026-11-11)
+  bool presence() override { return pres; }
   uint32_t random32() override { return r = r * 1103515245u + 12345u; }
   uint8_t *read_file(const char *name, size_t &len) override { return files.read(*this, name, len); }
   void write_file(const char *name, uint8_t *buf, size_t len) override { files.write(*this, name, buf, len); }
@@ -110,6 +115,8 @@ class Proxy : public ui::Actions {
   bool comfort_remove(uint32_t n) override { return g_h->app.comfort_remove(n); }
   uint8_t *read_file(const char *name, size_t &len) override { return g_h->app.read_file(name, len); }
   void free_file(uint8_t *p) override { g_h->app.free_file(p); }
+  void set_note(const char *t, uint32_t d) override { g_h->app.set_note(t, d); }
+  void clear_note() override { g_h->app.clear_note(); }
   void answer(bool y) override { g_h->app.answer(y); }
   // Mike, 2026-11-07: the simulator pretends an updater is installed, and counts the two ways to start it.
   bool updater_installed() override { return true; }
@@ -289,6 +296,46 @@ static int lone_seed(int from) {
   return from;
 }
 
+// Two made-up days of outside readings for the outside chart's shots (Mike, 2026-11-07): yesterday
+// whole and today up to now, a reading every 15 minutes in the day's own local time, a smooth daily
+// swing (warmest at 15:00) with the humidity moving opposite, the forecast changing during the day,
+// and yesterday without 14:00 to 15:00 (a gap, as when the outside reading wasn't fresh). Written as
+// day files through the platform, exactly as the panel's own log does.
+static void seed_outside(uint32_t now, int32_t off) {
+  const int64_t today = (int64_t)(now + off) / 86400;
+  for (int back = 1; back >= 0; back--) {
+    const uint32_t mid = (uint32_t)((today - back) * 86400 - off);
+    char first[kOutsideNameLen];
+    outside_file_name(mid, off, first);
+    g_h->host.files.files.erase(first);  // the panel's own log of this quarter hour: the made-up day replaces it
+    for (int q = 0; q < 96; q++) {
+      uint32_t utc = mid + (uint32_t)q * kOutsideEveryS;
+      if (utc > now) break;
+      if (back == 1 && q >= 56 && q < 60) continue;  // the gap
+      const float hr = q / 4.0f, c = std::cos(6.2831853f * (hr - 15.0f) / 24.0f);
+      const float t = back ? 57.0f + 9.0f * c : 62.0f + 12.0f * c;
+      const float rh = back ? 74.0f - 18.0f * c : 60.0f - 24.0f * c;
+      Forecast fc;
+      if (back) {
+        fc = hr < 7 ? Forecast::Cloud : hr < 12 ? Forecast::Rain : hr < 16 ? Forecast::HeavyRain : hr < 20 ? Forecast::Clearing : Forecast::Moon;
+        if (q == 48 || q == 49) fc = Forecast::Rain;  // 12:00 and 12:15: two Rain, two HeavyRain in that hour
+      } else {
+        fc = hr < 9 ? Forecast::Sun : hr < 13 ? Forecast::CloudSun : hr < 17 ? Forecast::Cloud : hr < 20 ? Forecast::Rain : Forecast::Clearing;
+        if (q == 36) fc = Forecast::Sun;  // one odd reading at 09:00: the hour still shows CloudSun
+      }
+      OutsideSample smp = {};
+      smp.utc = utc;
+      smp.offset = off;
+      smp.t = (int16_t)std::lround(t * 10.0f);
+      smp.h = (uint8_t)std::lround(rh);
+      smp.forecast = (uint8_t)fc;
+      char name[kOutsideNameLen], line[96];
+      outside_file_name(utc, off, name);
+      if (outside_csv_line(smp, line, sizeof(line))) g_h->host.append_line(name, kOutsideCsvHeader, line);
+    }
+  }
+}
+
 struct Setup {
   int phase;
   uint32_t now;
@@ -305,7 +352,10 @@ struct Setup {
   Forecast out_code = Forecast::Unknown;
   const char *phrase = nullptr;
   uint8_t warn = 0;  // WeatherGate's danger heat / danger cold flags
+  int dog_min = 10;  // minutes a dog has been out when the shot starts
 };
+
+static bool g_sim_presence_fitted = false;  // the next start() puts the presence sensor on in Settings
 
 static void start(const Setup &s) {
   ui::open_sheet(ui::Sheet::None);
@@ -316,12 +366,13 @@ static void start(const Setup &s) {
   h.host.offset = s.off;
   Settings st;
   st.floor = s.me;
+  st.presence_fitted = g_sim_presence_fitted;
   OwnState own;
   own.status = s.mine;
   own.since = s.mine_since;
   DogState dog;
   for (int i = 0; i < 2; i++)
-    if ((uint8_t)s.dog & (1 << i)) dog.dog[i] = DogOne{true, s.now - 600, 1};
+    if ((uint8_t)s.dog & (1 << i)) dog.dog[i] = DogOne{true, s.now - (uint32_t)s.dog_min * 60u, 1};
   h.panel.begin(st, own, dog);
   h.panel.on_local_reading(true, s.my_t, (uint16_t)s.my_h);
   h.panel.force_phase(s.phase);
@@ -436,6 +487,35 @@ static void type_keys(const char *s) {
     }
   }
 }
+
+// The note editor's keyboard is the calendar's: letters, and digits through the ?123 key (Mike, 2026-11-07).
+static void type_note(const char *s) {
+  for (; *s; s++) {
+    if (std::isdigit((unsigned char)*s)) {
+      tap(63, 288 + 143 + 20, 60);  // ?123
+      tap((int)(8 + ((*s - '1' + 10) % 10) * 78.9f + 37), 288 + 8 + 20, 60);
+      tap(63, 288 + 143 + 20, 60);  // ABC
+    } else {
+      char one[2] = {*s, 0};
+      type_keys(one);
+    }
+  }
+}
+
+// Taps the middle of the first shown label with this text, wherever it is (a sheet's button by name).
+static bool tap_label_in(lv_obj_t *o, const char *text) {
+  if (lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return false;
+  if (lv_obj_check_type(o, &lv_label_class) && !std::strcmp(lv_label_get_text(o), text)) {
+    lv_area_t a;
+    lv_obj_get_coords(o, &a);
+    tap((a.x1 + a.x2) / 2, (a.y1 + a.y2) / 2);
+    return true;
+  }
+  for (uint32_t i = 0; i < lv_obj_get_child_cnt(o); i++)
+    if (tap_label_in(lv_obj_get_child(o, i), text)) return true;
+  return false;
+}
+static bool tap_label(const char *text) { return tap_label_in(lv_layer_top(), text) || tap_label_in(lv_scr_act(), text); }
 
 namespace ui { namespace detail { extern Sheet g_sheet; } }  // to see which sheet a touch opened
 static int g_fails = 0;
@@ -1055,6 +1135,142 @@ int main(int argc, char **argv) {
     std::printf("temperature arrows by touch: %d failed\n", g_fails);
   }
 
+  // Tile messages (Mike, 2026-11-07): a tap on the own tile's line opens the keyboard; SEND shows the
+  // message on that floor's tile on both panels; a tap on it takes it away. The other panel's view
+  // is the other Setup, given the message as if heard (restore_notes).
+  {
+    std::printf("tile messages by touch:\n");
+    const char *kText = "need to wash my clothes today before 3PM";
+    const char *kOther = "dinner at 6";
+    Setup upn = p4;
+    upn.me = Floor::Upstairs;
+    const auto sheet = [] { return ui::detail::g_sheet; };
+    const auto fnote = [](Floor f) { return g_h->panel.view().floor[(int)f].note; };
+    const auto fline = [](Floor f) { return std::string(g_h->panel.view().floor[(int)f].line); };
+    const auto hear = [](Floor f, const char *text) {  // a message of the other floor, as if heard
+      NoteState ns[2] = {};
+      NoteState &n = ns[(int)f];
+      std::snprintf(n.text, sizeof(n.text), "%s", text);
+      n.set = g_h->host.w.utc;
+      n.until = n.set + 4 * 3600;
+      n.since = n.set;
+      n.ver = 1;
+      g_h->panel.restore_notes(ns);
+      pump(300);
+    };
+    // Upstairs panel: the own tile is the top one, its line at (100, 235).
+    start(upn);
+    const std::string line_before = fline(Floor::Upstairs);
+    // The status chevron: 14 px after the line, 40 px wide, centred at tile y 166 (tile at 12, 74).
+    tap(12 + 24 + ui::detail::text_width(line_before.c_str(), ui::detail::B20) + 14 + 20, 74 + 166);
+    check(sheet() == ui::Sheet::Status, "a tap on the chevron opens the status sheet, not the editor");
+    ui::open_sheet(ui::Sheet::None);
+    pump(300);
+    tap(100, 235);
+    check(sheet() == ui::Sheet::Note, "a tap on the own line opens the message editor");
+    pump(400);
+    capture("65_note_editor");
+    type_note(kText);
+    pump(200);
+    capture("66_note_editor_typed");
+    check(tap_label("SEND"), "the editor has a SEND button");
+    pump(300);
+    check(sheet() != ui::Sheet::Note, "SEND closes the editor");
+    check(fnote(Floor::Upstairs), "SEND shows the message on the own tile");
+    capture("68_note_upstairs_own");
+    const NoteState sent = g_h->panel.note(Floor::Upstairs);
+    check(std::strstr(sent.text, "wash my clothes") != nullptr, "the message text is kept");
+    tap(100, 150);  // elsewhere in the status zone: the word
+    check(sheet() == ui::Sheet::Status, "a tap elsewhere in the own status zone still opens the status sheet");
+    ui::open_sheet(ui::Sheet::None);
+    pump(300);
+    tap(100, 235);
+    check(!fnote(Floor::Upstairs), "a tap on the own message takes it away");
+    check(fline(Floor::Upstairs) == line_before, "the line comes back");
+    check(sheet() == ui::Sheet::None, "the tap did not open the editor");
+
+    // The downstairs panel's view of the UPSTAIRS tile, two lines.
+    start(p4);
+    hear(Floor::Upstairs, kText);
+    check(fnote(Floor::Upstairs), "the downstairs panel shows the upstairs message");
+    capture("67_note_on_downstairs_panel");
+    tap(100, 235);
+    check(sheet() == ui::Sheet::None && fnote(Floor::Upstairs), "the other floor's message line doesn't respond");
+    // A message on each tile.
+    check(g_h->panel.set_note(kOther, 3600), "downstairs writes its own message");
+    pump(300);
+    check(fnote(Floor::Downstairs) && fnote(Floor::Upstairs), "a message on each tile");
+    capture("69_note_both_floors");
+    tap(100, 444);
+    check(!fnote(Floor::Downstairs) && fnote(Floor::Upstairs), "a tap on the downstairs own line takes only its message away");
+
+    // Upstairs clearing an arrow takes the upstairs message away.
+    start(upn);
+    put_arrows({Ask::MildHeat});
+    check(g_h->panel.set_note(kText, 3600), "upstairs writes a message");
+    pump(300);
+    check(fnote(Floor::Upstairs), "the upstairs message shows");
+    tap(374, 98);  // the arrow
+    check(g_h->panel.view().req.n == 0, "the arrows are cleared");
+    check(!fnote(Floor::Upstairs), "clearing the arrows upstairs takes the upstairs message away");
+    std::printf("tile messages by touch: %d failed\n", g_fails);
+  }
+
+  // The outside history chart by touch (Mike, 2026-11-07): a long press on the Outside tile opens it on
+  // either panel and a short tap does nothing; the left arrow steps to the day before, the right one
+  // comes back, the X closes. The day is checked by the sheet's labels.
+  {
+    std::printf("outside chart by touch:\n");
+    const auto sheet = [] { return ui::detail::g_sheet; };
+    const int kOutX = 662, kOutY = 168;
+    // The chart's arrows sit after the title (ui_outside.cpp: card at 8, 8; left edge 28 + title + 22, 48 x 34,
+    // the right one 264 further on) and the X is at (756, 37).
+    const int ax = 8 + 28 + ui::detail::text_width("OUTSIDE", ui::detail::J23) + 22;
+    const int kPrevX = ax + 24, kPrevY = 45, kNextX = ax + 264 + 24, kNextY = 45, kCloseX = 756, kCloseY = 37;
+    // The day's name is drawn into the card, not a label: a sum of the pixels between the arrows tells days apart.
+    const auto title_sum = [&] {
+      lv_refr_now(nullptr);
+      uint32_t sum = 0;
+      for (int y = 30; y < 62; y++)
+        for (int x = kPrevX + 30; x < kNextX - 30; x++) sum = sum * 31 + g_fb[y * 800 + x].full;
+      return sum;
+    };
+    Setup up = p4;
+    up.me = Floor::Upstairs;
+    for (int pass = 0; pass < 2; pass++) {
+      const bool down = pass == 0;
+      start(down ? p4 : up);
+      seed_outside(g_h->host.w.utc, g_h->host.offset);
+      tap(kOutX, kOutY);
+      check(sheet() == ui::Sheet::None, down ? "a short tap on the Outside tile opens nothing downstairs" : "a short tap on the Outside tile opens nothing upstairs");
+      long_press(kOutX, kOutY);
+      check(sheet() == ui::Sheet::Outside, down ? "a long press opens the outside chart downstairs" : "a long press opens the outside chart upstairs");
+      pump(400);
+      if (down) capture("70_outside_today");
+      const uint32_t today = title_sum();
+      tap(kPrevX, kPrevY);
+      pump(300);
+      check(title_sum() != today, "the left arrow changes the day");
+      if (down) capture("71_outside_earlier_day");
+      tap(kNextX, kNextY);
+      pump(300);
+      check(title_sum() == today, "the right arrow comes back to today");
+      tap(kCloseX, kCloseY);
+      pump(300);
+      check(sheet() == ui::Sheet::None, "the X closes the chart");
+    }
+    // At night: the hours after sunset show the moon versions of the icons (shot 72).
+    start(p1);
+    seed_outside(g_h->host.w.utc, g_h->host.offset);
+    long_press(kOutX, kOutY);
+    check(sheet() == ui::Sheet::Outside, "a long press opens the outside chart at night");
+    pump(400);
+    capture("72_outside_night");
+    ui::open_sheet(ui::Sheet::None);
+    pump(200);
+    std::printf("outside chart by touch: %d failed\n", g_fails);
+  }
+
   // Repeating events, birthdays and holidays in the views; today is Sam's birthday.
   {
     Setup s = p5;
@@ -1128,6 +1344,123 @@ int main(int argc, char **argv) {
     }
     ui::open_sheet(ui::Sheet::None);
     pump(200);
+  }
+
+  // Today's next calendar item on each floor's tile (Mike, 2026-11-11), and a dog out too long.
+  // 12:30 PM on Monday 12 Oct: upstairs has the dentist at 2:30, downstairs a parcel at 3:30.
+  {
+    std::printf("tile calendar line and dog nudge:\n");
+    const auto fview = [](Floor f) -> const FloorView & { return g_h->panel.view().floor[(int)f]; };
+    const auto put = [](Controller &c, const char *title, int start, int len) {
+      Event e;
+      e.day = (int32_t)days_from_civil(2026, 10, 12);
+      e.all_day = start < 0;
+      e.start_min = (int16_t)(start < 0 ? 0 : start);
+      e.length = (uint16_t)len;
+      std::snprintf(e.title, sizeof(e.title), "%s", title);
+      return c.save_event(e) != 0;
+    };
+    start(p4);
+    const std::string since_dn = fview(Floor::Downstairs).line;
+    check(put(g_h->demo.peer(), "Dentist", 14 * 60 + 30, 45), "the upstairs panel saves an event");
+    check(put(g_h->panel, "Parcel pickup", 15 * 60 + 30, 60), "the downstairs panel saves an event");
+    pump(600);
+    check(fview(Floor::Upstairs).agenda && std::string(fview(Floor::Upstairs).agenda_title) == "Dentist", "the UPSTAIRS tile shows its next item");
+    check(fview(Floor::Downstairs).agenda && std::string(fview(Floor::Downstairs).agenda_when) == "3:30 PM", "the DOWNSTAIRS tile shows its own");
+    check(since_dn == fview(Floor::Downstairs).line, "the since line is still built underneath");
+    capture("73_tile_calendar_line");
+    // A long title is cut with dots to fit, on the own tile leaving room for the chevron.
+    put(g_h->panel, "Call with the contractor about the deck", 13 * 60, 30);
+    pump(300);
+    capture("74_tile_calendar_long_title");
+    // A tap on the calendar line is a tap on the line: the message editor, as before.
+    tap(100, 444);
+    check(ui::detail::g_sheet == ui::Sheet::Note, "a tap on the own calendar line opens the message editor");
+    ui::open_sheet(ui::Sheet::None);
+    pump(300);
+    // A dog out 25 minutes with 31 F outside (the limit is 15): the pill reads minutes and temperature and pulses.
+    Setup cold = p3;
+    cold.dog = Dog::Copper;
+    cold.dog_min = 25;
+    start(cold);
+    check(g_h->panel.view().dog.alert && std::string(g_h->panel.view().dog.pill).find("COPPER OUT 25 min, ") == 0, "the pill shows the minutes and the temperature");
+    capture("75_dog_out_too_long");
+    cold.dog = Dog::Both;
+    start(cold);
+    check(std::string(g_h->panel.view().dog.pill).find("BOTH OUT 25 min") == 0, "both dogs out too long");
+    capture("76_both_dogs_out_too_long");
+    std::printf("tile calendar line and dog nudge: %d failed\n", g_fails);
+  }
+
+  // The presence sensor (Mike, 2026-11-11): "Away from desk" on the UPSTAIRS tile, as upstairs shows it
+  // and as the downstairs panel hears it in STATE; the tenant's ring while nobody is near the upstairs
+  // panel; and Settings > PRESENCE SENSOR. 12:30 PM on Monday 12 Oct.
+  {
+    std::printf("presence sensor:\n");
+    // What the other panel's STATE says, delivered as if by radio (the demo's own copy keeps its status).
+    const auto inject_state = [](uint8_t flags) {
+      const OwnState &o = g_h->demo.peer().own();
+      Msg m;
+      m.type = MsgType::State;
+      m.sender = kSenderUpstairs;
+      m.seq = (uint16_t)(g_h->host.random32() | 1);
+      m.u.state.status = (uint8_t)o.status;
+      m.u.state.flags = (uint8_t)(kStateClockValid | flags);
+      m.u.state.since = o.since;
+      m.u.state.until = o.until;
+      m.u.state.fallback = (uint8_t)o.fallback;
+      m.u.state.clock = g_h->host.w.utc;
+      m.u.state.clock_quality = kClockManual;
+      uint8_t buf[kMaxMsg];
+      size_t n = encode(m, buf, sizeof(buf));
+      if (n) g_h->panel.on_radio(buf, n);
+    };
+    // The upstairs panel itself, Busy, with the sensor on and someone walking about.
+    Setup up = p4;
+    up.me = Floor::Upstairs;
+    up.mine = Status::Busy;
+    up.peer = Status::Open;
+    g_sim_presence_fitted = true;
+    start(up);
+    g_h->host.pres = true;
+    pump(500);
+    check(g_h->panel.view().floor[(int)Floor::Upstairs].away_desk &&
+              std::string(g_h->panel.view().floor[(int)Floor::Upstairs].line) == "Away from desk",
+          "the UPSTAIRS tile says Away from desk on the upstairs panel");
+    capture("77_tile_away_from_desk_upstairs");
+    // Settings > PRESENCE SENSOR, with the sensor seeing someone; and the tile in the list.
+    ui::open_sheet(ui::Sheet::Presence);
+    pump(300);
+    check(g_h->panel.view().presence.seen_now, "the settings page's live line has the sensor");
+    capture("80_settings_presence_page");
+    ui::open_sheet(ui::Sheet::Settings);
+    ui::scroll_sheet(400);
+    pump(300);
+    capture("81_settings_presence_tile");
+    g_h->host.pres = false;
+    g_sim_presence_fitted = false;
+    ui::open_sheet(ui::Sheet::None);
+    // The downstairs panel: the same tile, from the flag in STATE.
+    Setup dn = p4;
+    dn.peer = Status::Busy;
+    start(dn);
+    inject_state(kStateAwayDesk);
+    pump(300);
+    check(g_h->panel.view().floor[(int)Floor::Upstairs].away_desk &&
+              std::string(g_h->panel.view().floor[(int)Floor::Upstairs].line) == "Away from desk",
+          "the UPSTAIRS tile says Away from desk on the downstairs panel");
+    capture("78_tile_away_from_desk_downstairs");
+    // The tenant rings while nobody has been near the upstairs panel for 15 minutes.
+    start(dn);
+    g_h->demo.next_auto_answer();  // Come on, Not now, Off: nobody answers, so the ring keeps waiting
+    g_h->demo.next_auto_answer();
+    inject_state(kStateNobodyNear);
+    pump(300);
+    g_h->panel.tap_bell();
+    pump(600);
+    check(std::string(g_h->panel.view().toast) == "No one is near the panel", "the ring says no one is near the panel");
+    capture("79_ring_no_one_near_the_panel");
+    std::printf("presence sensor: %d failed\n", g_fails);
   }
 
   // The longest titles (a long day name, a week across the new year) and a six-week month, whose

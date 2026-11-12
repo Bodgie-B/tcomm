@@ -22,9 +22,11 @@ namespace ss {
 
 struct World;
 
-// A free slot with `k` at `feet`, this loop's dials for the slot, tag CT_NONE,
-// mode CM_FREE, no flags. Returns the slot, or -1 when all CRITTER_MAX are taken.
+// A free story slot (the first CRITTER_STORY) with `k` at `feet`, this loop's dials for the slot, tag
+// CT_NONE, mode CM_FREE, no flags. Returns the slot, or -1 when all CRITTER_STORY are taken.
 int directorSpawn(World& w, CritterKind k, Vec2 feet, int facing);
+// The same into slot `slot` (Lucy's and Copper's own, housedogs.h). The slot must be free.
+void directorSpawnAt(World& w, int slot, CritterKind k, Vec2 feet, int facing);
 void directorRelease(World& w, int slot);
 // Every critter in use within `radius` px of `from` (feet to point), not
 // CF_BRAVE and not already scattered, startles and runs away from `from` out
@@ -57,7 +59,7 @@ void directorExit(World& w, int slot, int side, float px_per_s, CritterAction ga
 
 // Slot in use, still held by `tag` and not scattered.
 bool directorOwns(const World& w, int slot, uint8_t tag);
-int directorCount(const World& w);
+int directorCount(const World& w);   // the story's critters: Lucy, Copper and the mail bird don't count
 
 // Per tick, after the spine: see the top of this file.
 void directorStep(World& w);

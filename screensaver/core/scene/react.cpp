@@ -19,13 +19,22 @@ float bump(float t, float a, float len) { return t > a && t < a + len ? sinT(0.5
 }  // namespace
 
 bool reactCanStart(const World& w) {
-  return !w.react.active && w.plan.family != SF_LOOKOUT && w.fx.on && w.hiker.visible && !w.hiker_rect.empty() &&
-         w.fade < 0.5f;
+  return !w.react.active && !spineSetPiece(w.plan.family) && w.fx.on && w.hiker.visible && !w.hiker_rect.empty() &&
+         w.fade < 0.5f && (!w.fi.on || fireIceWaveOk(w));
 }
 
-void reactStart(World& w) {
+bool reactWaveOk(const World& w) {
+  if (!reactCanStart(w) || w.hiker.carry != CARRY_NONE || w.pack.held) return false;
+  for (const Item& it : w.items)
+    if (it.held && !it.critter) return false;
+  if (w.day.kind == DAY_ARCHERY && w.day.archery.a.bow_on) return false;
+  return w.fi.on || !w.busy;   // fire and ice sets busy itself; reactCanStart has asked it
+}
+
+void reactStart(World& w, bool wave) {
   DoorbellReact& r = w.react;
   r.active = true;
+  r.wave = wave;
   r.ticks = 0;
   r.fx = w.fx;
   r.facing = w.hiker.facing;
@@ -42,12 +51,18 @@ void reactStep(World& w) {
   HikerFx& fx = w.fx;
   Hiker& h = w.hiker;
   fx = r.fx;   // each tick: the offsets he had, plus the reaction
-  if (r.ticks >= kReactTicks) {
+  if (r.ticks >= (r.wave ? kWaveTicks : kReactTicks)) {
     h.facing = r.facing;
     r.active = false;
     return;
   }
   const float t = (float)r.ticks * SS_TICK_DT;
+  if (r.wave) {   // a passer-by: he looks up and out at them, leaning back a touch, and waves
+    const float k = ramp(t, 0.f, 0.3f) * (1.f - ramp(t, 2.25f, 2.6f));
+    fx.head -= 0.18f * k;
+    fx.lean -= 0.04f * k;
+    return;
+  }
 
   // His head up toward the sound, and back down at the end; then the jump.
   fx.head -= 0.22f * ramp(t, 0.f, 0.2f) * (1.f - ramp(t, 3.0f, 3.4f));
@@ -74,10 +89,11 @@ void reactPose(const World& w, HikerPose& p) {
   // The wave: near arm up with the forearm swinging, then straight out at the
   // chip, then down, eased in from whatever his near arm was doing.
   const float t = (float)r.ticks * SS_TICK_DT;
-  const float up = ramp(t, 0.35f, 0.6f) * (1.f - ramp(t, 3.0f, 3.35f));
+  const float up = r.wave ? ramp(t, 0.15f, 0.4f) * (1.f - ramp(t, 2.2f, 2.55f))
+                          : ramp(t, 0.35f, 0.6f) * (1.f - ramp(t, 3.0f, 3.35f));
   if (up <= 0.f) return;
-  const float point = ramp(t, 2.3f, 2.55f);
-  const float swing = 0.45f * sinT(2.2f * (t - 0.35f)) * (1.f - point);
+  const float point = r.wave ? 0.f : ramp(t, 2.3f, 2.55f);
+  const float swing = 0.45f * sinT(2.2f * (t - (r.wave ? 0.15f : 0.35f))) * (1.f - point);
   p.shoulder[0] = lerp(p.shoulder[0], lerp(2.75f, 1.45f, point), up);
   p.elbow[0] = lerp(p.elbow[0], lerp(0.6f + swing, 0.05f, point), up);
 }

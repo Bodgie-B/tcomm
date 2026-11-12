@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include <house_weather.h>
+#include <set_piece_day.h>
 #include <ss_app.h>
 
 #include "esp_heap_caps.h"
@@ -16,7 +17,11 @@
 #include "../app/controller.h"
 #include "../board/board.h"
 #include "../core/brightness.h"
+#include "../core/civil.h"
 #include "../core/sky.h"
+#include "../core/zambretti.h"
+#include "../gfx/canvas.h"
+#include "art.h"
 #include "../ws/lvgl_port/lvgl_port.h"
 
 namespace ui {
@@ -96,11 +101,22 @@ int g_weather_set = -1;             // ss weather N: a scene weather by hand (te
 // about the panel's own night tiles. ss nightgain N changes it until restart, in tenths.
 float g_night_gain = 1.6f;
 // Stage 10: the Lookout around the real sunset, once an evening (sky.h in_lookout_window).
-int g_lookout_set = 0;              // ss lookout N: 0 the clock's window, 1 on now, 2 off
+// Stage 15: the sunrise overlook around the real sunrise, once a morning, the same way. Each counts as
+// shown only once its key moment has played (ss_app.h appSetPieceShown: the sun down, the sun up), so a
+// touch in its first seconds doesn't use up the day's showing (set_piece_day.h).
+int g_lookout_set = 0;              // ss lookout N: 0 the clock's windows, 1 the Lookout now, 2 both off, 3 the sunrise now
 bool g_lookout_now = false;         // what the next loop reads (Inputs::lookout_window)
-int32_t g_today = -1;               // the local day number, for once an evening
-int32_t g_lookout_day = -1;         // the day a Lookout last began
+bool g_sunrise_now = false;         // and Inputs::sunrise_window
+int32_t g_today = -1;               // the local day number, for once a day
+ss::SetPieceDay g_lookout_shown = {-1};   // the day a Lookout was last shown
+ss::SetPieceDay g_sunrise_shown = {-1};   // the day a sunrise was last shown
 int g_sunset_min = -1;              // today's sunset in local minutes, for ss inputs
+int g_sunrise_min = -1;             // today's sunrise, the same
+// The sunrise window (PROPOSED, the Lookout's mirrored): from 30 minutes before today's sunrise to 15
+// after, so the scene (it starts in the blue before dawn; the sun breaks about two and a half minutes
+// in) begins a little before the real one. sky.h has no sunrise window of its own.
+constexpr int kSunriseBeforeMin = 30;
+constexpr int kSunriseAfterMin = 15;
 constexpr int kPaletteSpread = 1;   // background bands a frame for a small palette step (appSetPaletteSpread): ~16 ms more a frame for 15 frames, not one 110 ms stall
 // And for a medium one, the Lookout's sunset steps: at once (0), as the brief has them. Mike watched
 // them wash down at 1, 3 and 5 bands a frame and chose instant (2026-11-05), the brief pause and all.
@@ -108,6 +124,9 @@ constexpr int kPaletteSpread = 1;   // background bands a frame for a small pale
 int g_spread_medium = 0;
 int g_pal_seen = 0;                 // appPaletteRebuilds when last looked (it restarts at 0 each loop)
 float g_mood = 3.f;
+// Stage 12: where the sun and the moon really are (sky.h), worked out with the mood. All zero (the
+// scene's old parked sun and moon) with no clock, or while a phase is forced for testing.
+ss::SkyInputs g_sky = {};
 bool g_mood_known = false;
 int g_phase_seen = -1;              // the sky phase the mood was last worked out in
 uint32_t g_mood_at = 0, g_inputs_at = 0;
@@ -124,6 +143,81 @@ struct Stats {
   int64_t since_us;
 };
 Stats g_st;
+
+void refreshInputsSoon();
+
+// The tenant's mail icon (Mike, 2026-11-07): while mail waits on the DOWNSTAIRS panel, the solid mail
+// badge sits in the top-right corner of every frame, steady. It is a small sprite built once (a cream
+// ring round the dark disc so it reads on a night sky), kept as RGB565 with the opaque span of each
+// row, so a stamp is a few row copies. The edge is hard (alpha cut at half) so a stamp over itself
+// changes nothing.
+// Stage 13: the renderer draws it into each strip it composites, after the scene and before the strip
+// goes to the frame buffer (appSetOverlay). Stamped after the whole render, as it was, the frame
+// buffer showed the scene there for a moment whenever strips 0-1 were redrawn (rain, snow, the
+// fades): the badge flickered. Strips not redrawn keep it. On and off, only its own square is redrawn
+// (appInvalidateRect), not the whole frame.
+constexpr int kMailPx = 48, kMailEdge = 16;
+constexpr int kMailX = SS_WIDTH - kMailEdge - kMailPx, kMailY = kMailEdge;
+ss::Pixel g_mail_px[kMailPx * kMailPx];
+uint8_t g_mail_x0[kMailPx], g_mail_x1[kMailPx];   // opaque span [x0, x1) of each row
+bool g_mail_built = false;
+bool g_mail_failed = false;         // the sprite's canvas didn't fit: not retried every frame, only on the next start (Mike, 2026-11-07)
+bool g_mail_want = false;           // the downstairs panel has mail waiting (set by screensaver_service)
+bool g_mail_on = false;             // the badge is in the frame
+
+bool buildMailSprite() {
+  gfx::Canvas c;
+  if (!c.create(kMailPx, kMailPx, true)) return false;
+  const gfx::Color dark = gfx::hex(0x2B2433), cream = gfx::hex(0xF3EAD8);
+  art::mail(c, true, dark, cream);
+  c.ring(kMailPx / 2.f, kMailPx / 2.f, kMailPx / 2.f, kMailPx / 2.f - 2.5f, cream);
+  for (int y = 0; y < kMailPx; ++y) {
+    int a = kMailPx, b = 0;
+    for (int x = 0; x < kMailPx; ++x) {
+      uint8_t al = 0;
+      const gfx::Color col = c.get(x, y, &al);
+      g_mail_px[y * kMailPx + x] = (ss::Pixel)gfx::to565(col);
+      if (al >= 128) {
+        if (x < a) a = x;
+        b = x + 1;
+      }
+    }
+    g_mail_x0[y] = (uint8_t)(a < b ? a : 0);
+    g_mail_x1[y] = (uint8_t)(a < b ? b : 0);
+  }
+  c.destroy();
+  return true;
+}
+
+// The renderer's overlay (appSetOverlay): the badge's rows that fall in this strip, into the strip.
+void mailOverlay(void *, ss::Surface &strip, const ss::Rect &clip) {
+  if (!g_mail_on) return;
+  const int y0 = clip.y0 > kMailY ? clip.y0 : kMailY;
+  const int y1 = clip.y1 < kMailY + kMailPx ? clip.y1 : kMailY + kMailPx;
+  for (int y = y0; y < y1; ++y) {
+    const int r = y - kMailY;
+    const int n = g_mail_x1[r] - g_mail_x0[r];
+    if (n > 0)
+      memcpy(strip.row(y) + kMailX + g_mail_x0[r], &g_mail_px[r * kMailPx + g_mail_x0[r]], (size_t)n * sizeof(ss::Pixel));
+  }
+}
+
+// The badge on or off to match g_mail_want: its square is redrawn at the next render.
+void syncMail() {
+  if (g_mail_want && !g_mail_on) {
+    if (!g_mail_built && !g_mail_failed) {
+      g_mail_built = buildMailSprite();
+      g_mail_failed = !g_mail_built;
+    }
+    if (!g_mail_built) return;
+    g_mail_on = true;
+  } else if (!g_mail_want && g_mail_on) {
+    g_mail_on = false;   // acknowledged: the scene is redrawn without the badge
+  } else {
+    return;
+  }
+  ss::appInvalidateRect(g_app, kMailX, kMailY, kMailX + kMailPx, kMailY + kMailPx);
+}
 
 uint32_t nowMs() { return (uint32_t)(esp_timer_get_time() / 1000); }
 
@@ -175,15 +269,38 @@ float phaseMood(const tc::View &v, const tc::Settings &s, const tc::WallTime &w,
   return m;
 }
 
+// The real sky for the scene: the sun's and the moon's compass bearing and height now, and the
+// moon's phase, from the clock and the panel's place. Not while the mood is forced (a forced night
+// with the real afternoon sun would be neither): then the scene parks them by mood, as it used to.
+ss::SkyInputs realSky(const tc::View &v, const tc::Settings &s, const tc::WallTime &w, int32_t off) {
+  ss::SkyInputs k;
+  memset(&k, 0, sizeof k);
+  if (!w.valid || g_mood_override >= 0.f) return k;
+  if (tc::sky_at(w.utc, off, s.latitude, s.longitude).phase != v.phase) return k;   // a phase forced by hand
+  const tc::SkyPos sun = tc::sun_position(w.utc, s.latitude, s.longitude);
+  const tc::MoonSky moon = tc::moon_sky(w.utc, s.latitude, s.longitude);
+  k.have = true;
+  k.sun_az = sun.az;
+  k.sun_alt = sun.alt;
+  k.moon_az = moon.pos.az;
+  k.moon_alt = moon.pos.alt;
+  k.moon_phase = moon.phase;
+  return k;
+}
+
 // Everything the scene takes from the panel (ss_app.h Inputs). night_dim stays 0: the core's night
 // rule follows night_mode, with the panel's night gain; lookout_window comes from screensaver_service.
 ss::Inputs buildInputs(const tc::View &v) {
   ss::Inputs in;
   memset(&in, 0, sizeof in);   // ss_app.h: zero all of it first
   in.mood = g_mood_override >= 0.f ? g_mood_override : g_mood;
+  if (g_mood_override < 0.f) in.sky = g_sky;
   ss::OutsideReading r;
   r.valid = v.outside.valid;
   r.forecast = (int)v.outside.code;
+  // The forecast's words pick the weather (Mike, 2026-11-11): the icon alone made it rain on "rain
+  // later". 0 for words that aren't one of the 26 Zambretti texts; then the icon decides.
+  r.phrase = tc::zambretti_letter(v.outside.phrase);
   r.temp_f = (float)v.outside.temp_tenths / 10.f;
   r.humidity = (float)v.outside.hum_pct;
   r.danger_heat = v.outside.heat;
@@ -205,10 +322,30 @@ ss::Inputs buildInputs(const tc::View &v) {
   in.weather.night_gain = g_night_gain;
   const tc::FloorView &f = v.floor[(int)tc::other_floor(v.me)];
   in.other_status = f.no_signal ? 5 : (int)f.status;
-  in.dog_out = (int)v.dog.out;
+  in.dog_out = (int)v.dog.out;   // the badges, and Lucy and Copper in camp (stage 13)
   in.chip = true;
+  // The tenant's heat and cooling arrows (stage 13), on the UPSTAIRS panel's screensaver only: the ones
+  // its UPSTAIRS tile shows (RequestView, oldest first), drawn by the chip beside the dog badges and
+  // flashing as the tile's do. A predicted arrow keeps its own colours.
+  if (v.me == tc::Floor::Upstairs) {
+    const int n = v.req.n < tc::kMaxArrows ? v.req.n : tc::kMaxArrows;
+    for (int i = 0; i < n && i < 3; ++i)
+      in.req[i] = (uint8_t)((uint8_t)v.req.ask[i] | (v.req.source[i] == tc::ReqSource::Predicted ? SS_REQ_PREDICTED : 0));
+  }
+  // Stage 14. The same arrows on BOTH panels for the fire and ice (too hot: fires, too cold: ice);
+  // predicted ones are marked and the core leaves them out.
+  {
+    const int n = v.req.n < tc::kMaxArrows ? v.req.n : tc::kMaxArrows;
+    for (int i = 0; i < n && i < 3; ++i)
+      in.temp_ask[i] = (uint8_t)((uint8_t)v.req.ask[i] | (v.req.source[i] == tc::ReqSource::Predicted ? SS_REQ_PREDICTED : 0));
+  }
+  // The mail bird: on the DOWNSTAIRS panel, from the same state as its mail badge (g_mail_want).
+  in.mail = v.me == tc::Floor::Downstairs && v.mail.show;
+  in.passer_by = v.passer_by;   // someone walked up to the upstairs panel: the hiker waves
   in.night_mode = v.mode == tc::Mode::Night;
   in.lookout_window = g_lookout_now;
+  in.sunrise_window = g_sunrise_now;
+  in.visitors = true;           // the visiting couple drop by now and then (stage 15)
   in.spine_force = g_scene;
   return in;
 }
@@ -458,18 +595,28 @@ void beginReveal() {
   revealFrame();
 }
 
-// A loop began: a Lookout counts as this evening's (one an evening; screensaver_service). One forced
-// for testing (ss lookout 1, ss scene 4) doesn't use up the real one.
-void noteLoop() {
-  if (!g_app || ss::appSpineFamily(g_app) != 3) return;   // scene/spine.h SF_LOOKOUT
-  if (g_lookout_set != 0 || g_scene == 4) return;
-  if (g_lookout_day != g_today) {
-    if (g_sunset_min >= 0)
-      board::elog("screensaver: the Lookout, sunset at %d:%02d", g_sunset_min / 60, g_sunset_min % 60);
-    else
-      board::elog("screensaver: the Lookout");
+// After each frame's ticks: a set piece counts as today's once its key moment has played (the
+// Lookout's sun down, the sunrise's sun up over the ridge), not when it begins, so a touch in its
+// first seconds leaves the day's showing for the next start in the window. One forced for testing
+// (ss lookout 1 or 3, ss scene 4 or 5) never counts. Then the inputs stop asking for it at once.
+void noteSetPieces() {
+  if (!g_app) return;
+  const int fam = ss::appSpineFamily(g_app);   // scene/spine.h: 3 SF_LOOKOUT, 4 SF_SUNRISE
+  if (fam != 3 && fam != 4) return;
+  const bool shown = ss::appSetPieceShown(g_app);
+  if (!shown) return;
+  const bool forced = g_lookout_set != 0 || g_scene == 4 || g_scene == 5;
+  bool counted;
+  if (fam == 3) {
+    counted = ss::setPieceNote(g_lookout_shown, g_today, true, shown, forced);
+    if (counted && g_sunset_min >= 0)
+      board::elog("screensaver: the Lookout shown, sunset at %d:%02d", g_sunset_min / 60, g_sunset_min % 60);
+  } else {
+    counted = ss::setPieceNote(g_sunrise_shown, g_today, true, shown, forced);
+    if (counted && g_sunrise_min >= 0)
+      board::elog("screensaver: the sunrise shown, sunrise at %d:%02d", g_sunrise_min / 60, g_sunrise_min % 60);
   }
-  g_lookout_day = g_today;
+  if (counted) refreshInputsSoon();
 }
 
 void frame(lv_timer_t *) {
@@ -493,7 +640,7 @@ void frame(lv_timer_t *) {
   if (g_backlog_us < kTickUs) return;
   int n = 0;
   while (g_backlog_us >= kTickUs && n < kMaxCatchUp) {   // the simulation never skips a tick; drawing may
-    if (ss::appTick(g_app)) noteLoop();
+    ss::appTick(g_app);
     g_backlog_us -= kTickUs;
     ++n;
   }
@@ -501,11 +648,13 @@ void frame(lv_timer_t *) {
     g_st.dropped += (uint32_t)(g_backlog_us / kTickUs);
     g_backlog_us %= kTickUs;
   }
+  noteSetPieces();   // two calls a frame; counts a set piece once its key moment has played
   const int64_t t1 = esp_timer_get_time();
   ss::Surface fb{static_cast<ss::Pixel *>(g_fb), SS_WIDTH, SS_HEIGHT, SS_WIDTH, 0};
   const int pal = ss::appPaletteRebuilds(g_app);   // after the ticks: the palette this frame draws with
   const int new_pal = pal >= g_pal_seen ? pal - g_pal_seen : pal;
   g_pal_seen = pal;
+  syncMail();
   const int strips = ss::appRender(g_app, fb);
   const int64_t t2 = esp_timer_get_time();
   if (g_copy) copyPump(lv_disp_get_default());   // a slice of the main screen's changes into its copy
@@ -565,14 +714,16 @@ bool screensaver_start(uint32_t seed) {
   }
   if (!g_copy) board::elog("screensaver: no room for the main screen's copy; a touch draws it first");
   ss::appSetClock(g_app, clockUs);
+  ss::appSetOverlay(g_app, mailOverlay, nullptr);   // the downstairs mail badge, drawn into each strip
   ss::appSetPaletteSpread(g_app, kPaletteSpread, g_spread_medium);   // palette steps without a full-frame stall
-  noteLoop();                                       // the first loop may be the Lookout
   g_pal_seen = ss::appPaletteRebuilds(g_app);
   ss::appInvalidate(g_app);
   g_seed = seed;
   g_touch = g_dark_stop = false;
   g_finger = false;
   g_rv = {};
+  g_mail_on = false;   // a fresh frame, all drawn by the first render (syncMail turns it on there)
+  g_mail_failed = false;   // a new screensaver run may find the memory for the badge
   memset(&g_st, 0, sizeof g_st);
   g_last_us = g_st.since_us = esp_timer_get_time();
   g_backlog_us = kTickUs;   // the first frame draws at once
@@ -594,6 +745,7 @@ void screensaver_service(const tc::View &v, const tc::Settings &s, const tc::Wal
                          uint32_t idle_ms) {
   const uint32_t now = nowMs();
   g_idle_now = idle_ms;
+  g_mail_want = v.me == tc::Floor::Downstairs && v.mail.show;
   g_idle_ms = g_idle_set_ms ? g_idle_set_ms : (uint32_t)s.screensaver_min * 60000u;
   // A new ring from the other floor: BellView::shakes counts rings both ways, and an incoming one
   // sets alert (controller.cpp, MsgType::Knock). The controller has already played the chime.
@@ -612,6 +764,7 @@ void screensaver_service(const tc::View &v, const tc::Settings &s, const tc::Wal
   }
   if (!g_mood_known || now - g_mood_at >= kMoodMs) {
     g_mood = phaseMood(v, s, w, utc_offset);
+    g_sky = realSky(v, s, w, utc_offset);   // the sun moves about a pixel a minute: this often is plenty
     g_mood_at = now;
     g_mood_known = true;
   }
@@ -619,15 +772,22 @@ void screensaver_service(const tc::View &v, const tc::Settings &s, const tc::Wal
     g_inputs_at = now;
     // Stage 10, the Lookout: in the window round today's real sunset (sky.h), until one has begun
     // this evening. The scene reads it when a loop begins.
+    bool rise_window = false;
     if (w.valid) {
       g_today = (int32_t)(((int64_t)w.utc + utc_offset) / 86400);
       const int64_t set = tc::sunset_today(w.utc, utc_offset, s.latitude, s.longitude);
       g_sunset_min = set ? (int)(((set + utc_offset) % 86400) / 60) : -1;
+      // Today's sunrise (none in polar day or night) and the morning window round it.
+      const tc::Civil c = tc::civil_from_seconds((int64_t)w.utc + utc_offset);
+      const tc::SunTimes st = tc::sun_times(c.year, c.month, c.day, utc_offset, s.latitude, s.longitude);
+      g_sunrise_min = st.ok ? (int)(((st.rise + utc_offset) % 86400) / 60) : -1;
+      rise_window = st.ok && (int64_t)w.utc >= st.rise - kSunriseBeforeMin * 60 && (int64_t)w.utc < st.rise + kSunriseAfterMin * 60;
     } else {
-      g_today = g_sunset_min = -1;
+      g_today = g_sunset_min = g_sunrise_min = -1;
     }
     const bool window = w.valid && tc::in_lookout_window(w.utc, utc_offset, s.latitude, s.longitude);
-    g_lookout_now = g_lookout_set == 1 || (g_lookout_set == 0 && window && g_lookout_day != g_today);
+    g_lookout_now = g_lookout_set == 1 || (g_lookout_set == 0 && ss::setPieceWanted(g_lookout_shown, g_today, window));
+    g_sunrise_now = g_lookout_set == 3 || (g_lookout_set == 0 && ss::setPieceWanted(g_sunrise_shown, g_today, rise_window));
     const ss::Inputs in = buildInputs(v);
     if (!g_in_ready || memcmp(&in, &g_in, sizeof in) != 0) {
       g_in = in;
@@ -668,7 +828,7 @@ void screensaver_set_mood(float mood) {
 }
 
 void screensaver_set_scene(int family) {
-  g_scene = (uint8_t)(family < 0 || family > 4 ? 0 : family);
+  g_scene = (uint8_t)(family < 0 || family > 5 ? 0 : family);
   refreshInputsSoon();
 }
 
@@ -679,7 +839,7 @@ void screensaver_set_spread_medium(int bands) {
 int screensaver_spread_medium() { return g_spread_medium; }
 
 void screensaver_set_lookout(int mode) {
-  g_lookout_set = mode == 1 || mode == 2 ? mode : 0;
+  g_lookout_set = mode >= 1 && mode <= 3 ? mode : 0;
   refreshInputsSoon();
 }
 
@@ -728,27 +888,32 @@ int screensaver_stats(char *buf, size_t n) {
 }
 
 int screensaver_inputs(char *buf, size_t n) {
-  static const char *const kScene[5] = {"its own pick", "evening", "morning", "midday", "lookout"};
+  static const char *const kScene[6] = {"its own pick", "evening", "morning", "midday", "lookout", "sunrise"};
   const ss::Inputs &in = g_in;
   char state[32];
   if (g_app) snprintf(state, sizeof state, "running, seed %lu", (unsigned long)g_seed);
   else snprintf(state, sizeof state, "stopped");
-  char look[96];
+  char look[200];
   if (g_lookout_set) {
-    snprintf(look, sizeof look, "%s (set by hand)", g_lookout_set == 1 ? "on" : "off");
+    static const char *const kSet[4] = {"", "the Lookout on", "both off", "the sunrise on"};
+    snprintf(look, sizeof look, "%s (set by hand)", kSet[g_lookout_set]);
   } else {
-    char set[16] = "none";
+    char set[16] = "none", rise[16] = "none";
     if (g_sunset_min >= 0) snprintf(set, sizeof set, "%d:%02d", g_sunset_min / 60, g_sunset_min % 60);
-    snprintf(look, sizeof look, "%s (sunset %s; window %d min before to %d after; %s tonight)", in.lookout_window ? "on" : "off",
-             set, tc::kLookoutBeforeMin, tc::kLookoutAfterMin, g_lookout_day == g_today && g_today >= 0 ? "played" : "not played");
+    if (g_sunrise_min >= 0) snprintf(rise, sizeof rise, "%d:%02d", g_sunrise_min / 60, g_sunrise_min % 60);
+    snprintf(look, sizeof look, "%s (sunset %s; window %d min before to %d after; %s today); sunrise %s (sunrise %s; window %d before to %d after; %s today)",
+             in.lookout_window ? "on" : "off", set, tc::kLookoutBeforeMin, tc::kLookoutAfterMin,
+             g_lookout_shown.shown_day == g_today && g_today >= 0 ? "shown" : "not shown", in.sunrise_window ? "on" : "off", rise,
+             kSunriseBeforeMin, kSunriseAfterMin, g_sunrise_shown.shown_day == g_today && g_today >= 0 ? "shown" : "not shown");
   }
   return snprintf(buf, n,
                   "screensaver inputs: %s; mood %.2f (%s); scene weather %d%s, overcast %.2f, fog %.2f; other floor %d "
-                  "(5 = no signal); dogs %d; night %s (night gain %.1f); lookout %s; next loop %s; starts on its own %s after %lu s (%s; idle now %lu s)",
+                  "(5 = no signal); dogs %d; arrows %u %u %u; night %s (night gain %.1f); lookout %s; next loop %s; starts on its own %s after %lu s (%s; idle now %lu s)",
                   state, (double)in.mood, g_mood_override >= 0.f ? "set by hand" : "the clock",
                   in.weather_code,
                   g_weather_set >= 0 ? " set by hand" : (in.have_outside ? " from the outside reading" : " (no reading: its own pick)"),
                   (double)in.weather.overcast, (double)in.weather.fog, in.other_status, in.dog_out,
+                  (unsigned)in.req[0], (unsigned)in.req[1], (unsigned)in.req[2],
                   in.night_mode ? "yes" : "no", (double)(g_night_gain > 0.f ? g_night_gain : 0.55f), look, kScene[g_scene],
                   g_auto ? "on" : "off", (unsigned long)(screensaver_idle()),
                   g_idle_set_ms ? "set by hand until restart" : "Settings > SCREENSAVER",

@@ -326,9 +326,10 @@ LUCY OUT for a moment.
 
 ## Who owns what
 
-The C6's firmware, its keys, and the panels' MACs belong to TComm. The C6 is rebuilt and
-reflashed from Mike's laptop with TComm's tools, never from the Pi, so don't run esptool against
-it on the Pi. If the protocol needs to change, or the C6 misbehaves, write it up for the TComm
+The C6's firmware, its keys, and the panels' MACs belong to TComm. TComm builds the C6's firmware
+on Mike's laptop. Since 2026-11-07 the C6 stays on the Pi and the Pi writes TComm's images itself,
+but only through the one flash command in `weathergate-remote-brief.md`. Otherwise don't run
+esptool against it on the Pi. If the protocol needs to change, or the C6 misbehaves, write it up for the TComm
 session, and Mike carries it across.
 
 Still to check on the Pi, and worth reporting back to TComm:

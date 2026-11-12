@@ -72,6 +72,9 @@ struct Memory {
   // its variants (LoopPlan::fvar). It leaves last_fvar alone, so Mark's morning plans as it did.
   bool last_stay;
   uint8_t last_sfvar[8];
+  // The visiting couple (visitors.h): loops to wait before they may come again (2 when a visit
+  // begins: none in the next loop). Counted down at every loop start. Not printed by memoryFormat.
+  uint8_t visit_wait;
 };
 
 // Loop start, after worldBeginLoop (one rng call, every loop): the cairn from

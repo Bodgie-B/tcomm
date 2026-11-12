@@ -40,12 +40,9 @@ enum View : uint8_t { kMonth, kWeek, kDay };
 enum Field : uint8_t { kNone, kTitle, kNotes };
 enum KeyKind : uint8_t { kChar, kShift, kBack, kSym, kSpace, kDone };
 
-struct Key {
-  KeyKind kind;
-  char ch;  // kChar: the key's place in its row's letters (row * 16 + column)
-  int16_t w;  // LVGL's own width isn't there until its next layout
-  lv_obj_t *obj, *lbl;
-};
+// The keyboard's key and state are Keypad and KeypadKey (ui_internal.h), shared with the tile
+// message editor (ui_note.cpp, Mike 2026-11-07).
+using Key = KeypadKey;
 
 struct Cal {
   bool open = false;
@@ -62,8 +59,7 @@ struct Cal {
   lv_obj_t *dlg = nullptr, *kbd = nullptr;
   lv_obj_t *f_box[2] = {}, *f_val[2] = {}, *cursor = nullptr;
   lv_obj_t *v_date = nullptr, *v_time = nullptr, *v_len = nullptr, *unit_seg[2] = {}, *unit_lbl[2] = {};
-  Key keys[34] = {};
-  int nkeys = 0;
+  Keypad kp;  // the keyboard's keys and shift state; kbd is its object
   Event draft;
   bool is_new = false;
   // The occurrence being edited: its day, and for a series where it started and what it was.
@@ -72,7 +68,6 @@ struct Cal {
   lv_obj_t *f_name = nullptr, *rep_btn = nullptr, *rep_lbl = nullptr, *rep_icon = nullptr;
   lv_obj_t *picker = nullptr, *prompt = nullptr;  // over the editor
   Field focus = kNone;
-  bool shift = false, sym = false;
   int16_t timed_start = 9 * 60;  // kept while the length unit is days, for switching back
   // toast
   lv_obj_t *toast = nullptr;
@@ -214,6 +209,7 @@ Art g_kmarks[2][2][4];
 Art g_pills[40];
 int g_npills = 0;
 int g_art_mode = -1, g_art_floor = -1;
+int g_kp_icon_mode = -1;  // the keyboard's own Shift and Backspace ink (kp_icons, below)
 
 const theme::CalColors &cc() { return theme::cal_colors(g_cal.mode); }
 
@@ -270,6 +266,7 @@ void draw_graphics() {
       }
   g_art_mode = (int)g_cal.mode;
   g_art_floor = floor;
+  g_kp_icon_mode = (int)g_cal.mode;  // it just drew the keyboard's two pictures in its own ink
 }
 
 lv_obj_t *marker(lv_obj_t *parent, Floor f, int size, int x, int y) {
@@ -1149,38 +1146,44 @@ void refresh_fields() {
   }
 }
 
+// ---- The keyboard, shared (Mike, 2026-11-07) ----------------------------------------------------
+// One builder for the calendar's event editor and the tile message editor: the caller gives the
+// Keypad three callbacks (a typed character, backspace, Done) and owns the field the text goes to.
+
 // A character key's character: its place is row * 16 + column; row 3 holds the comma and the
 // period, the same in both layouts.
-char key_char(const Key &key) {
+char key_char(const Keypad &kp, const Key &key) {
   if (key.ch / 16 == 3) return key.ch % 16 == 0 ? ',' : '.';
-  return (g_cal.sym ? kRowsSym : kRowsAbc)[key.ch / 16][key.ch % 16];
+  return (kp.sym ? kRowsSym : kRowsAbc)[key.ch / 16][key.ch % 16];
 }
 
-void refresh_keys() {
-  const theme::CalColors &k = cc();
-  for (int i = 0; i < g_cal.nkeys; i++) {
-    Key &key = g_cal.keys[i];
+void kp_refresh(Keypad &kp) {
+  const theme::CalColors &k = theme::cal_colors(kp.mode);
+  for (int i = 0; i < kp.nkeys; i++) {
+    Key &key = kp.keys[i];
     if (key.kind == kChar) {
-      char t[2] = {key_char(key), 0};
-      if (!g_cal.sym && g_cal.shift) t[0] = (char)toupper((unsigned char)t[0]);
+      char t[2] = {key_char(kp, key), 0};
+      if (!kp.sym && kp.shift) t[0] = (char)toupper((unsigned char)t[0]);
       set_text(key.lbl, t);
       lv_obj_set_x(key.lbl, (key.w - text_width(t, B21)) / 2);
     } else if (key.kind == kSym) {
-      const char *t = g_cal.sym ? "ABC" : "?123";
+      const char *t = kp.sym ? "ABC" : "?123";
       set_text(key.lbl, t);
       lv_obj_set_x(key.lbl, (key.w - text_width(t, B21)) / 2);
     } else if (key.kind == kShift) {
       // Shift on: the letter key's light face, so it reads as pressed in.
-      Color face = g_cal.shift && !g_cal.sym ? k.key : k.key_special;
+      Color face = kp.shift && !kp.sym ? k.key : k.key_special;
       lv_obj_set_style_bg_color(key.obj, C(face), 0);
       lv_obj_set_style_bg_color(key.obj, C(gfx::scale(face, 0.88f)), LV_STATE_PRESSED);
     }
   }
 }
 
+void refresh_keys() { kp_refresh(g_cal.kp); }
+
 void set_focus(Field f) {
   g_cal.focus = f;
-  if (f != kNone) g_cal.shift = field_buf(f)[0] == 0 && f == kTitle;  // the title starts with a capital
+  if (f != kNone) g_cal.kp.shift = field_buf(f)[0] == 0 && f == kTitle;  // the title starts with a capital
   if (g_cal.kbd) {
     int32_t to = f != kNone ? kKbdY : kKbdHidden, from = lv_obj_get_y(g_cal.kbd);
     if (from != to && kAnimate) {
@@ -1195,59 +1198,71 @@ void set_focus(Field f) {
   refresh_keys();
 }
 
-void type_char(char ch) {
+// The calendar's callbacks: the focused field takes the character, loses one, or the keyboard goes.
+bool cal_on_char(char ch) {
+  if (g_cal.focus == kNone) return false;
+  char *b = field_buf(g_cal.focus);
+  size_t n = strlen(b);
+  if (n >= field_max(g_cal.focus)) return false;
+  b[n] = ch;
+  b[n + 1] = 0;
+  refresh_fields();
+  return true;
+}
+
+void cal_on_back() {
   if (g_cal.focus == kNone) return;
   char *b = field_buf(g_cal.focus);
   size_t n = strlen(b);
-  if (n >= field_max(g_cal.focus)) return;
-  if (g_cal.shift && !g_cal.sym) ch = (char)toupper((unsigned char)ch);
-  b[n] = ch;
-  b[n + 1] = 0;
-  if (g_cal.shift && isalpha((unsigned char)ch)) g_cal.shift = false;  // one letter at a time
+  if (n) b[n - 1] = 0;
   refresh_fields();
-  refresh_keys();
 }
+
+void cal_on_done() { set_focus(kNone); }  // the keyboard goes; the dialog stays
 
 void key_event(lv_event_t *e) {
   lv_event_code_t code = lv_event_get_code(e);
-  Key &key = g_cal.keys[(intptr_t)lv_event_get_user_data(e)];
+  Key &key = *(Key *)lv_event_get_user_data(e);
+  Keypad &kp = *key.kp;
   if (code == LV_EVENT_LONG_PRESSED_REPEAT && key.kind != kBack) return;
   if (code != LV_EVENT_CLICKED && code != LV_EVENT_LONG_PRESSED_REPEAT) return;
+  auto type = [&kp](char ch) {
+    if (kp.shift && !kp.sym) ch = (char)toupper((unsigned char)ch);
+    if (!kp.on_char || !kp.on_char(ch)) return;
+    if (kp.shift && isalpha((unsigned char)ch)) kp.shift = false;  // one letter at a time
+    kp_refresh(kp);
+  };
   switch (key.kind) {
-    case kChar: type_char(key_char(key)); break;
-    case kSpace: type_char(' '); break;
+    case kChar: type(key_char(kp, key)); break;
+    case kSpace: type(' '); break;
     case kShift:
-      if (!g_cal.sym) g_cal.shift = !g_cal.shift;
-      refresh_keys();
+      if (!kp.sym) kp.shift = !kp.shift;
+      kp_refresh(kp);
       break;
     case kSym:
-      g_cal.sym = !g_cal.sym;
-      refresh_keys();
+      kp.sym = !kp.sym;
+      kp_refresh(kp);
       break;
-    case kBack: {
-      if (g_cal.focus == kNone) break;
-      char *b = field_buf(g_cal.focus);
-      size_t n = strlen(b);
-      if (n) b[n - 1] = 0;
-      refresh_fields();
+    case kBack:
+      if (kp.on_back) kp.on_back();
       break;
-    }
-    case kDone: set_focus(kNone); break;  // the keyboard goes; the dialog stays
+    case kDone:
+      if (kp.on_done) kp.on_done();
+      break;
   }
 }
 
-void add_key(lv_obj_t *kbd, float x, int row, float w, KeyKind kind, int ch, Color face, Color ink) {
-  if (g_cal.nkeys >= (int)(sizeof(g_cal.keys) / sizeof(g_cal.keys[0]))) return;
+void add_key(Keypad &kp, float x, int row, float w, KeyKind kind, int ch, Color face, Color ink) {
+  if (kp.nkeys >= (int)(sizeof(kp.keys) / sizeof(kp.keys[0]))) return;
   static const int kTops[4] = {8, 53, 98, 143};
   int xi = (int)lroundf(x), wi = (int)lroundf(x + w) - xi;
-  lv_obj_t *b = box(kbd, xi, kTops[row], wi, 40, face, 9);
+  lv_obj_t *b = box(kp.obj, xi, kTops[row], wi, 40, face, 9);
   lv_obj_set_style_bg_color(b, C(gfx::scale(face, 0.88f)), LV_STATE_PRESSED);  // about 12 percent darker
-  int idx = g_cal.nkeys++;
-  Key &key = g_cal.keys[idx];
-  key = Key{kind, (char)ch, (int16_t)wi, b, nullptr};
+  Key &key = kp.keys[kp.nkeys++];
+  key = Key{(uint8_t)kind, (char)ch, (int16_t)wi, b, nullptr, &kp};
   lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_add_event_cb(b, key_event, LV_EVENT_CLICKED, (void *)(intptr_t)idx);
-  if (kind == kBack) lv_obj_add_event_cb(b, key_event, LV_EVENT_LONG_PRESSED_REPEAT, (void *)(intptr_t)idx);
+  lv_obj_add_event_cb(b, key_event, LV_EVENT_CLICKED, &key);
+  if (kind == kBack) lv_obj_add_event_cb(b, key_event, LV_EVENT_LONG_PRESSED_REPEAT, &key);
   switch (kind) {
     case kShift: {
       lv_obj_t *img = image(b, (wi - 22) / 2, 9);
@@ -1259,37 +1274,60 @@ void add_key(lv_obj_t *kbd, float x, int row, float w, KeyKind kind, int ch, Col
       g_icon_back.show(img);
       break;
     }
-    case kSpace: text_c(b, B14, 14, false, cc().muted, 0, wi, 0, 40, "SPACE", 2); break;
+    case kSpace: text_c(b, B14, 14, false, theme::cal_colors(kp.mode).muted, 0, wi, 0, 40, "SPACE", 2); break;
     case kDone: key.lbl = text_c(b, B21, 21, false, ink, 0, wi, 0, 40, "Done"); break;
     default: key.lbl = text(b, B21, 21, false, ink, 0, 0, 40, "?"); break;
   }
 }
 
-void build_keyboard(int32_t y) {
-  const theme::CalColors &k = cc();
-  // 24 px taller than the 192 it shows: its lower corners, rounded like the upper ones, stay off screen.
-  g_cal.kbd = rect(g_cal.root, 0, y, 800, 192 + 24, k.kbd_bg, k.kbd_opa, 24);
-  lv_obj_add_flag(g_cal.kbd, LV_OBJ_FLAG_CLICKABLE);  // a tap between keys goes nowhere
-  g_cal.nkeys = 0;
+// Shift and Backspace pictures, in the ink of the mode the keyboard is built for (the calendar's
+// draw_graphics makes the same two).
+void kp_icons(tc::Mode mode) {
+  if (g_kp_icon_mode == (int)mode && g_icon_shift.cv.ok() && g_icon_back.cv.ok()) return;
+  const theme::CalColors &k = theme::cal_colors(mode);
+  if (g_icon_shift.make(22, 22, true)) art::cal_icon(g_icon_shift.cv, art::CalIcon::Shift, k.ink);
+  if (g_icon_back.make(26, 22, true)) art::cal_icon(g_icon_back.cv, art::CalIcon::Backspace, k.ink);
+  g_kp_icon_mode = (int)mode;
+  // Mike, 2026-11-07: these two are shared with the calendar's graphics; if they were drawn for another
+  // mode, the calendar must redraw them before it next shows them (else wrong ink).
+  if (g_art_mode != (int)mode) g_art_mode = -1;
+}
+
+// 192 px of keys at y (24 more below the screen, so the lower corners are rounded off screen).
+void kp_build(Keypad &kp, lv_obj_t *parent, int32_t y, tc::Mode mode) {
+  kp.mode = mode;
+  kp_icons(mode);
+  const theme::CalColors &k = theme::cal_colors(mode);
+  kp.obj = rect(parent, 0, y, 800, 192 + 24, k.kbd_bg, k.kbd_opa, 24);
+  lv_obj_add_flag(kp.obj, LV_OBJ_FLAG_CLICKABLE);  // a tap between keys goes nowhere
+  kp.nkeys = 0;
   const float kw = 73.9f, gap = 5;
-  for (int i = 0; i < 10; i++) add_key(g_cal.kbd, 8 + i * (kw + gap), 0, kw, kChar, 0 * 16 + i, k.key, k.ink);
-  for (int i = 0; i < 9; i++) add_key(g_cal.kbd, 48 + i * (kw + gap), 1, kw, kChar, 1 * 16 + i, k.key, k.ink);
-  add_key(g_cal.kbd, 8, 2, 1.5f * kw, kShift, 0, k.key_special, k.ink);
-  for (int i = 0; i < 7; i++) add_key(g_cal.kbd, 8 + 1.5f * kw + gap + i * (kw + gap), 2, kw, kChar, 2 * 16 + i, k.key, k.ink);
-  add_key(g_cal.kbd, 800 - 8 - 1.5f * kw, 2, 1.5f * kw, kBack, 0, k.key_special, k.ink);
+  for (int i = 0; i < 10; i++) add_key(kp, 8 + i * (kw + gap), 0, kw, kChar, 0 * 16 + i, k.key, k.ink);
+  for (int i = 0; i < 9; i++) add_key(kp, 48 + i * (kw + gap), 1, kw, kChar, 1 * 16 + i, k.key, k.ink);
+  add_key(kp, 8, 2, 1.5f * kw, kShift, 0, k.key_special, k.ink);
+  for (int i = 0; i < 7; i++) add_key(kp, 8 + 1.5f * kw + gap + i * (kw + gap), 2, kw, kChar, 2 * 16 + i, k.key, k.ink);
+  add_key(kp, 800 - 8 - 1.5f * kw, 2, 1.5f * kw, kBack, 0, k.key_special, k.ink);
   // Row 4: ?123, comma, space (whatever is left), period, Done (2.4 keys wide).
   float x = 8;
-  add_key(g_cal.kbd, x, 3, 1.5f * kw, kSym, 0, k.key_special, k.ink);
+  add_key(kp, x, 3, 1.5f * kw, kSym, 0, k.key_special, k.ink);
   x += 1.5f * kw + gap;
-  add_key(g_cal.kbd, x, 3, kw, kChar, 3 * 16 + 0, k.key, k.ink);
+  add_key(kp, x, 3, kw, kChar, 3 * 16 + 0, k.key, k.ink);
   x += kw + gap;
   float space_w = (800 - 8 - 2.4f * kw - gap - kw - gap) - x;
-  add_key(g_cal.kbd, x, 3, space_w, kSpace, 0, k.key, k.ink);
+  add_key(kp, x, 3, space_w, kSpace, 0, k.key, k.ink);
   x += space_w + gap;
-  add_key(g_cal.kbd, x, 3, kw, kChar, 3 * 16 + 1, k.key, k.ink);
+  add_key(kp, x, 3, kw, kChar, 3 * 16 + 1, k.key, k.ink);
   x += kw + gap;
-  add_key(g_cal.kbd, x, 3, 2.4f * kw, kDone, 0, k.accent_fill, k.cream);
-  refresh_keys();
+  add_key(kp, x, 3, 2.4f * kw, kDone, 0, k.accent_fill, k.cream);
+  kp_refresh(kp);
+}
+
+void build_keyboard(int32_t y) {
+  g_cal.kp.on_char = cal_on_char;
+  g_cal.kp.on_back = cal_on_back;
+  g_cal.kp.on_done = cal_on_done;
+  kp_build(g_cal.kp, g_cal.root, y, g_cal.mode);
+  g_cal.kbd = g_cal.kp.obj;
 }
 
 void close_editor_now() {
@@ -1301,7 +1339,8 @@ void close_editor_now() {
   g_cal.rep_btn = nullptr;
   g_cal.cursor = nullptr;
   g_cal.focus = kNone;
-  g_cal.nkeys = 0;
+  g_cal.kp.nkeys = 0;
+  g_cal.kp.obj = nullptr;
   if (g_cal.panel) show(g_cal.panel, true);
 }
 
@@ -1910,6 +1949,10 @@ void build_dialog() {
 
 }  // namespace
 
+// The shared keyboard for other sheets (ui_internal.h).
+void keypad_build(Keypad &kp, lv_obj_t *parent, int32_t y, tc::Mode mode) { kp_build(kp, parent, y, mode); }
+void keypad_refresh(Keypad &kp) { kp_refresh(kp); }
+
 // Opens the editor: an existing event, or a new one on day (at start_min, or a default hour).
 void open_editor_impl(const Event *e, int32_t day, int start_min, bool animate) {
   if (!g_cal.root) return;
@@ -1938,7 +1981,7 @@ void open_editor_impl(const Event *e, int32_t day, int start_min, bool animate) 
     g_cal.draft.start_min = (int16_t)start_min;
   }
   g_cal.timed_start = g_cal.draft.all_day ? 9 * 60 : g_cal.draft.start_min;
-  g_cal.sym = false;
+  g_cal.kp.sym = false;
   if (g_cal.panel) show(g_cal.panel, false);  // spec 9: the editor replaces the panel
   build_dialog();
   build_keyboard(animate ? kKbdHidden : kKbdY);

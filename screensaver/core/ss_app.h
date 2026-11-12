@@ -17,20 +17,46 @@ namespace ss {
 // Inputs the host keeps up to date. Core reads them at tick boundaries.
 struct Inputs {
   float mood;             // solar-day position, see palette.h (0 night .. 5 dusk)
-  WeatherTint weather;    // overcast, fog, night_dim in 0..1
+  WeatherTint weather;    // overcast, fog, night_dim in 0..1; night_gain and rain_dark, the host's choices
   int weather_code;       // scene weather: 0 clear, 1 rain, 2 snow, 3 wind, 4 heat, 5 fog, 6 chill, 7 storm (scene/weather.cpp kCodeKinds)
   bool have_outside;      // false: no OUTSIDE reading for 15 min, pick random weather
   int other_status;       // 0 Open, 1 Busy, 2 Private, 3 Sleeping, 4 Away, 5 No signal
-  int dog_out;            // 0 none, 1 Lucy, 2 Copper, 3 both
+  int dog_out;            // 0 none, 1 Lucy, 2 Copper, 3 both: the badges, and the dogs in camp (scene/housedogs.h)
   bool chip;              // draw the status chip and dog badges (scene/chip.h); the panel: always
   bool night_mode;        // night rule in force (dim, no large bright areas)
   bool lookout_window;    // true inside the sunset window: play the Lookout spine
+  // The real sun and moon (palette.h SkyInputs). Zeroed: the old sky, one body parked by mood.
+  // The Lookout keeps its own sun whatever this says.
+  SkyInputs sky;
   // 0: the loop's spine family follows the inputs (scene/spine.h
   // spineFamilyFor); 1 + SpineFamily forces one (preview --spine). Read at loop start.
   // A host must zero the whole struct before filling it (both hosts memset
   // it): a stray value here forces a family.
   uint8_t spine_force;
+  // The tenant's heat and cooling requests (the UPSTAIRS panel only; zero elsewhere), drawn as badges
+  // beside the dog badges as the home screen's UPSTAIRS tile draws them (scene/chip.h). Oldest first,
+  // the newest on the right; 0 for none. Each is the firmware's Ask (1 urgent heat, 2 mild heat,
+  // 3 mild cooling, 4 urgent cooling), plus SS_REQ_PREDICTED for a predicted one.
+  uint8_t req[3];
+  // The same arrows on BOTH panels, for the fire and ice (scene/fireice.h): too hot (cooling asked)
+  // or too cold (heat asked) played out in camp. Same coding as req, oldest first; predicted ones
+  // (SS_REQ_PREDICTED) are left out there.
+  uint8_t temp_ask[3];
+  // Mail waiting on the DOWNSTAIRS panel (the same state as its mail badge): the bird with the
+  // letter (scene/mailbird.h). False elsewhere.
+  bool mail;
+  // Someone just walked up to the upstairs panel (the panel's View::passer_by, true for about 3 s,
+  // at most once every 2 minutes): the hiker waves to the viewer (scene/react.h).
+  bool passer_by;
+  // True in the morning window round the real sunrise: play the sunrise overlook (scene/sunrise.h),
+  // unless the weather says rain, storm or snow. The sunset window (lookout_window) wins if both are set.
+  bool sunrise_window;
+  // The visiting couple (scene/visitors.h) may drop by now and then. Zeroed (false): they never come,
+  // so a host or test that leaves it out plays exactly as before. The panel sets it.
+  bool visitors;
 };
+
+#define SS_REQ_PREDICTED 0x10
 
 struct App;   // opaque to the host; defined in core/scene/app.cpp
 
@@ -58,6 +84,15 @@ int appRender(App* app, Surface& fb);
 
 // Force every strip dirty (after the host touched the framebuffer, or on resume).
 void appInvalidate(App* app);
+// Only the strips (and columns) under frame rectangle [x0, x1) x [y0, y1): the next render redraws
+// what the scene has there (a host's badge taken away).
+void appInvalidateRect(App* app, int x0, int y0, int x1, int y1);
+// The host's own overlay (the downstairs mail badge): drawn into every strip the renderer composites,
+// after the scene and the chip and before the strip goes to the frame buffer, so the frame buffer
+// never shows the scene under it, even for a moment. `strip` is in frame coordinates (origin_y set);
+// draw only inside `clip`. Strips that aren't redrawn keep what the overlay last put there; after
+// turning an overlay on, appInvalidateRect its area once. nullptr turns it off.
+void appSetOverlay(App* app, void (*draw)(void* user, Surface& strip, const Rect& clip), void* user);
 
 // The touch reveal (brief section 11). At the touch, appRevealBegin freezes the
 // scene where it is and hands back a full frame (SS_WIDTH x SS_HEIGHT, stride
@@ -106,9 +141,12 @@ bool appHikerRect(const App* app, Rect* out);
 bool appHikerBounds(const App* app, Rect* out);
 // He is walking this tick.
 bool appHikerWalking(const App* app);
-// Critters in the scene now (slots in use; 0 between visits).
+// Critters in the scene now (slots in use; 0 between visits). Lucy and Copper don't count.
 int appCritterCount(const App* app);
-// Slot `slot` (0..7): false when free or out of the frame; otherwise its
+// Lucy (0) or Copper (1): in the scene (and visible) now, its unclipped bounds, and what it is doing
+// (scene/housedogs.h HouseDogAct; -1 when not in the scene).
+bool appHouseDog(const App* app, int dog, Rect* out, int* act);
+// Slot `slot` (0..9; 8 and 9 are Lucy's and Copper's): false when free or out of the frame; otherwise its
 // unclipped bounds and its kind (CritterKind, scene/critters.h).
 bool appCritterRect(const App* app, int slot, Rect* out, int* kind);
 // Loop memory (stage 6 adds the rest): the raccoon has the shoe; loops started.
@@ -132,6 +170,12 @@ float appFade(const App* app);
 int appPaletteRebuilds(const App* app);
 // This loop's spine family (scene/spine.h SpineFamily).
 int appSpineFamily(const App* app);
+// This loop is a set piece (the Lookout or the sunrise) and its key moment has played: the sunset
+// beat has begun (the sun is down), or the sun has broken over the ridge. A host counts the day's
+// showing only from here (set_piece_day.h), so a touch in the first seconds doesn't use it up.
+bool appSetPieceShown(const App* app);
+// The visiting couple is in camp now (scene/visitors.h).
+bool appVisitorsHere(const App* app);
 // The minor effect running now ("chipmunk_cross", ...; "" when none), how
 // many started this loop, and the critters they hold now (CT_MINOR slots).
 const char* appMinorName(const App* app);

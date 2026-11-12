@@ -35,6 +35,13 @@ struct App {
   WeatherTint pal_weather;
   float pal_flash;        // the lightning's flash step it was computed with (weather.h)
   bool pal_night;
+  uint8_t pal_moonlight;  // the full moon's light on the stream it was computed with, 0..kMoonlightSteps
+  uint8_t pal_warm;       // fire and ice's warm step it was computed with (fireice.h)
+  bool passer_waved;      // the hiker has waved at this passer-by already (Inputs::passer_by)
+
+  // The sky as the cache has it: the real sun and moon in whole pixels, the cloud cover
+  // (landscape.h). appTick moves it on and repaints only the rows that changed.
+  SkyDraw sky;
 
   uint32_t events_seen;   // drained events; ignored until later stages
   uint16_t pal_rebuilds;  // computeAppPalette calls this loop (appPaletteRebuilds)
@@ -47,7 +54,11 @@ struct App {
   bool fast_owned;
 
   RevealState reveal;     // the touch reveal; while active the scene is frozen
-  ChipState chip;         // the other floor's status, the dog badges, the doorbell pulse
+  ChipState chip;         // the other floor's status, the dog badges, the request arrows, the doorbell pulse
+
+  // The host's overlay (appSetOverlay): drawn last into every composited strip.
+  void (*overlay)(void* user, Surface& strip, const Rect& clip);
+  void* overlay_user;
 
   Renderer renderer;
 };
@@ -69,13 +80,30 @@ constexpr float kSpreadTintMedium = 0.25f;
 
 void drawStatic(void* user, Surface& frame, const Palette& pal) {
   const App* a = static_cast<const App*>(user);
-  worldDrawStatic(a->world, frame, pal, a->pal_mood);
+  worldDrawStatic(a->world, frame, pal, a->pal_mood, &a->sky);
 }
 
 void drawDynamic(void* user, Surface& strip, const Rect& clip, const Palette& pal) {
   const App* a = static_cast<const App*>(user);
-  worldDrawDynamic(a->world, strip, clip, pal, a->pal_mood);
+  worldDrawDynamic(a->world, strip, clip, pal, a->pal_mood, &a->sky);
   if (a->in.chip) chipDraw(a->chip, strip, clip, pal);   // over everything, the loop's fade included
+  if (a->overlay) a->overlay(a->overlay_user, strip, clip);   // the host's badge, on top of that
+}
+
+// The scene's night for the house dogs' choices: the palette's mood near midnight, or the night rule.
+bool dogsNight(const App* a) {
+  float m = a->world.mood_override >= 0.f ? a->world.mood_override : a->in.mood;
+  m -= 6.f * floorf(m / 6.f);
+  return a->in.night_mode || m < 0.75f || m > 5.25f;
+}
+
+// The request arrows the chip shows (Inputs::req, oldest first, packed: zeros dropped).
+void chipReqs(App* a) {
+  uint8_t r[3];
+  int n = 0;
+  for (uint8_t v : a->in.req)
+    if (v) r[n++] = v;
+  chipRequests(a->chip, r, n);
 }
 
 float moodDistance(float a, float b) {
@@ -102,6 +130,32 @@ WeatherTint sceneWeather(const App* a, float* flash) {
 // steps World::mood_override), else the host's.
 float sceneMood(const App* a) { return a->world.mood_override >= 0.f ? a->world.mood_override : a->in.mood; }
 
+// The sky the scene should show now: the host's sun and moon, and the cloud cover (the palette's
+// overcast, or the weather's own when that is more). The Lookout draws its own sky: none here.
+SkyDraw skyNow(const App* a, float overcast) {
+  if (spineSetPiece(a->world.plan.family)) return SkyDraw{};
+  const float wx = weatherCloudCover(a->world);
+  return landscapeSky(a->in.sky, sceneMood(a), wx > overcast ? wx : overcast);
+}
+
+// A full moon high in a night sky puts a little more light on the stream: the water a few steps
+// toward its own highlight colour (so the night caps still hold). Nothing by day, under cloud
+// (the overcast palette dims the moon itself) or in the Lookout.
+constexpr int kMoonlightSteps = 4;
+constexpr float kMoonlightMix = 0.30f;   // at the most: full, high and full night
+int moonlightNow(const App* a) {
+  const SkyInputs& s = a->in.sky;
+  if (!s.have || spineSetPiece(a->world.plan.family)) return 0;
+  const float m = sceneMood(a) - 6.f * floorf(sceneMood(a) / 6.f);
+  const float night = 1.f - 2.f * (m < 3.f ? m : 6.f - m);
+  const float ph = s.moon_phase - floorf(s.moon_phase);
+  const float full = (0.5f * (1.f - cosf(6.2831853f * ph)) - 0.8f) / 0.2f;   // 0 at 80% lit, 1 at full
+  const float high = (s.moon_alt - 5.f) / 15.f;
+  if (!(night > 0.f && full > 0.f && high > 0.f)) return 0;
+  const float k = (night > 1.f ? 1.f : night) * (full > 1.f ? 1.f : full) * (high > 1.f ? 1.f : high);
+  return (int)(k * (float)kMoonlightSteps + 0.5f);
+}
+
 // `force`: the loop's geometry changed (loop start), so the cache is rebuilt
 // even when the palette came out the same; otherwise a palette byte for byte
 // the one in use costs nothing (an input step that lands on the same 565
@@ -118,6 +172,13 @@ void computeAppPalette(App* a, bool force, int spread_bands = 0) {
   const float mood = sceneMood(a);
   computePalette(mood, w, flash, p);
   if (a->world.plan.family == SF_LOOKOUT) lookoutPaletteTweak(a->world, mood, w, flash, p);
+  if (a->world.plan.family == SF_SUNRISE) sunrisePaletteTweak(a->world, mood, w, p);
+  const int ml = moonlightNow(a);
+  if (ml > 0) p.c[WATER] = mixRGB(p.c[WATER], p.c[WATER_LIGHT], kMoonlightMix * (float)ml / (float)kMoonlightSteps);
+  a->pal_moonlight = (uint8_t)ml;
+  const int warm = fireIceWarmStep(a->world);   // urgent heat: the light a little warmer
+  if (warm > 0) fireIcePaletteTweak(warm, p, a->in.night_mode);
+  a->pal_warm = (uint8_t)warm;
   a->pal_mood = mood;
   a->pal_night = a->in.night_mode;
   if (!force && memcmp(&p, &a->pal, sizeof p) == 0) return;
@@ -130,13 +191,24 @@ void computeAppPalette(App* a, bool force, int spread_bands = 0) {
 void beginLoop(App* a) {
   a->rng.seed(a->loop_seed);
   worldBeginLoop(a->world, a->rng);
+  // Lucy and Copper: their own streams from the loop seed (the loop rng never sees them).
+  houseDogsBeginLoop(a->world, a->loop_seed, a->in.dog_out, dogsNight(a));
+  // The mail bird: its own stream too; simply there if the mail is waiting already.
+  mailBeginLoop(a->world, a->loop_seed, a->in.mail);
   // The family is a function of the inputs alone: it costs the loop rng nothing.
   a->world.plan.family = spineFamilyFor(a->in);
   spinePlan(a->world.plan, a->rng, a->in, a->world.memory);
   memoryBeginLoop(a->world, a->rng);
   spineBeginLoop(a->world, a->rng);
+  if (a->world.plan.family == SF_SUNRISE) sunriseInputs(a->world, a->in);   // a gray morning, the real sun's bearing, the dogs
   // The weather: its own rng stream from the loop seed (the loop rng never sees it).
   weatherPlan(a->world, a->loop_seed, a->in, spineLoopTicks(a->world.plan));
+  // The visiting couple: whether they may come this loop (their own stream too).
+  visitorsBeginLoop(a->world, a->loop_seed, a->in);
+  {   // the new loop's sky, before its cache is built (every caller rebuilds it next)
+    float flash = 0.f;
+    a->sky = skyNow(a, sceneWeather(a, &flash).overcast);
+  }
   a->pal_rebuilds = 0;
   a->timeline.reset();
   spineBuildTimeline(a->timeline, a->world.plan);
@@ -168,6 +240,7 @@ App* appStart(void* storage, const HostAlloc& alloc, uint64_t seed, const Inputs
   beginLoop(a);
   computeAppPalette(a, true);
   // The chip's first update sets its look with no fade, so the first frame shows the real status.
+  chipReqs(a);
   if (in.chip) chipUpdate(a->chip, in.other_status, in.dog_out, in.night_mode, 0.f);
   return a;
 }
@@ -196,8 +269,20 @@ bool appTick(App* a) {
     if (reactCanStart(a->world)) reactStart(a->world);
   }
   if (a->in.chip) {
+    chipReqs(a);
     const Rect d = chipUpdate(a->chip, a->in.other_status, a->in.dog_out, a->in.night_mode, SS_TICK_DT);
     if (!d.empty()) a->renderer.markDirtyRect(d);
+  }
+  houseDogsSetInputs(a->world, a->in.dog_out, dogsNight(a));   // read by the dogs and the fetch this tick
+  fireIceSetInputs(a->world, a->in.temp_ask);
+  mailSetInputs(a->world, a->in.mail);
+  visitorsSetInputs(a->world, a->in.visitors, dogsNight(a), a->sky);
+  // A passer-by at the upstairs panel: he waves, once, if he can while they are there.
+  if (!a->in.passer_by) {
+    a->passer_waved = false;
+  } else if (!a->passer_waved && reactWaveOk(a->world)) {
+    reactStart(a->world, true);
+    a->passer_waved = true;
   }
 
   // Palette follows the inputs only when they moved enough to matter.
@@ -207,6 +292,9 @@ bool appTick(App* a) {
       fabsf(w.overcast - a->pal_weather.overcast) > kWeatherEps ||
       fabsf(w.fog - a->pal_weather.fog) > kWeatherEps ||
       fabsf(w.night_dim - a->pal_weather.night_dim) > kWeatherEps ||
+      fabsf(w.gloom - a->pal_weather.gloom) > kWeatherEps ||
+      moonlightNow(a) != a->pal_moonlight ||   // a step of 1 in kMoonlightSteps: small, so it spreads
+      fireIceWarmStep(a->world) != a->pal_warm ||   // the same
       w.night_gain != a->pal_weather.night_gain ||   // the host's setting: rare, every change counts
       flash != a->pal_flash ||   // the flash moves in a few fixed steps: every step counts
       a->in.night_mode != a->pal_night) {
@@ -218,15 +306,61 @@ bool appTick(App* a) {
       float dt = fabsf(w.overcast - a->pal_weather.overcast);
       if (fabsf(w.fog - a->pal_weather.fog) > dt) dt = fabsf(w.fog - a->pal_weather.fog);
       if (fabsf(w.night_dim - a->pal_weather.night_dim) > dt) dt = fabsf(w.night_dim - a->pal_weather.night_dim);
+      if (fabsf(w.gloom - a->pal_weather.gloom) > dt) dt = fabsf(w.gloom - a->pal_weather.gloom);
       if (dm <= kSpreadMood && dt <= kSpreadTint) bands = a->spread_small;
       else if (dm <= kSpreadMoodMedium && dt <= kSpreadTintMedium) bands = a->spread_medium;
     }
     computeAppPalette(a, false, bands);
   }
 
+  // The sky follows the real sun and moon. They move about a pixel a minute, so this is rare:
+  // repaint the rows a body left and the rows it is in now (the rest of the cache is right
+  // already) and composite just its old and new squares. A change of cloud cover, or the stars
+  // changing as the moon sets, redraws the whole cache.
+  {
+    const SkyDraw sk = skyNow(a, w.overcast);
+    if (!landscapeSkySame(sk, a->sky)) {
+      if (sk.cover != a->sky.cover || sk.dark != a->sky.dark || sk.real != a->sky.real) {
+        a->renderer.invalidateCache();
+      } else {
+        const SkyDraw& o = a->sky;
+        const bool moved[2] = {
+            sk.sun != o.sun || sk.sun_x != o.sun_x || sk.sun_y != o.sun_y || sk.sun_r != o.sun_r,
+            sk.moon != o.moon || sk.moon_x != o.moon_x || sk.moon_y != o.moon_y || sk.moon_phase != o.moon_phase};
+        // Each body's square before and after: [body][0 was, 1 now].
+        const Rect area[2][2] = {{landscapeSunBounds(o), landscapeSunBounds(sk)},
+                                 {landscapeMoonBounds(o), landscapeMoonBounds(sk)}};
+        for (int k = 0; k < 2; ++k) {
+          if (!moved[k]) continue;
+          int y0 = SS_HEIGHT, y1 = 0;
+          for (const Rect& q : area[k]) {
+            if (q.empty()) continue;
+            if (q.y0 < y0) y0 = q.y0;
+            if (q.y1 > y1) y1 = q.y1;
+            a->renderer.markDirtyRect(q);
+          }
+          a->renderer.repaintRows(y0, y1);
+        }
+      }
+      a->sky = sk;
+    }
+  }
+
   // The doorbell reaction holds the story still (react.h): no beat or minor
   // advances, only the world's ambient layer and his reaction.
   if (a->world.react.active) {
+    worldTick(a->world, a->rng, a->renderer);
+    return false;
+  }
+  // Fire and ice takes his story over the same way (fireice.h), from a calm moment until it is done.
+  if (fireIceCanStart(a->world)) fireIceBegin(a->world, a->loop_seed ^ ((uint64_t)a->world.tick * 0x9E3779B97F4A7C15ull));
+  if (fireIceHolds(a->world)) {
+    worldTick(a->world, a->rng, a->renderer);
+    return false;
+  }
+  // And the visiting couple, when they drop by (visitors.h).
+  if (visitorsCanStart(a->world)) visitorsBegin(a->world);
+  if (visitorsHolds(a->world)) {
     worldTick(a->world, a->rng, a->renderer);
     return false;
   }
@@ -290,6 +424,13 @@ bool appRevealStep(App* app, Surface& fb, float dt) {
 
 void appInvalidate(App* app) { app->renderer.markAllDirty(); }
 
+void appInvalidateRect(App* app, int x0, int y0, int x1, int y1) { app->renderer.markDirtyRect(Rect{x0, y0, x1, y1}); }
+
+void appSetOverlay(App* app, void (*draw)(void* user, Surface& strip, const Rect& clip), void* user) {
+  app->overlay = draw;
+  app->overlay_user = user;
+}
+
 const char* appBeatName(const App* app) {
   const Beat* b = app->timeline.currentBeat();
   return b ? b->name : "";
@@ -319,6 +460,17 @@ bool appHikerWalking(const App* app) { return app->world.hiker.visible && app->w
 
 int appCritterCount(const App* app) { return directorCount(app->world); }
 
+bool appHouseDog(const App* app, int dog, Rect* out, int* act) {
+  if (dog < 0 || dog >= HD_COUNT) return false;
+  const World& w = app->world;
+  const HouseDog& d = w.dogs.d[dog];
+  const bool in = d.slot >= 0 && w.crit[d.slot].in_use && w.crit[d.slot].tag == CT_HOUSEDOG;
+  if (act) *act = in ? d.act : -1;
+  if (!in) return false;
+  if (out) *out = critterBounds(w.critters[d.slot]);
+  return w.critters[d.slot].visible;
+}
+
 bool appCritterRect(const App* app, int slot, Rect* out, int* kind) {
   if (slot < 0 || slot >= CRITTER_MAX) return false;
   const World& w = app->world;
@@ -338,6 +490,13 @@ uint32_t appLoopTicks(const App* app) { return spineLoopTicks(app->world.plan); 
 float appFade(const App* app) { return app->world.fade; }
 int appPaletteRebuilds(const App* app) { return app->pal_rebuilds; }
 int appSpineFamily(const App* app) { return app->world.plan.family; }
+bool appSetPieceShown(const App* app) {
+  const World& w = app->world;
+  if (w.plan.family == SF_LOOKOUT) return w.look.sunset_tick != 0;
+  if (w.plan.family == SF_SUNRISE) return w.sr.broke_tick != 0;
+  return false;
+}
+bool appVisitorsHere(const App* app) { return visitorsHolds(app->world); }
 
 const char* appMinorName(const App* app) { return minorsName(app->world); }
 int appMinorCount(const App* app) { return app->world.minors.fired; }

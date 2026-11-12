@@ -68,7 +68,22 @@ struct Settings {
   // midnight. Version 4 ended at screensaver_min: keep new fields after these.
   uint16_t screen_off_start_min = 22 * 60;
   uint16_t screen_off_end_min = 6 * 60;
+
+  // Version 6 of the saved settings (board_storage.cpp, settings_migrate.h) ends here: new fields
+  // go after these, and a saved older layout gets these at their values below.
+  // The presence sensor (Mike, 2026-11-11; docs/presence-sensor.md): one plain on/off sensor on the
+  // UPSTAIRS panel's isolated input DI0. Nothing it does happens until it is switched on here.
+  bool presence_fitted = false;     // a sensor is wired up
+  bool presence_active_high = true; // the level read from the input that means "someone is there"
+  uint16_t presence_hold_s = 60;    // how long after the last activity the place counts as occupied
+  // Which house events the upstairs panel reports to the Pi (NoticeKind bits, protocol.h); it was
+  // kept in the controller and reset at every start. 0x13 = kNoticeDefaultMask (checked in controller.cpp).
+  uint8_t notice_mask = 0x13;
 };
+
+constexpr uint16_t kPresenceHoldLeast = 10;   // seconds
+constexpr uint16_t kPresenceHoldMost = 600;
+constexpr uint16_t kPresenceHoldStep = 10;
 
 constexpr uint16_t kScreensaverMinLeast = 1;      // PROPOSED: a minute
 constexpr uint16_t kScreensaverMinMost = 24 * 60;  // PROPOSED: a day

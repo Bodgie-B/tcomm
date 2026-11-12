@@ -15,12 +15,18 @@ struct PreviewOptions {
   bool weather_given = false;   // false: have_outside = false (core picks random weather)
   float overcast = 0.0f;
   float fog = 0.0f;
+  float rain_dark = 0.0f;       // --rain-dark: how dark a raining sky is; 0 the scene's own level
+  bool sky = false;             // --sky: the real sun and moon (Inputs::sky), degrees and the moon's phase
+  float sun_az = 180.0f, sun_alt = 0.0f, moon_az = 180.0f, moon_alt = -90.0f, moon_phase = 0.0f;
   bool night = false;
   bool lookout = false;
+  bool sunrise = false;         // --sunrise: inside the sunrise window (Inputs::sunrise_window)
+  bool visitors = false;        // --visitors: the visiting couple may come (Inputs::visitors)
   int spine = 0;                // 0 auto; 1 + SpineFamily forces it (--spine evening|morning|midday|lookout)
   int status = 0;
   int dog = 0;
   bool chip = false;            // --chip: draw the status chip and dog badges
+  uint8_t req[3] = {0, 0, 0};   // --req: the upstairs request arrows (Inputs::req)
   int frames = 100;
   int fps = 25;                 // render fps; ticks per frame = SS_TICK_HZ / fps
   int every = 0;                // >0: ticks per frame, overrides fps

@@ -18,15 +18,16 @@ the hardware.
 | `gateway/gateway-c6/src/lcd/` | The 1.14 inch ST7789 screen, with a built-in 5 x 7 font. No display library. |
 | `gateway/gateway-c6/src/shared/` | Three one-line files that compile the panels' own `core/protocol.cpp`, `events.cpp` and `civil.cpp` into the gateway. Nothing is copied. |
 | `gateway/gateway-c6/listener/` | A stand-in for the upstairs panel, for testing before the panels' ESP-NOW is switched on |
-| `gateway/tests/test_gateway.cpp` | 75 host checks, run by `bash firmware/tools/build_sim.sh` |
+| `gateway/tests/test_gateway.cpp` | 93 host checks, run by `bash firmware/tools/build_sim.sh` |
 
 The host tests cover the brief's two OUTSIDE and two LUCY frames byte for byte, the ACK examples,
 ACKs from an unknown MAC or with the wrong sender byte (ignored), the retry times (0, 150, 400,
 750, 1150 ms, failed at 1.5 s), a newer request superseding one in flight, the two types retrying
-independently, exactly one final reply per id, and every field check.
+independently, exactly one final reply per id, every field check, and (since 2026-11-07) the UPDATE
+line: its frame byte for byte, the busy answer, its ACK, its give-up and its bad ids.
 
-Capacity, built with the real secrets file: the gateway uses 966,393 bytes of the C6's
-1,310,720-byte app space (73%, nearly all of it the Wi-Fi stack) and 45,388 bytes of static RAM
+Capacity, built with the real secrets file: the gateway uses 968,605 bytes of the C6's
+1,310,720-byte app space (73%, nearly all of it the Wi-Fi stack) and 45,700 bytes of static RAM
 out of 327,680 (13%). The listener uses 933,734
 bytes on the panel.
 
@@ -80,6 +81,21 @@ Or tell Claude "flash the gateway on COM7" (with the right port).
    fc:01:2c:fd:d3:a8 (esptool read_mac, 2026-10-25).
 
 To compile without uploading, leave the port off: `bash firmware/tools/fw.sh gateway`.
+
+## Flashing the gateway on the Pi (Mike, 2026-11-07)
+
+The gateway now stays plugged into the Pi, so the USB steps above are only for a C6 that's off the
+Pi. From the laptop:
+
+    bash firmware/tools/fw.sh gateway-remote
+
+builds the gateway, copies its app image and the image's SHA-256 to the Pi with scp, and runs the
+Pi's flash command over ssh, all through Mike's untracked `firmware/tools/gateway_flash.local.sh`. The Pi
+checks the image and the chip's MAC, saves what's in app0, writes app0 only (never the bootloader,
+the partition table or NVS) and prints the gateway's hello reply. `fw.sh` checks that the reply's
+`fw` matches `kFirmware` in `gateway.h`, so bump that with every gateway change (0.2 is the first
+with the update line, 0.3 the first with the notices). The Pi's side in full, as asked of the WeatherGate session:
+`firmware/docs/weathergate-remote-brief.md`.
 
 ## The secrets file
 
@@ -158,6 +174,32 @@ ignored.
 A `superseded` reply carries the seq of the request that gave way. The `ms` in an `acked` reply
 counts from the first try to the ACK.
 
+### The update line (Mike, 2026-11-07)
+
+A third request type asks the gateway to start both panels' Wi-Fi updaters with no touch on either
+panel. The whole chain is in `firmware/docs/remote-update.md`. The line is
+
+    {"type":"update","id":21}
+
+and needs only the `id` (any other fields are ignored). The gateway sends an UPDATE frame (type 15,
+one reserved byte, always 0) to the upstairs panel with the usual retries (0, 150, 400, 750 and
+1150 ms, giving up at 1.5 s). The upstairs panel passes it to downstairs and starts both updaters,
+the same as Settings > Update over Wi-Fi > BOTH PANELS. The answers, in the same style as the other
+types:
+
+- `{"type":"update","id":21,"acked":"upstairs","seq":8192,"ms":57}`: upstairs took it and is
+  starting the updaters (they appear a few seconds later, after the Wi-Fi join).
+- `{"type":"update","id":21,"failed":"upstairs","seq":8192}`: no ACK after the retries, nothing
+  started. The same `gw:` note as for the other types follows, saying whether a radio took the tries.
+- `{"type":"update","id":22,"busy":true,"seq":8192}`: an update with that seq is still waiting for
+  its ACK. Nothing new was sent; the first request keeps its own final reply (acked or failed).
+- `{"type":"update","rejected":"id must be a positive whole number"}` (with the `id` when it was
+  usable): the same rejection the other types give.
+
+An update never replaces or delays an OUTSIDE or LUCY in flight, and `superseded` is never used
+for it. The screen's last-result row reads `update acked 57ms` or `update failed`. A second
+request after the first has been answered is a new update with a new seq.
+
 A reset loses whatever was in flight, with no final reply for it. When `{"boot":true,...}` arrives,
 treat any request still waiting as failed, and send the Lucy press again.
 
@@ -173,6 +215,60 @@ Anything that isn't a reply starts with something other than `{`: the chip's own
 after a reset (`ESP-ROM:...`), system errors (`E (...`), and the gateway's few notes (`gw: ...`,
 start-up problems, and radio send errors at most once a minute). Writes give up after 20 ms when
 nothing is reading the port.
+
+## Notices from the panels (Mike, 2026-11-11)
+
+From `gateway-c6 0.3` the link is no longer one-way. The upstairs panel tells the gateway about
+things that happen in the house (a ring nobody answered, an urgent request for heat or cooling, a
+dog out too long, and four chattier kinds that are off to begin with), and the gateway prints each
+one as a line the Pi can turn into a phone notification or a WhatsApp message. The Pi's side is in
+`firmware/docs/weathergate-events-brief.md`.
+
+On the radio it is a NOTICE frame (type 17, layout in `core/protocol.h`), sent by the upstairs panel
+only, to the gateway, with the usual five tries over 1.5 s. The gateway ACKs it with the same ACK
+frame a panel would send, whenever it arrives, a repeat included (the first ACK may be what was
+lost). Only a NOTICE from the upstairs panel's MAC is taken: any other MAC, the downstairs panel,
+or a frame whose sender byte does not match its MAC is ignored, with no ACK. A frame the gateway
+can't read (a kind outside 1 to 7, a floor over 1, text over 40 bytes) is ignored with no ACK.
+Retries of one NOTICE are told apart by the frame's seq (kept for 10 s, as the panels do), so each
+event prints once. If the gateway doesn't answer, the panel drops the notice after those tries and
+shows nothing: it is never "No signal", and it never holds up what the two panels send each other.
+
+The line is unsolicited (no `id`, nothing to reply to), one per event:
+
+    {"event":"notice","kind":"knock","floor":"downstairs","value":0,"time":1793000000,"text":""}
+
+| Field | Meaning |
+|---|---|
+| `event` | always `"notice"` |
+| `kind` | `knock`, `arrow_urgent`, `arrow_mild`, `mail`, `dog_out`, `status` or `note` (the numbers 1 to 7 on the radio, in that order) |
+| `floor` | `"upstairs"` or `"downstairs"`: who the event is about (see below) |
+| `value` | a whole number, signed (see below) |
+| `time` | UTC seconds since 1970 of the event itself, or 0 when the panel had no clock |
+| `text` | up to 40 printable ASCII characters; `"` and `\` are escaped as in JSON; may be empty |
+
+| `kind` | When the upstairs panel raises it | `floor` | `value` | `text` |
+|---|---|---|---|---|
+| `knock` | a ring went unanswered for its ring time (a minute), or rang while upstairs was Away | who rang | 0 unanswered, 1 rang during Away | empty |
+| `arrow_urgent` | the tenant sent an urgent heat or cooling request | downstairs | +1 heat, -1 cooling | empty |
+| `arrow_mild` | the tenant sent a mild heat or cooling request | downstairs | +1 heat, -1 cooling | empty |
+| `mail` | mail was marked for downstairs (taking it back says nothing) | downstairs | 1 | empty |
+| `dog_out` | a dog passed its out-too-long limit (the same limit as the nudge on the tile) | upstairs (not meaningful) | minutes out | `LUCY`, `COPPER` or `BOTH` |
+| `status` | a floor's status changed (a timer running out counts) | whose status | 0 | the word: `OPEN`, `BUSY`, `PRIVATE`, `SLEEPING` or `AWAY` |
+| `note` | a floor's tile message was set (clearing it says nothing) | whose message | 0 | the message, cut at 40 characters |
+
+Each is raised once per occurrence, from state the upstairs panel already holds (what downstairs does
+reaches upstairs through the normal sync). `time` is the event's own time where the panel knows it (the
+arrow's sent time, the moment mail was marked, when the dog went out, when the message was written),
+so a notice that is raised again after a restart carries the same `(kind, time)`; the Pi should drop
+repeats by that pair. Which kinds are sent is a bitmask in the upstairs panel (bit 0 is kind 1):
+`knock`, `arrow_urgent` and `dog_out` are on to begin with, and a Settings page for the rest is a
+follow-up. A line is at most about 190 bytes, well inside the 512-byte limit, and goes out in one
+write like every other line.
+
+While the Pi bridge isn't reading the port, these lines wait in the same 2 KB buffer as the replies
+and come out when the port opens (the Pi should ignore ones older than it cares about, by `time`).
+Nothing here changes the three request types, their replies, a request in flight or the screen.
 
 ## Testing end to end from the laptop
 

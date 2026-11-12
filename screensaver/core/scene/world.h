@@ -14,6 +14,9 @@
 #include "buildup.h"
 #include "critters.h"
 #include "day.h"
+#include "fireice.h"
+#include "housedogs.h"
+#include "mailbird.h"
 #include "hiker.h"
 #include "kite.h"
 #include "landscape.h"
@@ -21,6 +24,8 @@
 #include "lookout_land.h"
 #include "props.h"
 #include "spine.h"
+#include "sunrise.h"
+#include "visitors.h"
 #include "minors.h"
 #include "majors.h"
 #include "memory.h"
@@ -60,7 +65,12 @@ enum ActorKind : uint8_t {
   ACT_KITE, ACT_BOOM, ACT_EAGLE,
   // The bike, the archery, the slackline or the ropes course (day.h): idx is the part (DAY_PARTS),
   // each sorted at the y dayPartY gives.
-  ACT_DAY
+  ACT_DAY,
+  // Fire and ice (fireice.h): idx a small fire, or the set-down bucket. The mail bird's letter on the
+  // ground (mailbird.h).
+  ACT_FX, ACT_MAIL,
+  // The visiting couple (visitors.h): idx 0, 1 Ann and Ben, 2, 3 their packs, 4 the disc, 5, 6 the telescopes.
+  ACT_VISITOR
 };
 struct ActorRef {
   uint8_t kind;
@@ -75,13 +85,21 @@ struct ActorRef {
 // 88 holds them all; the weather's bits (WX_BITS 4) on top; the kite, the
 // boomerang and the eagle (3) on top of those: the stuck boomerang stays in
 // the camp pine into the next loop, so it can meet the evening's 28 glyphs.
-#define WORLD_ACTOR_MAX 104   // 98 and the morning stay's four items (pan, cake, brush, sack), and the day pieces' second part (day.h)
+#define WORLD_ACTOR_MAX 128   // the visiting couple's 7 and their pine redraws (they never meet fire and ice's 7); 98 and the morning stay's four items (pan, cake, brush, sack), and the day pieces' second part (day.h);
+                              // Lucy and Copper (housedogs.h) 2 more critters with their pine redraws
+                              // the mail bird with its pine redraws and its letter (4), fire and ice's 7 (FI_ACTORS)
 
-// Critters in the scene: slots the director (director.h) hands out.
-#define CRITTER_MAX 8
+// Critters in the scene: slots the director (director.h) hands out. The story's
+// critters get the first CRITTER_STORY; the last two belong to Lucy and Copper
+// (housedogs.h, slot CRITTER_STORY + dog), so the house dogs never take a slot
+// the story wanted and a loop with no dog out is what it was. After them, the mail bird's
+// (mailbird.h, slot CRITTER_MAIL), on the same terms.
+#define CRITTER_STORY 8
+#define CRITTER_MAIL 10
+#define CRITTER_MAX 11
 
 // Who holds a critter slot, and how the director treats it.
-enum CritterTag : uint8_t { CT_NONE = 0, CT_DINNER, CT_BEAR, CT_THIEF, CT_MINOR, CT_MAJOR };
+enum CritterTag : uint8_t { CT_NONE = 0, CT_DINNER, CT_BEAR, CT_THIEF, CT_MINOR, CT_MAJOR, CT_HOUSEDOG, CT_MAIL };
 enum CritterMode : uint8_t {
   CM_FREE = 0,     // the owner drives it
   CM_STARTLE,      // scattered: a startle, then CM_FLEE
@@ -137,6 +155,7 @@ struct DoorbellReact {
   bool active;
   bool hands_full;   // carrying something: a hop and a look, no wave
   bool look_only;    // the bow up (archery): he only looks round
+  bool wave;         // a passer-by at the upstairs panel: just a wave to the viewer, no jump or point
   int facing;        // his facing at the bell
   int ticks;         // since the bell
   HikerFx fx;        // his pose offsets at the bell
@@ -184,9 +203,14 @@ struct WorldDirty {
 
 struct World {
   Landscape land;
-  // The Lookout's own landscape and state (lookout.h), beside the camp's; only
-  // a Lookout loop generates and draws them.
-  LookoutLand lk;
+  // The set pieces' own landscapes (only their loops generate and draw them) and the visiting couple
+  // (only a camp loop has them): they never meet in one loop, so they share one block. The Lookout
+  // (lookout.h) keeps its state beside it.
+  union {
+    LookoutLand lk;
+    Sunrise sr;       // the sunrise overlook (sunrise.h)
+    Visitors vis;     // the visiting couple (visitors.h)
+  };
   LookoutState look;
   Cloud clouds[2];
   BuildState build;
@@ -222,6 +246,9 @@ struct World {
   DayState day;
   BoomFlight boom;
   Minors minors;     // the minor-effect layer (minors.h)
+  HouseDogs dogs;    // Lucy and Copper while they are out (housedogs.h)
+  FireIce fi;        // the tenant's too hot / too cold played out (fireice.h)
+  MailBird mail;     // the downstairs mail's bird (mailbird.h)
   // Whole-frame fade to ACTOR (near black): 0 none, 1 black. The close ends
   // on 1; the build beat brings the next loop up from it.
   float fade;
@@ -243,6 +270,10 @@ struct World {
   uint32_t tick;     // ticks since loop start
   uint32_t frozen;   // ticks of this loop the doorbell reaction held the story (react.h)
 };
+
+// The shared block costs no more than the Lookout's landscape did.
+static_assert(sizeof(Sunrise) <= sizeof(LookoutLand), "the sunrise must fit in the Lookout's place");
+static_assert(sizeof(Visitors) <= sizeof(LookoutLand), "the visitors must fit in the Lookout's place");
 
 // The story's clock: ticks since loop start, less the doorbell freezes. Every
 // deadline the story keeps (the minors' gaps, the weather's gags and gusts, the
@@ -280,7 +311,9 @@ int worldTakeBit(World& w, uint8_t kind);
 // low on the water (a major's GL_WATER glyph).
 void worldDrawWater(const World& w, Surface& s, const Rect& clip, const Palette& pal);
 
-void worldDrawStatic(const World& w, Surface& frame, const Palette& pal, float mood);
-void worldDrawDynamic(const World& w, Surface& strip, const Rect& clip, const Palette& pal, float mood);
+// `sky`: the real sun and moon and the cloud cover (landscape.h SkyDraw); null is the old sky.
+void worldDrawStatic(const World& w, Surface& frame, const Palette& pal, float mood, const SkyDraw* sky = nullptr);
+void worldDrawDynamic(const World& w, Surface& strip, const Rect& clip, const Palette& pal, float mood,
+                      const SkyDraw* sky = nullptr);
 
 }  // namespace ss

@@ -34,8 +34,14 @@ static constexpr uint32_t kClockFloor = 1767225600u;  // 2026-01-01: an earlier 
 // ---------------------------------------------------------------------------------------------
 // Setup and the main tick
 
+// Settings::notice_mask's starting value is written as a number there (settings.h can't include protocol.h).
+static_assert(kNoticeDefaultMask == Settings().notice_mask, "Settings::notice_mask must start at kNoticeDefaultMask");
+
 void Controller::begin(const Settings &s, const OwnState &own, const DogState &dog, const MailState &mail) {
+  started_ms_ = p_.mono_ms();
+  near_ms_ = started_ms_;  // nobody-near counts from the start, not from the beginning of time
   settings_ = s;
+  settings_.notice_mask &= (uint8_t)((1u << kNoticeKinds) - 1);
   status_.restore(own);
   dog_.restore(dog);
   mail_.restore(mail);
@@ -88,13 +94,20 @@ void Controller::tick() {
   }
   bell_out_.tick(now);
   bell_in_.tick(now);
+  tick_notices();
 
   while (const RetryQueue::Frame *f = retry_.due(now)) {
-    p_.radio_send(sender_id(other_floor(settings_.floor)), f->data, f->len);
+    // A NOTICE goes to the gateway; everything else to the other panel.
+    p_.radio_send(f->type == MsgType::Notice ? (uint8_t)kSenderGateway : sender_id(other_floor(settings_.floor)), f->data, f->len);
     retry_.sent(f->seq, now);
   }
   RetryQueue::Result r;
   while (retry_.expired(now, r)) {
+    if (r.type == MsgType::Notice) {
+      // No gateway answered: the notice is dropped. Never No signal: it wasn't for the other panel.
+      p_.log("notice: no ACK from the gateway, dropped");
+      continue;
+    }
     // HANDOFF: no ACK after every retry marks the other side as No signal.
     peer_.no_signal = true;
     if (r.type == MsgType::Knock) bell_out_.on_failed(r.knock_id, now);
@@ -108,9 +121,13 @@ void Controller::tick() {
   }
 
   tick_update(now);
+  tick_outside_log(now, w);
   send_comfort();
   tick_requests(now);
   tick_events(now, w);
+  tick_dog_nudge(now, w);
+  tick_presence(now);
+  update_agenda(w);
   build_view();
   if (!backlight_set_ || view_.backlight != last_backlight_) {
     p_.set_backlight(view_.backlight);
@@ -141,7 +158,9 @@ void Controller::send_state(bool please_reply) {
   Msg m;
   m.type = MsgType::State;
   m.u.state.status = (uint8_t)s.status;
-  m.u.state.flags = (uint8_t)(((please_reply || want_peer_state_) ? kStatePleaseReply : 0) | (w.valid ? kStateClockValid : 0));
+  sent_pres_flags_ = presence_flags();
+  m.u.state.flags = (uint8_t)(((please_reply || want_peer_state_) ? kStatePleaseReply : 0) | (w.valid ? kStateClockValid : 0) |
+                              sent_pres_flags_);
   m.u.state.since = s.since;
   m.u.state.until = s.until;
   m.u.state.fallback = (uint8_t)s.fallback;
@@ -172,6 +191,53 @@ void Controller::send_mail() {
   send(m);
 }
 
+void Controller::send_note(Floor f) {
+  Msg m;
+  m.type = MsgType::Note;
+  m.u.note.floor = (uint8_t)f;
+  m.u.note.st = notes_[(int)f].state();
+  send(m);
+}
+
+void Controller::send_notes() {
+  // Mike, 2026-11-07: both floors' messages go across, so a panel that lost its saved state can take
+  // back its own floor's message from the other panel's copy (like MAIL).
+  for (int f = 0; f < 2; f++)
+    if (notes_[f].state().ver) send_note((Floor)f);
+}
+
+// Mike, 2026-11-07: every 15 minutes (local :00, :15, :30, :45) each panel adds the outside reading to
+// the day's file on the SD card, forever (outside_log.h). Only in the first minute of a quarter, so
+// the time on the line is the quarter it stands for; a quarter with no fresh reading then is a gap.
+void Controller::tick_outside_log(uint32_t now, const WallTime &w) {
+  if (!w.valid || w.utc < kClockFloor || !outside_fresh(now)) return;
+  int32_t off = p_.utc_offset(w.utc);
+  int64_t local = (int64_t)w.utc + off;
+  if (local < 0) return;
+  uint32_t slot = (uint32_t)(local / kOutsideEveryS) + 1;  // +1 so 0 can mean none yet
+  if (slot == outside_slot_ || local % kOutsideEveryS >= 60) return;
+  outside_slot_ = slot;
+  // Just started (a restart or a new build) inside a quarter's first minute: that quarter may be in
+  // the file already from before the restart, and the slot is only kept in RAM, so leave a gap rather
+  // than write it twice (review, 2026-11-07).
+  if (ms_diff(now, started_ms_) < 90000) return;
+  OutsideSample s;
+  s.utc = w.utc;
+  s.offset = off;
+  s.t = outside_.temp;
+  s.h = outside_.hum;
+  s.forecast = outside_.code;
+  s.flags = outside_.flags & (kOutsideDangerHeat | kOutsideDangerCold);
+  char name[kOutsideNameLen], line[96];
+  outside_file_name(w.utc, off, name);
+  if (outside_csv_line(s, line, sizeof(line))) p_.append_line(name, kOutsideCsvHeader, line);
+}
+
+void Controller::save_notes() {
+  NoteState both[2] = {notes_[0].state(), notes_[1].state()};
+  p_.save_notes(both);
+}
+
 void Controller::send_reading() {
   Msg m;
   m.type = MsgType::Reading;
@@ -194,7 +260,10 @@ void Controller::send_outside() {
   m.u.outside.temp_tenths_f = outside_.temp;
   m.u.outside.humidity = outside_.hum;
   m.u.outside.forecast = outside_.code;
-  m.u.outside.time = outside_.time;
+  // The time rides along as the clock for the other panel (see the OUTSIDE handler), so it is brought
+  // up to now: a reading passed on again later (the other panel just started) would otherwise carry a
+  // time minutes old.
+  m.u.outside.time = outside_.time ? outside_.time + (uint32_t)ms_diff(p_.mono_ms(), outside_.got_mono) / 1000u : 0;
   strncpy(m.u.outside.phrase, outside_.phrase, kMaxPhrase);
   send(m);
 }
@@ -212,7 +281,9 @@ void Controller::send_sum(bool please_reply) {
   m.u.sum.count = (uint16_t)events_.count();
   m.u.sum.digest = events_.digest();
   m.u.sum.flags = please_reply ? kSumPleaseReply : 0;
-  send(m);
+  // A dropped comparison would leave the calendars apart until something else changed them, so
+  // tick_events sends it again when the queue has room.
+  if (!send(m)) ev_resync_ = true;
 }
 
 void Controller::events_changed() {
@@ -523,8 +594,50 @@ bool Controller::restore_occurrence(uint32_t series, int32_t day) {
   return true;
 }
 
+// The house events (see NoticeKind). Only the upstairs panel sends them, and only the kinds that are
+// switched on. The text is cut to kNoticeTextMax and made printable ASCII.
+void Controller::raise_notice(NoticeKind k, Floor floor, int16_t value, uint32_t time, const char *text) {
+  if (settings_.floor != Floor::Upstairs || !(settings_.notice_mask & notice_bit(k))) return;
+  if (!time) {
+    WallTime w = p_.wall();
+    time = w.valid ? w.utc : 0;
+  }
+  Msg m;
+  m.type = MsgType::Notice;
+  m.u.notice.kind = (uint8_t)k;
+  m.u.notice.floor = (uint8_t)floor;
+  m.u.notice.value = value;
+  m.u.notice.time = time;
+  size_t n = 0;
+  for (; text && text[n] && n < kNoticeTextMax; n++) {
+    char c = text[n];
+    m.u.notice.text[n] = ((uint8_t)c < 0x20 || (uint8_t)c > 0x7E) ? '?' : c;
+  }
+  m.u.notice.text[n] = 0;
+  m.u.notice.text_len = (uint8_t)n;
+  if (!retry_.push(m, me(), p_.mono_ms())) p_.log("notice: too many waiting, dropped");
+}
+
+// Unanswered rings, both ways. Upstairs rang and downstairs never replied: the sender's "No answer
+// yet". Downstairs rang and nobody here answered or dismissed the banner within its minute: it ran
+// out (bell.cpp). A ring while this panel is Away is reported when it arrives (handle, Knock).
+void Controller::tick_notices() {
+  BellOut o = bell_out_.state();
+  if (o == BellOut::NoAnswer && notice_bell_out_ != BellOut::NoAnswer)
+    raise_notice(NoticeKind::Knock, Floor::Upstairs, 0, 0);
+  notice_bell_out_ = o;
+  BannerKind b = bell_in_.banner();
+  if (notice_banner_ == BannerKind::Knock && b == BannerKind::None) {
+    if (!ring_resolved_) raise_notice(NoticeKind::Knock, other_floor(settings_.floor), 0, bell_in_.knock_utc());
+    ring_resolved_ = false;
+  }
+  notice_banner_ = b;
+}
+
 void Controller::own_changed(Status before) {
   p_.save_own(status_.state());
+  if (status_.state().status != before)
+    raise_notice(NoticeKind::Status, settings_.floor, 0, 0, status_word(status_.state().status));
   send_state(false);
   bell_in_.status_changed(before, status_.state().status, p_.mono_ms());
 }
@@ -536,10 +649,13 @@ void Controller::heard_from_peer() {
   peer_.heard_utc = w.valid ? w.utc : 0;
   // Something we sent during the outage never arrived. Catch the other panel up now: this is
   // triggered by its message, not by a timer, so it isn't a heartbeat.
+  // The most this queues: STATE, DOG, MAIL, NOTE x2, REQUESTS, READING, OUTSIDE, COMFORT, then the sum.
+  static_assert(RetryQueue::kSlots >= 10 + 4, "the catch-up burst plus a few more must fit the retry queue");
   if (was_lost) {
     send_state(false);
     send_dog();
     if (mail_.state().ver) send_mail();
+    send_notes();
     if (req_.state().ver) send_requests();
     if (reading_sent_) send_reading();
     send_outside();
@@ -623,17 +739,24 @@ void Controller::handle(const Msg &m) {
   switch (m.type) {
     case MsgType::State: {
       if (m.sender != peer) return;
+      bool had_state = peer_.known;
+      Status was = peer_.st.status;
       peer_.known = true;
       want_peer_state_ = false;
+      if (had_state && was != (Status)m.u.state.status)
+        raise_notice(NoticeKind::Status, other_floor(settings_.floor), 0, 0, status_word((Status)m.u.state.status));
       peer_.st.status = (Status)m.u.state.status;
       peer_.st.since = m.u.state.since;
       peer_.st.until = m.u.state.until;
       peer_.st.fallback = (Status)m.u.state.fallback;
+      peer_.away = (m.u.state.flags & kStateAwayDesk) != 0;
+      peer_.nobody_near = (m.u.state.flags & kStateNobodyNear) != 0;
       maybe_copy_clock(m);
       if (m.u.state.flags & kStatePleaseReply) {
         send_state(false);
         send_dog();
         if (mail_.state().ver) send_mail();
+        send_notes();
         if (req_.state().ver) send_requests();
         if (reading_sent_) send_reading();
         send_outside();
@@ -645,6 +768,8 @@ void Controller::handle(const Msg &m) {
       if (m.sender != peer) return;
       KnockAction a = bell_in_.on_knock(m.u.knock.id, other_floor(settings_.floor), settings_, status_.state().status, now,
                                         w.valid ? w.utc : 0);
+      if (a.save) raise_notice(NoticeKind::Knock, other_floor(settings_.floor), 1, w.valid ? w.utc : 0);
+      if (a.banner) ring_resolved_ = false;
       if (a.banner || a.save || a.chime != Chime::None) {  // a new ring, not a repeat of one
         bell_shakes_++;
         ring_alert_ = true;
@@ -705,6 +830,20 @@ void Controller::handle(const Msg &m) {
       break;
     }
     case MsgType::Update: {
+      if (m.sender == kSenderGateway) {
+        // Mike, 2026-11-07: the Pi asked the gateway for UPDATE, no touch on either panel. Upstairs does
+        // what its own "both panels" button does; the gateway only ever sends to upstairs, which
+        // passes it on. The ACK to the gateway is out already (on_radio), and a retried UPDATE the
+        // dedup window lets through must not restart a wait that is running.
+        if (settings_.floor != Floor::Upstairs) {
+          p_.log("update: the gateway asked this (downstairs) panel, ignored: it only goes to upstairs");
+          return;
+        }
+        if (both_wait_ || update_wait_) return;
+        p_.log("update: asked by the gateway");
+        if (!update_both()) p_.log("update: asked by the gateway, but this panel has no updater");
+        return;
+      }
       // Mike, 2026-11-07: the other panel's "both panels" button. Already ACKed by on_radio; the
       // updater starts a little later (tick_update) so that ACK is out before this panel restarts.
       if (m.sender != peer) return;
@@ -730,6 +869,28 @@ void Controller::handle(const Msg &m) {
       if (!(in == mail_.state())) send_mail();  // ours is newer: share it
       break;
     }
+    case MsgType::Note: {
+      // Mike, 2026-11-07: a tile message belongs to the floor that wrote it. The other panel sends
+      // both floors' (like MAIL, the higher counter wins): about its own floor, the message itself;
+      // about ours, its copy of ours, which is how a panel whose saved state was lost takes its own
+      // message back. When ours is the newer one, it goes back. No touch(): a message arriving from
+      // the other floor must not wake the screen or end the screensaver (review, 2026-11-07).
+      if (m.sender != peer) return;
+      uint8_t f = m.u.note.floor;
+      if (f > 1) return;
+      NoteState in = m.u.note.st;
+      NoteState prev = notes_[f].state();
+      if (notes_[f].apply_remote(in)) {
+        save_notes();
+        const NoteState &cur_st = notes_[f].state();
+        // The other floor's message, new or changed (a copy of ours coming back is not news).
+        if (f == (uint8_t)other_floor(settings_.floor) && cur_st.text[0] &&
+            (cur_st.set != prev.set || strcmp(cur_st.text, prev.text)))
+          raise_notice(NoticeKind::Note, (Floor)f, 0, cur_st.set, cur_st.text);
+      }
+      if (!(in == notes_[f].state())) send_note((Floor)f);
+      break;
+    }
     case MsgType::Requests: {
       // Mike, 2026-11-06: the arrows are kept like the mail badge, the higher counter wins.
       if (m.sender != peer) return;
@@ -749,9 +910,15 @@ void Controller::handle(const Msg &m) {
             for (int j = 0; j < cn; j++) kept |= old[i].ask == cur[j].ask && old[i].source == cur[j].source && old[i].sent == cur[j].sent;
             if (!kept) req_log(old[i], ReqEnd::Cleared, at);
           }
-        } else if (cn && ask_urgent((Ask)cur[cn - 1].ask) &&
-                   (!on || old[on - 1].ask != cur[cn - 1].ask || old[on - 1].sent != cur[cn - 1].sent)) {
-          req_ding();  // a new urgent arrow: wakes the screen (build_view) and dings at once
+        } else if (cn && (!on || old[on - 1].ask != cur[cn - 1].ask || old[on - 1].sent != cur[cn - 1].sent)) {
+          const ReqArrow &na = cur[cn - 1];
+          if (ask_urgent((Ask)na.ask)) req_ding();  // a new urgent arrow: wakes the screen (build_view) and dings at once
+          // Told to the Pi once per arrow: only one the old list didn't hold, and only the tenant's.
+          bool known = false;
+          for (int i = 0; i < on; i++) known |= old[i].ask == na.ask && old[i].source == na.source && old[i].sent == na.sent;
+          if (!known && na.source == (uint8_t)ReqSource::Tenant)
+            raise_notice(ask_urgent((Ask)na.ask) ? NoticeKind::ArrowUrgent : NoticeKind::ArrowMild, Floor::Downstairs,
+                         ask_heat((Ask)na.ask) ? 1 : -1, na.sent);
         }
         req_snapshot(false);
       }
@@ -773,15 +940,43 @@ void Controller::handle(const Msg &m) {
       break;
     case MsgType::Outside:
       if (m.sender != kSenderGateway && m.sender != peer) return;
-      // A panel that lost its clock (a power cut: no coin cell) takes the Pi's internet time from
-      // the weather message, the gateway's or upstairs passing it on (Mike, 2026-10-31), never a
-      // time of 0 (HANDOFF 2026-10-30: the Pi hasn't synced yet). It's when the Pi took the
-      // reading, and the Pi sends one reading more than once: the first after a power cut was 10
-      // minutes old on the panel that day. So a clock from here (or from the other panel) moves on
-      // to any later reading's time, never back; one set by hand is left alone.
-      if (m.u.outside.time >= kClockFloor &&
-          (!w.valid || (w.quality <= kClockFromPeer && m.u.outside.time > w.utc + 2)))
-        p_.set_wall(m.u.outside.time, kClockFromPeer);
+      // Mike, 2026-11-07: the WeatherGate sends internet-verified time with every reading (the gateway's,
+      // or upstairs passing it on, brought up to date in send_outside), so this is the panel's network
+      // clock and the panel no longer asks pool.ntp.org itself. It is taken when the clock isn't set or
+      // is more than 2 s off either way (kClockNetwork beats a time set by hand and a copy from the other
+      // panel), never a time below kClockFloor: the Pi sends 0 until it has synced (HANDOFF 2026-10-30).
+      if (m.u.outside.time >= kClockFloor) {
+        int64_t diff = (int64_t)m.u.outside.time - (int64_t)w.utc;
+        // A big step back on a clock already set from here would most likely be an old reading sent
+        // again, not a correction: small ones (the clock running fast) are taken, jumps of more than
+        // 2 minutes back are left (review, 2026-11-07).
+        bool old = w.valid && w.quality >= kClockNetwork && diff < -120;
+        // But one wrong time from the gateway that put the clock ahead must not pin it there for good
+        // (audit, 2026-11-11). A re-sent old reading stands still while real time moves on; a gateway
+        // that has really stepped back keeps sending times that advance in step with our own clock. So
+        // when 3 readings in a row (2 consistent intervals) agree with each other that way, take it.
+        // Downstairs gets the same through send_outside, which adds the elapsed seconds.
+        if (old) {
+          int32_t el = ms_diff(now, back_mono_);
+          int64_t drift = (int64_t)m.u.outside.time - ((int64_t)back_time_ + el / 1000);
+          bool steady = back_n_ > 0 && drift >= -kBackSlackS && drift <= kBackSlackS;
+          if (steady && el < kBackMinGapMs) {
+            // A copy sent again a moment later (the catch-up): neither a new reading nor a mismatch.
+          } else {
+            back_n_ = steady ? back_n_ + 1 : 1;
+            back_time_ = m.u.outside.time;
+            back_mono_ = now;
+            if (back_n_ >= kBackNeeded) {
+              p_.log("clock: the gateway kept to an earlier time, taking it");
+              p_.set_wall(m.u.outside.time, kClockNetwork);
+              back_n_ = 0;
+            }
+          }
+        } else {
+          back_n_ = 0;
+          if (!w.valid || diff > 2 || diff < -2) p_.set_wall(m.u.outside.time, kClockNetwork);
+        }
+      }
       if (!(m.u.outside.flags & kOutsideValid)) return;
       // HANDOFF (2026-10-30): staleness counts from when this panel received the reading, never from
       // its own time, which is 0 until the Pi's clock has synced and can be wrong before that.
@@ -852,6 +1047,7 @@ void Controller::on_local_reading(bool valid, int16_t t, uint16_t h) {
 void Controller::touch() {
   last_touch_ = p_.mono_ms();
   touched_ = true;
+  near_ms_ = last_touch_;  // someone is at the panel
 }
 
 bool Controller::choose_status(Status s) {
@@ -874,6 +1070,10 @@ void Controller::tap_bell() {
   touch();
   uint16_t id = bell_out_.tap(p_.mono_ms(), next_knock_);
   if (!id) return;
+  // The tenant ringing while upstairs says nobody is near its panel: the toast says so while the
+  // ring waits (build_view). Noted now, so a STATE arriving meanwhile doesn't change this ring's.
+  knock_near_note_ = settings_.floor == Floor::Downstairs && peer_.known && !peer_.no_signal && peer_.nobody_near;
+  knock_near_at_ = p_.mono_ms();
   bell_shakes_++;
   next_knock_ = (uint16_t)(next_knock_ + 1);
   if (next_knock_ == 0) next_knock_ = 1;
@@ -1064,6 +1264,12 @@ bool Controller::tap_requests() {
   int n = req_.showing(w.valid ? w.utc : 0, shown);
   bool up = settings_.floor == Floor::Upstairs;
   if (!(up ? req_.clear(w) : req_.take_back(w))) return false;
+  // Mike, 2026-11-07: "Action taken on temperature" takes his own message away too; the
+  // confirmation shows in that spot.
+  if (up && notes_[(int)Floor::Upstairs].clear(w)) {
+    save_notes();
+    send_note(Floor::Upstairs);
+  }
   if (!up)
     for (int i = 0; i < n; i++) req_log(shown[i], ReqEnd::TakenBack, w.valid ? w.utc : 0);
   p_.save_requests(req_.state());
@@ -1147,11 +1353,43 @@ void Controller::tick_update(uint32_t now) {
   }
 }
 
+// Tile messages (note.h, Mike 2026-11-07). A panel only changes its own floor's message; the other
+// floor's copy changes only when a NOTE arrives.
+bool Controller::set_note(const char *text, uint32_t duration_s) {
+  touch();
+  NoteModel &n = notes_[(int)settings_.floor];
+  NoteState before = n.state();
+  n.set(text, duration_s, p_.wall());
+  if (n.state() == before) return false;
+  if (n.state().text[0]) raise_notice(NoticeKind::Note, settings_.floor, 0, n.state().set, n.state().text);
+  save_notes();
+  send_note(settings_.floor);
+  return true;
+}
+
+bool Controller::clear_note() {
+  touch();
+  if (!notes_[(int)settings_.floor].clear(p_.wall())) return false;
+  save_notes();
+  send_note(settings_.floor);
+  return true;
+}
+
+void Controller::restore_notes(const NoteState *notes2) {
+  if (!notes2) return;
+  notes_[0].restore(notes2[0]);
+  notes_[1].restore(notes2[1]);
+}
+
 bool Controller::tap_mail() {
   touch();
   WallTime w = p_.wall();
-  if (settings_.floor == Floor::Upstairs) mail_.toggle(w);
-  else if (!mail_.acknowledge(w)) return false;
+  if (settings_.floor == Floor::Upstairs) {
+    mail_.toggle(w);
+    if (mail_.state().waiting) raise_notice(NoticeKind::Mail, Floor::Downstairs, 1, mail_.state().since);
+  } else if (!mail_.acknowledge(w)) {
+    return false;
+  }
   p_.save_mail(mail_.state());
   send_mail();
   return true;
@@ -1176,6 +1414,7 @@ void Controller::mail_alert() {
 void Controller::answer_banner(bool come_on) {
   touch();
   ring_alert_ = false;
+  ring_resolved_ = true;
   uint16_t id = bell_in_.answer(p_.mono_ms());
   if (!id) return;
   Msg m;
@@ -1188,6 +1427,7 @@ void Controller::answer_banner(bool come_on) {
 void Controller::dismiss_banner() {
   touch();
   ring_alert_ = false;
+  ring_resolved_ = true;
   bell_in_.dismiss();
 }
 
@@ -1195,6 +1435,7 @@ void Controller::apply_settings(const Settings &s) {
   bool floor_changed = s.floor != settings_.floor;
   bool offset_changed = s.temp_offset_tenths_f != settings_.temp_offset_tenths_f;
   settings_ = s;
+  settings_.notice_mask &= (uint8_t)((1u << kNoticeKinds) - 1);
   // A new offset shows at once (and goes to the other panel), not at the sensor's next reading.
   if (offset_changed && reading_valid_) on_local_reading(true, raw_temp_, reading_hum_);
   p_.save_settings(settings_);
@@ -1205,6 +1446,9 @@ void Controller::apply_settings(const Settings &s) {
     dedup_ = Dedup();
     bell_in_ = BellReceiver();
     bell_out_ = BellSender();
+    notice_bell_out_ = BellOut::Idle;
+    notice_banner_ = BannerKind::None;
+    ring_resolved_ = false;
     want_peer_state_ = true;
     send_state(true);
   }
@@ -1312,6 +1556,161 @@ void Controller::fill_floor(FloorView &fv, bool mine) {
   }
 }
 
+// Mike, 2026-11-11: each floor's tile shows that floor's next calendar item today, the lowest-
+// priority line. "Next" = not ended yet and starting soonest, so one in progress counts until it
+// ends. Timed items come before all-day ones (an all-day "Trash day" would otherwise hide the
+// 2:30 dentist). Events belong to the floor of the panel that made them (Event::floor); there is
+// no shared or both-floors event. Birthdays and anniversaries already show on the date strip, so
+// they are left out here. Worked out when the minute, the day or the calendar changes.
+void Controller::update_agenda(const WallTime &w) {
+  if (!w.valid) {
+    agenda_[0] = agenda_[1] = Agenda();
+    agenda_day_ = agenda_min_ = -1;
+    return;
+  }
+  int64_t local = (int64_t)w.utc + p_.utc_offset(w.utc);
+  int32_t day = local_day(w.utc, p_.utc_offset(w.utc));
+  int32_t min = (int32_t)((local - (int64_t)day * 86400) / 60);
+  if (day == agenda_day_ && min == agenda_min_ && events_.rev() == agenda_rev_) return;
+  agenda_day_ = day;
+  agenda_min_ = min;
+  agenda_rev_ = events_.rev();
+  agenda_[0] = agenda_[1] = Agenda();
+  if (!events_.ready()) return;
+  int best[2] = {-1, -1};  // start minute of the one kept; -1 = none, 2000 = an all-day one
+  Occ occ[24];
+  int n = events_.range(day, day, occ, 24);
+  for (int i = 0; i < n; i++) {
+    const Event &e = *occ[i].e;
+    if (e.kind != EventKind::Plain || !e.title[0]) continue;
+    int rank;
+    if (e.all_day) {
+      rank = 2000;
+    } else {
+      if (occ[i].day != day || min >= e.end_min()) continue;  // already over
+      rank = e.start_min;
+    }
+    int f = (int)e.floor;
+    if (best[f] >= 0 && rank >= best[f]) continue;
+    best[f] = rank;
+    Agenda &a = agenda_[f];
+    a.on = true;
+    snprintf(a.title, sizeof(a.title), "%s", e.title);
+    a.when[0] = 0;
+    if (!e.all_day) format_time12(a.when, sizeof(a.when), (int64_t)day * 86400 + (int64_t)e.start_min * 60);
+  }
+}
+
+// Mike, 2026-11-11: a dog out longer than its limit makes the pill show the minutes and the outside
+// temperature and pulse, and the panel chimes once for that outing. The limit is 30 minutes,
+// 15 when the outside is below 32 or above 88 F, 10 when WeatherGate flags danger heat or cold; with
+// no clock or no fresh outside reading, 30 minutes and no temperature. How long it has been out
+// comes from the dog's "since" time; if that or the clock is missing, from when this panel first
+// saw it out. Both panels do this alone from the same data. Cheap: a few integer compares.
+void Controller::tick_dog_nudge(uint32_t now, const WallTime &w) {
+  int limit = kDogOutMinNormal;
+  nudge_temp_ = false;
+  if (w.valid && outside_fresh(now)) {
+    nudge_temp_ = true;
+    nudge_tenths_ = outside_.temp;
+    if (outside_.flags & (kOutsideDangerHeat | kOutsideDangerCold)) limit = kDogOutMinDanger;
+    else if (outside_.temp < kDogColdTenthsF || outside_.temp > kDogHotTenthsF) limit = kDogOutMinExtreme;
+  }
+  bool played = false;  // two dogs crossing the line together share one chime
+  bool told = false;    // a dog went past the limit this tick: the Pi is told once, after the loop
+  for (int i = 0; i < 2; i++) {
+    DogNudge &n = nudge_[i];
+    const DogOne &d = dog_.state().dog[i];
+    if (!d.out) {
+      n = DogNudge();  // in: the next outing starts afresh
+      continue;
+    }
+    if (!n.seen_out) {
+      n.seen_out = true;
+      n.chimed = false;
+      n.out_mono = now;
+    }
+    uint32_t secs;
+    if (w.valid && d.since >= kClockFloor && w.utc >= d.since) secs = w.utc - d.since;
+    else secs = (uint32_t)(ms_diff(now, n.out_mono) / 1000);
+    uint32_t mins = secs / 60;
+    n.over_min = secs >= (uint32_t)limit * 60u ? (uint16_t)(mins > 65535u ? 65535u : mins) : 0;
+    if (n.over_min && !n.noticed) {  // for the Pi, whatever the quiet hours or status say about the chime
+      n.noticed = true;
+      told = true;
+    }
+    if (!n.over_min || n.chimed) continue;
+    // The gate the mail chime uses: the soft chime only where this panel's own status lets a
+    // doorbell make a sound (Open, Busy), at the soft level. Not in quiet hours; the dog is still
+    // out when they end, so it chimes then. Without a clock, the volume's quiet-hours cap applies.
+    KnockAction a = knock_action(settings_, status_.state().status);
+    bool quiet = w.valid && in_quiet_hours(settings_, minutes_of_day((int64_t)w.utc + p_.utc_offset(w.utc)));
+    if (a.chime == Chime::None || quiet) continue;
+    n.chimed = true;
+    if (!played) p_.play(Sound::SoftChime, soft_volume());
+    played = true;
+  }
+  if (told) {
+    // One notice for the dogs past the limit now: LUCY, COPPER or BOTH. The time is when the outing
+    // began (the later one for both), so a repeat after a restart is the same notice to the Pi.
+    bool l = nudge_[0].over_min != 0, c = nudge_[1].over_min != 0;
+    uint16_t mins = l && c ? (nudge_[0].over_min > nudge_[1].over_min ? nudge_[0].over_min : nudge_[1].over_min)
+                           : (l ? nudge_[0].over_min : nudge_[1].over_min);
+    uint32_t since = l && c ? (dog_.state().dog[0].since > dog_.state().dog[1].since ? dog_.state().dog[0].since
+                                                                                        : dog_.state().dog[1].since)
+                            : dog_.state().dog[l ? 0 : 1].since;
+    raise_notice(NoticeKind::DogOut, Floor::Upstairs, (int16_t)(mins > 32767 ? 32767 : mins), since,
+                 l && c ? "BOTH" : l ? "LUCY" : "COPPER");
+  }
+}
+
+// The presence sensor (Mike, 2026-11-11). Upstairs only, and only once Settings says one is fitted;
+// otherwise every flag here is false and nothing about the panel changes. Cheap: a few compares.
+//  - away_ ("Away from desk"): activity seen while Busy; ends after kAwayClearMs with none, or when
+//    the status is no longer Busy.
+//  - nobody_near_: no activity and no touch for kNobodyNearMs. Both go to the tenant's panel in STATE.
+//  - passer_by: the place was empty (not seen for the hold time) and someone arrives; 3 s, at most
+//    one every kPasserByGapMs.
+// The night path (the screen lighting at night) is in build_view, from pres_last_ms_.
+void Controller::tick_presence(uint32_t now) {
+  const bool on = settings_.floor == Floor::Upstairs && settings_.presence_fitted;
+  if (!on) {
+    pres_on_ = pres_now_ = pres_seen_ = away_ = nobody_near_ = occupied_ = passer_on_ = false;
+  } else {
+    if (!pres_on_) {  // just switched on (or this panel just became upstairs): start clean
+      pres_on_ = true;
+      pres_seen_ = false;
+      occupied_ = false;
+      near_ms_ = now;
+    }
+    pres_now_ = p_.presence();
+    if (pres_now_) {
+      pres_last_ms_ = now;
+      pres_seen_ = true;
+      near_ms_ = now;
+    }
+    const bool busy = status_.state().status == Status::Busy;
+    if (pres_now_ && busy) away_ = true;
+    if (away_ && (!busy || (pres_seen_ && ms_diff(now, pres_last_ms_) >= (int32_t)kAwayClearMs))) away_ = false;
+    nobody_near_ = ms_diff(now, near_ms_) >= (int32_t)kNobodyNearMs;
+    const bool occ = pres_now_ || (pres_seen_ && ms_diff(now, pres_last_ms_) < (int32_t)((uint32_t)settings_.presence_hold_s * 1000u));
+    if (occ && !occupied_ && (!passer_ever_ || ms_diff(now, passer_last_) >= (int32_t)kPasserByGapMs)) {
+      passer_ever_ = true;
+      passer_last_ = now;
+      passer_on_ = true;
+      passer_until_ = now + kPasserByShowMs;
+    }
+    occupied_ = occ;
+    if (passer_on_ && ms_reached(now, passer_until_)) passer_on_ = false;
+  }
+  // The other panel hears of a change at once (a new STATE, no timer).
+  if (presence_flags() != sent_pres_flags_) send_state(false);
+}
+
+uint8_t Controller::presence_flags() const {
+  return (uint8_t)((away_now() ? kStateAwayDesk : 0) | (nobody_near_ ? kStateNobodyNear : 0));
+}
+
 void Controller::build_view() {
   uint32_t now = p_.mono_ms();
   WallTime w = p_.wall();
@@ -1416,6 +1815,13 @@ void Controller::build_view() {
   v.dog.out = dog_.state().out();
   v.dog.can_tap = true;  // each panel's button is its own dog's, whatever the other dog is doing
   if (v.dog.out != Dog::None) snprintf(v.dog.pill, sizeof(v.dog.pill), "%s OUT", dog_name(v.dog.out));
+  if (uint16_t m = nudge_[0].over_min > nudge_[1].over_min ? nudge_[0].over_min : nudge_[1].over_min; m && v.dog.out != Dog::None) {
+    // Out too long: the dog(s) past the limit by name ("BOTH" when both are, to keep it short).
+    const char *who = nudge_[0].over_min && nudge_[1].over_min ? "BOTH" : nudge_[0].over_min ? "LUCY" : "COPPER";
+    if (nudge_temp_) snprintf(v.dog.pill, sizeof(v.dog.pill), "%s OUT %u min, %d%sF", who, (unsigned)m, round_tenths(nudge_tenths_), kDeg);
+    else snprintf(v.dog.pill, sizeof(v.dog.pill), "%s OUT %u min", who, (unsigned)m);
+    v.dog.alert = true;
+  }
 
   // Mail for downstairs
   bool upstairs = settings_.floor == Floor::Upstairs;
@@ -1437,6 +1843,52 @@ void Controller::build_view() {
     v.req.acted = !upstairs && req_.acted_showing(utc);
   }
 
+  // Tile messages: each floor's, on both panels. The peer's tile in No signal keeps its "last seen"
+  // line; and downstairs, the UPSTAIRS tile shows the acted text in that spot while it shows.
+  {
+    uint32_t utc = w.valid ? w.utc : 0;
+    for (int f = 0; f < 2; f++) {
+      FloorView &fv = v.floor[f];  // v.floor is indexed by Floor
+      if (!notes_[f].showing(utc) || fv.no_signal) continue;
+      fv.note = true;
+      snprintf(fv.note_text, sizeof(fv.note_text), "%s", notes_[f].state().text);
+    }
+    // Mike, 2026-11-07: "Action taken on temperature" hides the upstairs message only while the message
+    // is older than the acted time; one Mike writes after clearing the arrows shows in its place.
+    if (v.req.acted) {
+      FloorView &up = v.floor[(int)Floor::Upstairs];
+      if (up.note && notes_[(int)Floor::Upstairs].state().set > req_.state().acted) v.req.acted = false;
+      else up.note = false;
+    }
+  }
+
+  // "Away from desk" (Mike, 2026-11-11, presence sensor): the UPSTAIRS tile while he is Busy and
+  // walking about the house. Below a tile message and the acted confirmation, above the calendar item;
+  // a timer's "until" line (the time Busy ends) and No signal keep their lines. Upstairs knows it
+  // itself, downstairs hears it in STATE.
+  {
+    FloorView &up = v.floor[(int)Floor::Upstairs];
+    const bool away = upstairs ? away_now() : peer_.away;
+    if (away && up.status == Status::Busy && !up.no_signal && !up.note && !up.timer && !v.req.acted) {
+      up.away_desk = true;
+      snprintf(up.line, sizeof(up.line), "Away from desk");
+    }
+  }
+
+  // The lowest-priority line: the floor's next calendar item today, where the line is a plain "since"
+  // (not a timer's "until", not No signal) and nothing above it is using the spot: the acted
+  // confirmation (downstairs, UPSTAIRS tile), a tile message or "Away from desk". A tap on it still
+  // opens the editor.
+  for (int f = 0; f < 2; f++) {
+    FloorView &fv = v.floor[f];
+    const Agenda &a = agenda_[f];
+    if (!a.on || fv.no_signal || fv.note || fv.timer || fv.away_desk) continue;
+    if (v.req.acted && f == (int)Floor::Upstairs) continue;
+    fv.agenda = true;
+    snprintf(fv.agenda_title, sizeof(fv.agenda_title), "%s", a.title);
+    snprintf(fv.agenda_when, sizeof(fv.agenda_when), "%s", a.when);
+  }
+
   // Banner
   v.banner.kind = bell_in_.banner();
   if (v.banner.kind != BannerKind::None) {
@@ -1450,6 +1902,16 @@ void Controller::build_view() {
   }
 
   if (toast_[0]) snprintf(v.toast, sizeof(v.toast), "%s", toast_);
+  // The tenant rang while upstairs said nobody was near its panel: say so while the ring waits.
+  else if (knock_near_note_ && (v.bell.out == BellOut::Ringing || v.bell.out == BellOut::Delivered) &&
+           ms_diff(now, knock_near_at_) < (int32_t)kNearNoteMs)
+    snprintf(v.toast, sizeof(v.toast), "No one is near the panel");
+
+  v.passer_by = passer_on_;
+  v.presence.fitted = pres_on_;
+  v.presence.seen_now = pres_on_ && pres_now_;
+  v.presence.occupied = pres_on_ && occupied_;
+  v.presence.since_min = pres_on_ && pres_seen_ ? ms_diff(now, pres_last_ms_) / 60000 : -1;
 
   BacklightInputs bi;
   bi.mode = v.mode;
@@ -1459,6 +1921,8 @@ void Controller::build_view() {
   bi.doorbell_wake = v.banner.kind != BannerKind::None;
   bi.mail_wake = mail_wake_ || (upstairs && v.req.flash);  // urgent arrows keep it lit (Mike, 2026-11-06)
   bi.clean_screen = clean_screen_;
+  // The night path: someone walking past lights the screen (at the night level) for kNightWakeMs.
+  bi.presence_wake = pres_on_ && pres_seen_ && ms_diff(now, pres_last_ms_) < (int32_t)kNightWakeMs;
   v.backlight = backlight_for(settings_, bi);
 }
 

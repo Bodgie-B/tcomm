@@ -73,12 +73,21 @@ void sortActors(World& w) {
       if (w.major.g[i].kind != GL_NONE) L.add(ACT_MAJOR, (uint8_t)i, w.major.g[i].base_y);
   } else {
   L.add(ACT_FIRE, 0, (int16_t)(w.fire.pos.y + 5.f));   // front stones
+  // The big blaze's glow (fire and ice): behind anyone near the fire, so it lights the ground and the
+  // air round the flames but never washes over him, the dogs or a visitor standing by it.
+  if (w.fire.intensity > 1.f) L.add(ACT_FIRE, 1, (int16_t)(w.fire.pos.y - 40.f));
   for (int i = 0; i < w.amb.n_tufts; ++i) L.add(ACT_TUFT, (uint8_t)i, w.land.tufts[w.amb.tuft[i]].y);
   const Hiker& h = w.hiker;
   const int16_t held_y = baseY(h.feet.y + 1.f);   // things in his hands go in front of him
   if (h.visible) {
     L.add(ACT_HIKER, 0, baseY(h.feet.y));
     addPines(L, w, w.hiker_rect, 0);
+  }
+  for (int i = 0; i < VIS_ACTORS; ++i) {   // the visiting couple, their packs, the disc, the telescopes
+    int16_t y;
+    if (!visitorsActorY(w, i, y)) continue;
+    L.add(ACT_VISITOR, (uint8_t)i, y);
+    if (i < 2) addPines(L, w, visitorsRect(w, i), CRITTER_MAX + 1 + i);
   }
   {   // The daytime majors' flyers go in right after him: the kite's line leaves his hand, the boomerang
       // sits in it, the eagle clears his head. A boomerang stuck in the camp pine sorts at the trunk's foot.
@@ -109,6 +118,16 @@ void sortActors(World& w) {
     else if (it.down) L.add(ACT_ITEM, (uint8_t)i, baseY(it.pos.y));
   }
   if (w.leaf.on) L.add(ACT_LEAF, 0, baseY(w.leaf.base_y));
+  if (w.fi.on) {   // fire and ice: the small fires and the set-down bucket (fireice.h)
+    for (int i = 0; i < FI_ACTORS; ++i) {
+      int16_t y;
+      if (fireIceActorY(w, i, y)) L.add(ACT_FX, (uint8_t)i, y);
+    }
+  }
+  {
+    int16_t y;
+    if (mailLetterY(w, y)) L.add(ACT_MAIL, 0, y);   // the mail bird's letter on the ground (mailbird.h)
+  }
   for (int i = 0; i < CRITTER_MAX; ++i) {
     if (!w.crit[i].in_use || !w.critters[i].visible) continue;
     // A climbing critter sorts by the trunk's foot, not its own feet up the trunk.
@@ -153,6 +172,7 @@ void coverHiker(World& w) {
   if (h.visible) {
     unite(r, armloadBounds(h, w.fx.armload));
     if (w.pack.held) unite(r, packBounds(w.pack));
+    unite(r, fireIceHeldBounds(w));   // the bucket (fire and ice)
     for (int i = 0; i < ITEM_COUNT; ++i)
       if (w.items[i].held && !w.items[i].critter) unite(r, itemBounds((ItemId)i, w.items[i]));
     w.hiker_full = r;
@@ -176,6 +196,7 @@ void stepHiker(World& w, bool frozen = false) {
   const bool was_walking = h.walking;
   const bool lookout = w.plan.family == SF_LOOKOUT;
   if (lookout) lookoutHikerPre(w);   // his height from where he is on the hill, his pace from his height
+  if (w.plan.family == SF_SUNRISE) sunriseHikerPre(w);   // the same along the ledge
   hikerTick(h, frozen ? 0.f : SS_TICK_DT);   // frozen (the doorbell reaction): recompose only
   if (h.walking && fx.path_on) {
     const float span = fx.path_x1 - fx.path_x0;
@@ -203,7 +224,7 @@ void stepHiker(World& w, bool frozen = false) {
   if (h.walking) {
     float cy, half;
     // Wading: each step lifts him a little higher than on the bank.
-    if (!lookout && landscapeStreamSpan(w.land, h.feet.x, cy, half) && fabsf(h.feet.y - cy) < half) {
+    if (!spineSetPiece(w.plan.family) && landscapeStreamSpan(w.land, h.feet.x, cy, half) && fabsf(h.feet.y - cy) < half) {
       const float s = sinT(h.walk_phase * 2.f);
       P.lift += 0.045f * s * s;
     }
@@ -220,6 +241,7 @@ void stepHiker(World& w, bool frozen = false) {
   }
   // The weather's overlay (a hug, the hat fanned, a shiver), over all of it.
   weatherApplyPose(w, P, h.height);
+  mailPose(w, P);    // a glance up at the mail bird (mailbird.h)
   reactPose(w, P);   // and his doorbell wave over that (react.h)
   // The waterline on him: none on the bank; deeper the further in he is.
   fx.wet_y = 0.f;
@@ -351,7 +373,8 @@ void worldBeginLoop(World& w, Rng& rng) {
 
   // Critter slots: all free, each with this loop's personality (one rng call
   // per statement).
-  for (CritterSlot& s : w.crit) {
+  for (int i = 0; i < CRITTER_STORY; ++i) {
+    CritterSlot& s = w.crit[i];
     s = CritterSlot{};
     const float sd = rng.range(0.f, 1.f);
     const float jd = rng.range(0.f, 1.f);
@@ -456,11 +479,49 @@ void lookoutTick(World& w, Renderer& r) {
   lookoutMarkDirty(w, r);   // the sun when its pixels move, a star at each of its steps
 }
 
+// A sunrise loop's tick (sunrise.h): as the Lookout's, nothing of the camp.
+void sunriseTick(World& w, Renderer& r) {
+  ++w.tick;
+  for (Cloud& c : w.clouds) cloudStep(c);
+  sunriseStep(w);
+  stepHiker(w);
+  WorldDirty& d = w.dirty;
+  Sunrise& S = w.sr;
+  if (w.fade != d.fade) {
+    r.markAllDirty();
+    d.fade = w.fade;
+  }
+  const uint16_t cached = sunriseCached(w);
+  if (cached != S.d_cached) {
+    r.invalidateCache();
+    S.d_cached = cached;
+  }
+  const int bphase = sunriseBuildPhase(w);
+  if (bphase != S.d_bphase) {
+    r.markAllDirty();
+    S.d_bphase = (uint8_t)bphase;
+  } else if (S.build_t != S.d_build_t) {
+    int y0, y1;
+    sunriseBuildRows(w, y0, y1);
+    if (y1 > y0) r.markDirtyRows(y0, y1);
+  }
+  S.d_build_t = S.build_t;
+  const bool sky_fading = sunriseBuildPhase(w) == 0;   // the clouds fade in with the sky
+  for (int i = 0; i < 2; ++i) track(r, d.cloud[i], cloudBounds(w.clouds[i]), sky_fading);
+  track(r, d.bird, ambientBirdBounds(w), w.amb.bird.active);
+  track(r, d.hiker, w.hiker_rect, w.hiker.visible);
+  sunriseMarkDirty(w, r);   // the sun, the stars, the light's repaints, his lamp and cup, the pack, the dogs
+}
+
 }  // namespace
 
 void worldTick(World& w, Rng& rng, Renderer& r) {
   if (w.plan.family == SF_LOOKOUT) {
     lookoutTick(w, r);
+    return;
+  }
+  if (w.plan.family == SF_SUNRISE) {
+    sunriseTick(w, r);
     return;
   }
   ++w.tick;
@@ -474,12 +535,33 @@ void worldTick(World& w, Rng& rng, Renderer& r) {
     dayStep(w, true);         // the kite stands still (its line stays in his hand as he waves); so do the bow and the critter
     boomWorldStep(w);         // the boomerang stays in his hand
     ++w.frozen;
+  } else if (visitorsHolds(w)) {
+    // The visiting couple has him (visitors.h): the story holds still, the camp's own life goes on.
+    visitorsStep(w);
+    stepHiker(w);
+    boomWorldStep(w);
+    houseDogsStep(w);
+    mailStep(w);
+    directorStep(w);
+    ++w.frozen;
+  } else if (w.fi.on) {
+    // Fire and ice has him (fireice.h): the story holds still as for the doorbell, but this runs
+    // for minutes, so the house dogs, the mail bird and the director keep going.
+    fireIceStep(w);
+    stepHiker(w);
+    boomWorldStep(w);
+    houseDogsStep(w);
+    mailStep(w);
+    directorStep(w);
+    ++w.frozen;
   } else {
     stepHiker(w);
     dayStep(w, false);         // after him: the kite's line leaves the hand he has now; the bow and string, the critter on the line
     boomWorldStep(w);
     spineCritterScenes(w);
     minorsStep(w, r);
+    houseDogsStep(w);          // Lucy and Copper, while they are out (nothing at all otherwise)
+    mailStep(w);               // the mail bird (nothing at all without mail)
     directorStep(w);
     for (Bit& b : w.bits) bitStep(b, SS_TICK_DT);
   }
@@ -590,6 +672,9 @@ void worldTick(World& w, Rng& rng, Renderer& r) {
   d.boom_s = w.boom.boom;
   d.eagle_s = w.boom.eagle;
   weatherTrack(w, r);
+  track(r, w.mail.d_letter, mailLetterBounds(w), w.mail.letter && w.mail.lt < 0.8f);
+  fireIceTrack(w, r);
+  visitorsTrack(w, r);
 }
 
 void worldDrawWater(const World& w, Surface& s, const Rect& clip, const Palette& pal) {
@@ -610,19 +695,29 @@ void worldDrawWater(const World& w, Surface& s, const Rect& clip, const Palette&
   fillPolygon(s, p, n, pal[WATER], clip);
 }
 
-void worldDrawStatic(const World& w, Surface& frame, const Palette& pal, float mood) {
-  if (w.plan.family == SF_LOOKOUT) {
+void worldDrawStatic(const World& w, Surface& frame, const Palette& pal, float mood, const SkyDraw* sky) {
+  if (w.plan.family == SF_LOOKOUT) {   // the Lookout has its own sky and its own sunset
     lookoutDrawStatic(w, frame, pal, mood);
     return;
   }
-  landscapeDrawStatic(w.land, frame, pal, mood, w.build);
+  if (w.plan.family == SF_SUNRISE) {   // and the sunrise its own
+    sunriseDrawStatic(w, frame, pal);
+    return;
+  }
+  landscapeDrawStatic(w.land, frame, pal, mood, w.build, sky);
+  fireIceDrawStatic(w, frame, pal);   // the ice over the ground, icicles on the camp pine (nothing without)
 }
 
 // The per-strip draw order, far to near. Everything dynamic is drawn here and
 // nowhere else.
-void worldDrawDynamic(const World& w, Surface& strip, const Rect& clip, const Palette& pal, float mood) {
+void worldDrawDynamic(const World& w, Surface& strip, const Rect& clip, const Palette& pal, float mood,
+                      const SkyDraw* sky) {
   if (w.plan.family == SF_LOOKOUT) {
     lookoutDrawDynamic(w, strip, clip, pal, mood);
+    return;
+  }
+  if (w.plan.family == SF_SUNRISE) {
+    sunriseDrawDynamic(w, strip, clip, pal);
     return;
   }
   const BuildState& b = w.build;
@@ -632,7 +727,7 @@ void worldDrawDynamic(const World& w, Surface& strip, const Rect& clip, const Pa
   weatherDrawShimmer(w, strip, clip);
 
   // 1. The sky, while it fades in (otherwise it is in the cache).
-  landscapeDrawLayers(w.land, strip, clip, pal, mood, b, BL_SKY, BL_SKY);
+  landscapeDrawLayers(w.land, strip, clip, pal, mood, b, BL_SKY, BL_SKY, sky);
 
   // 2. Sky actors: clouds (fading in with the sky) and the distant bird.
   const float fade = buildSkyFade(b);
@@ -645,6 +740,7 @@ void worldDrawDynamic(const World& w, Surface& strip, const Rect& clip, const Pa
     for (const Cloud& c : w.clouds) cloudDraw(c, strip, pal, clip);
   }
   ambientDrawBird(w, strip, clip, pal);
+  visitorsDrawSky(w, strip, clip, pal);   // a shooting star (the visitors' telescopes)
 
   // 3. Build-up: the layers animating now and every built layer in front of them.
   landscapeDrawLayers(w.land, strip, clip, pal, mood, b, BL_RIDGES, BL_COUNT - 1);
@@ -660,17 +756,27 @@ void worldDrawDynamic(const World& w, Surface& strip, const Rect& clip, const Pa
   for (int i = 0; i < w.n_actors; ++i) {
     const ActorRef& a = w.actors[i];
     switch (a.kind) {
-      case ACT_FIRE: fireDraw(w.fire, strip, clip, pal); break;
+      case ACT_FIRE:
+        if (a.idx == 1) fireGlowDraw(w.fire, strip, clip, pal);
+        else fireDraw(w.fire, strip, clip, pal);
+        break;
       case ACT_TUFT: ambientDrawTuft(w, a.idx, strip, clip, pal); break;
       case ACT_HIKER:
         hikerDraw(w.hiker, strip, pal, clip);
         armloadDraw(w.hiker, w.fx.armload, strip, clip, pal);
+        fireIceDrawHeld(w, strip, clip, pal);   // the bucket
         if (w.fx.wet_y > 0.f) {   // in the stream: the water over him below his waterline
           const Rect& hr = w.hiker_rect;
           worldDrawWater(w, strip, clip.clipped(Rect{hr.x0, (int)ceilf(w.fx.wet_y), hr.x1, hr.y1}), pal);
         }
         break;
-      case ACT_TENT: tentDraw(w.tent, strip, clip, pal); break;
+      case ACT_TENT:
+        tentDraw(w.tent, strip, clip, pal);
+        fireIceDrawTentIce(w, strip, clip, pal);
+        break;
+      case ACT_FX: fireIceDrawActor(w, a.idx, strip, clip, pal); break;
+      case ACT_MAIL: mailDrawLetter(w, strip, clip, pal); break;
+      case ACT_VISITOR: visitorsDrawActor(w, a.idx, strip, clip, pal); break;
       case ACT_PACK: packDraw(w.pack, strip, clip, pal); break;
       case ACT_BAG: bagDraw(w.bag, strip, clip, pal); break;
       case ACT_CAIRN: cairnDraw(w.cairn, strip, clip, pal); break;
@@ -689,9 +795,13 @@ void worldDrawDynamic(const World& w, Surface& strip, const Rect& clip, const Pa
         break;
       case ACT_FGPINE: {   // only over its actor: elsewhere the cached pine is already right
         const int owner = a.idx >> 1;
-        const Rect& over = owner == 0 ? w.hiker_rect : w.critter_rect[owner - 1];
+        const Rect over = owner == 0 ? w.hiker_rect
+                                     : (owner <= CRITTER_MAX ? w.critter_rect[owner - 1] : visitorsRect(w, owner - CRITTER_MAX - 1));
         const Rect c = clip.clipped(over);
-        if (!c.empty()) landscapeDrawFgPine(w.land, a.idx & 1, strip, c, pal);
+        if (!c.empty()) {
+          landscapeDrawFgPine(w.land, a.idx & 1, strip, c, pal);
+          fireIceDrawIcicles(w, strip, c, pal, 2u << (a.idx & 1));   // its icicles in the cold
+        }
         break;
       }
       default: break;
@@ -702,6 +812,7 @@ void worldDrawDynamic(const World& w, Surface& strip, const Rect& clip, const Pa
   ambientDrawSmoke(w, strip, clip, pal);
   steamDraw(w.steam, strip, clip, pal);
   rustleDraw(w.rustle, strip, clip, pal);   // the big pine shaking (the morning stay)
+  fireIceDrawNear(w, strip, clip, pal);      // the pour's splash, the steam off a doused fire, a breath
 
   // 6b. Weather in front of everything: a breath puff, the fire's hiss, rain, snow.
   weatherDrawNear(w, strip, clip, pal);

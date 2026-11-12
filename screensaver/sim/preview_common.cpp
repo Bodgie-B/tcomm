@@ -31,6 +31,13 @@ Inputs previewInputsFromOptions(const PreviewOptions& o) {
   in.weather.overcast = o.overcast;
   in.weather.fog = o.fog;
   in.weather.night_dim = o.night ? 1.0f : 0.0f;
+  in.weather.rain_dark = o.rain_dark;
+  in.sky.have = o.sky;
+  in.sky.sun_az = o.sun_az;
+  in.sky.sun_alt = o.sun_alt;
+  in.sky.moon_az = o.moon_az;
+  in.sky.moon_alt = o.moon_alt;
+  in.sky.moon_phase = o.moon_phase;
   in.weather_code = o.weather_code;
   in.have_outside = o.weather_given;
   in.other_status = o.status;
@@ -38,7 +45,10 @@ Inputs previewInputsFromOptions(const PreviewOptions& o) {
   in.chip = o.chip;
   in.night_mode = o.night;
   in.lookout_window = o.lookout;
+  in.sunrise_window = o.sunrise;
+  in.visitors = o.visitors;
   in.spine_force = (uint8_t)o.spine;
+  for (int i = 0; i < 3; i++) in.req[i] = o.req[i];
   return in;
 }
 
@@ -256,13 +266,22 @@ void previewUsage(const char* prog, FILE* to) {
           "                      have_outside (default: not given, the core picks at random per loop)\n"
           "  --overcast F        0..1\n"
           "  --fog F             0..1\n"
+          "  --rain-dark F       how dark a raining sky is, 0..1 (default 0: the scene's own level)\n"
+          "  --sky SAZ SALT MAZ MALT PHASE\n"
+          "                      the real sun and moon: each one's compass bearing and height in\n"
+          "                      degrees (90 east, 180 south, 270 west; under 0 is set), and the\n"
+          "                      moon's phase (0 new, 0.25 first quarter, 0.5 full, 0.75 last quarter)\n"
           "  --night             night mode on, night_dim = 1\n"
           "  --lookout           inside the sunset window (Lookout spine)\n"
-          "  --spine NAME        evening morning midday lookout: play that spine family whatever the\n"
+          "  --sunrise           inside the sunrise window (the sunrise overlook)\n"
+          "  --visitors          the visiting couple may drop by (about one camp loop in seven)\n"
+          "  --spine NAME        evening morning midday lookout sunrise: play that spine family whatever the\n"
           "                      inputs say (--spine lookout --mood 4 is the Lookout's reference run)\n"
           "  --status N          other floor status 0..5\n"
           "  --dog N             0 none, 1 Lucy, 2 Copper, 3 both\n"
           "  --chip              draw the status chip and dog badges (the panel always does)\n"
+          "  --req A[,B[,C]]     the upstairs request arrows beside the badges, oldest first: 1 urgent\n"
+          "                      heat, 2 mild heat, 3 mild cooling, 4 urgent cooling (add 16: predicted)\n"
           "  --frames N          frames to write (default 100)\n"
           "  --fps N             render fps; ticks per frame = %d / fps (default 25)\n"
           "  --every N           render one frame every N ticks (N >= 1; overrides --fps)\n"
@@ -335,16 +354,31 @@ void previewParseArgs(int argc, char** argv, PreviewOptions& o) {
     } else if (!strcmp(a, "--fog")) {
       need(1);
       o.fog = parseFloat(prog, a, argv[++i]);
+    } else if (!strcmp(a, "--rain-dark")) {
+      need(1);
+      o.rain_dark = parseFloat(prog, a, argv[++i]);
+    } else if (!strcmp(a, "--sky")) {
+      need(5);
+      o.sun_az = parseFloat(prog, a, argv[++i]);
+      o.sun_alt = parseFloat(prog, a, argv[++i]);
+      o.moon_az = parseFloat(prog, a, argv[++i]);
+      o.moon_alt = parseFloat(prog, a, argv[++i]);
+      o.moon_phase = parseFloat(prog, a, argv[++i]);
+      o.sky = true;
     } else if (!strcmp(a, "--night")) {
       o.night = true;
     } else if (!strcmp(a, "--lookout")) {
       o.lookout = true;
+    } else if (!strcmp(a, "--sunrise")) {
+      o.sunrise = true;
+    } else if (!strcmp(a, "--visitors")) {
+      o.visitors = true;
     } else if (!strcmp(a, "--spine")) {
       need(1);
-      static const char* const kFam[4] = {"evening", "morning", "midday", "lookout"};
+      static const char* const kFam[5] = {"evening", "morning", "midday", "lookout", "sunrise"};
       const char* name = argv[++i];
       int f = -1;
-      for (int k = 0; k < 4; k++)
+      for (int k = 0; k < 5; k++)
         if (!strcmp(name, kFam[k])) f = k;
       if (f < 0) bad(prog, "unknown spine family", name);
       o.spine = 1 + f;
@@ -356,6 +390,17 @@ void previewParseArgs(int argc, char** argv, PreviewOptions& o) {
       o.dog = (int)parseInt(prog, a, argv[++i]);
     } else if (!strcmp(a, "--chip")) {
       o.chip = true;
+    } else if (!strcmp(a, "--req")) {
+      need(1);
+      const char* s = argv[++i];
+      for (int k = 0; k < 3; k++) o.req[k] = 0;
+      for (int k = 0; k < 3 && *s; k++) {
+        char* end = nullptr;
+        const long v = strtol(s, &end, 10);
+        if (end == s || v < 0 || v > 31) bad(prog, "bad value for", a);
+        o.req[k] = (uint8_t)v;
+        s = *end == ',' ? end + 1 : end;
+      }
     } else if (!strcmp(a, "--frames")) {
       need(1);
       o.frames = (int)parseInt(prog, a, argv[++i]);

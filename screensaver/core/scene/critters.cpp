@@ -86,12 +86,14 @@ const KindInfo kKinds[CR_COUNT] = {
      kAlways | bit(CA_MOVE) | bit(CA_RUN) | bit(CA_SIT) | bit(CA_LOOK) | bit(CA_SNIFF) | bit(CA_EAT) |
          bit(CA_STARTLE),
      CA_MOVE, 7, 5.f, 8.f, 0.f, 0.f},
-    // Dog: 9 primitives (four legs, tail, body, head, ear, nose) and up to 2 for what it carries. PROPOSED sizes:
-    // the brief's "about 34 px long, 24 px tall"; strides are px per gait cycle (a trot, a gallop).
+    // Dog: 9 primitives (four legs, tail, body, head, ear, nose) and up to 2 for what it carries; Lucy 13 (her
+    // white chest, blaze and two white paws) and Copper 10 (the feathered belly). PROPOSED sizes: the brief's
+    // "about 34 px long, 24 px tall"; strides are px per gait cycle (a trot, a gallop), times the scale for
+    // Lucy and Copper.
     {"dog", 36.f, 25.f,
      kAlways | bit(CA_MOVE) | bit(CA_RUN) | bit(CA_SIT) | bit(CA_LOOK) | bit(CA_SNIFF) | bit(CA_SHAKE) | bit(CA_HOP) |
          bit(CA_CARRY) | bit(CA_LIE) | bit(CA_BOW),
-     CA_MOVE, 11, 24.f, 38.f, 0.f, 16.f},
+     CA_MOVE, 15, 24.f, 38.f, 0.f, 16.f},
 };
 
 const char* const kActionNames[CA_COUNT] = {"idle",  "move",  "run",      "sit",     "look", "sniff",
@@ -425,17 +427,21 @@ void addGait(Look& L, const Critter& c, CritterAction a, float ph, float w) {
     return;
   }
   if (a == CA_MOVE && k == CR_DOG) {   // trot: a diagonal pair at a time (near fore with far hind)
-    const float amp = 0.44f;
+    // Lucy's is heavy and steady (a shorter swing, hardly a bounce, the head level); Copper's is light
+    // and springy (a bigger bounce, the head bobbing, the plume swishing). The camp dog's in between.
+    float amp = 0.44f, bounce = 0.9f, nod = 0.05f, swish = 0.18f, foot = 2.6f;
+    if (c.tone == DT_LUCY) { amp = 0.38f; bounce = 0.45f; nod = 0.03f; swish = 0.1f; foot = 2.2f; }
+    else if (c.tone == DT_COPPER) { amp = 0.5f; bounce = 2.0f; nod = 0.09f; swish = 0.32f; foot = 3.2f; }
     const float off[4] = {0.f, 0.5f, 0.5f, 0.f};   // hind0, fore0, hind1, fore1
     float* legs[4] = {&p.hind[0], &p.fore[0], &p.hind[1], &p.fore[1]};
     float* lifts[4] = {&L.lift_h[0], &L.lift_f[0], &L.lift_h[1], &L.lift_f[1]};
     for (int i = 0; i < 4; ++i) {
       *legs[i] += w * amp * sinT(ph - off[i]);
-      *lifts[i] += w * 2.6f * pos(cosT(ph - off[i]));
+      *lifts[i] += w * foot * pos(cosT(ph - off[i]));
     }
-    p.lift += w * 0.9f * (0.5f - 0.5f * cosT(2.f * ph));   // two light bounces a cycle
-    p.head += w * 0.05f * sinT(2.f * ph);
-    p.tail += w * 0.18f * sinT(ph);
+    p.lift += w * bounce * (0.5f - 0.5f * cosT(2.f * ph));   // two light bounces a cycle
+    p.head += w * nod * sinT(2.f * ph);
+    p.tail += w * swish * sinT(ph);
     return;
   }
   if (a == CA_MOVE && k == CR_RACCOON) {   // waddle: near legs opposite, body rocks
@@ -594,11 +600,12 @@ Look compose(const Critter& c) {
 
 enum PrimKind : uint8_t { PRIM_CAP, PRIM_ELLIPSE, PRIM_POLY };
 
-constexpr int kMaxPrims = 12;
+constexpr int kMaxPrims = 16;   // Lucy with a stick in her mouth is 15
 constexpr int kMaxPolyPts = 16;
 
 // How a primitive is coloured: its palette slot, or (the dog) a fur colour mixed from slots.
-enum Tint : uint8_t { TINT_NONE = 0, TINT_FUR, TINT_FUR_DARK };
+// TINT_WHITE is Lucy's white (chest, blaze, paws); TINT_FUR_LIGHT Copper's paler feathering.
+enum Tint : uint8_t { TINT_NONE = 0, TINT_FUR, TINT_FUR_DARK, TINT_WHITE, TINT_FUR_LIGHT };
 
 struct Prim {
   uint8_t kind;
@@ -631,7 +638,7 @@ Xf xf(Vec2 o, float ang) { return Xf{o, cosR(ang), sinR(ang)}; }
 Vec2 at(const Xf& f, float x, float y) { return Vec2{f.o.x + x * f.c + y * f.s, f.o.y - x * f.s + y * f.c}; }
 
 Prim* push(Prims& ps, PrimKind k, Slot slot) {
-  if (ps.n >= kMaxPrims) return nullptr;   // cannot happen: the largest rig issues 8
+  if (ps.n >= kMaxPrims) return nullptr;   // cannot happen: the largest rig (Lucy carrying) issues 15
   Prim* p = &ps.v[ps.n++];
   p->kind = k;
   p->slot = slot;
@@ -688,6 +695,11 @@ void carryItem(Prims& ps, uint8_t item, Vec2 m, float ang) {
       cap(ps, at(f, -6.5f, 1.9f), at(f, 13.f, -1.6f), 2.3f, TRUNK);
       cap(ps, at(f, -6.f, 1.f), at(f, 12.5f, -2.5f), 0.9f, ACTOR_LIGHT);
       break;
+    case CC_LETTER: {   // an envelope hanging from the beak by a corner, in the pale cloud colour
+      static const float env[4][2] = {{-0.5f, -0.5f}, {5.5f, 0.6f}, {4.6f, 5.0f}, {-1.4f, 3.9f}};
+      polyIn(ps, f, env, 4, false, CLOUD_LIT);
+      break;
+    }
     default: break;
   }
 }
@@ -1121,7 +1133,191 @@ Prim* capT(Prims& ps, Vec2 a, Vec2 b, float w, Tint t) {
   return p;
 }
 
+// A tapered tail as one quad from `a` (width w0) to `b` (width w1).
+Prim* taper(Prims& ps, Vec2 a, Vec2 b, float w0, float w1, Tint t) {
+  Prim* p = push(ps, PRIM_POLY, ACTOR);
+  if (!p) return nullptr;
+  float dx = b.x - a.x, dy = b.y - a.y;
+  const float l = sqrtf(dx * dx + dy * dy);
+  if (l > 1.0e-3f) { dx /= l; dy /= l; } else { dx = 1.f; dy = 0.f; }
+  const Vec2 n{-dy, dx};
+  p->p[0] = add(a, mul(n, 0.5f * w0));
+  p->p[1] = add(b, mul(n, 0.5f * w1));
+  p->p[2] = add(b, mul(n, -0.5f * w1));
+  p->p[3] = add(a, mul(n, -0.5f * w0));
+  p->n = 4;
+  p->tint = t;
+  return p;
+}
+
+// What Lucy or Copper carries: the fetch stick crosswise in the mouth, or the
+// branch by one end trailing on the ground behind (on the far side of the dog,
+// so its two primitives go to the front of the draw order).
+void houseDogCarry(const Critter& c, Prims& ps, Vec2 mouth, float ang) {
+  if (c.carry == CC_STICK) {
+    carryItem(ps, CC_STICK, mouth, ang);
+  } else if (c.carry == CC_BRANCH) {
+    const Vec2 a{mouth.x + 1.f, mouth.y - 1.4f};
+    const float gy = ps.low;
+    const Vec2 b{a.x - 100.f, gy - 2.1f};
+    cap(ps, a, b, 4.2f, TRUNK);
+    const Vec2 m = Vec2{lerp(a.x, b.x, 0.45f), lerp(a.y, b.y, 0.45f)};
+    cap(ps, m, Vec2{m.x - 9.f, m.y - 14.f}, 2.3f, TRUNK);
+    const Prim t0 = ps.v[ps.n - 2], t1 = ps.v[ps.n - 1];
+    for (int i = ps.n - 1; i >= 2; --i) ps.v[i] = ps.v[i - 2];
+    ps.v[0] = t0;
+    ps.v[1] = t1;
+  }
+}
+
+// Lucy: a big black and white pit/boxer mix. Same body frame as the camp dog
+// (hip at the origin, x toward the head), drawn at kLucyScale. A deep chest
+// that drops nearly to the elbows and a tucked-up loin, thick legs, a broad
+// head with a short square muzzle and small folded rose ears, a strong
+// tapering tail carried level. White: the chest bib, a blaze running down to
+// the muzzle, and the near paws (the far paws are left dark: they are behind
+// her and it saves two shapes). 13 primitives, 15 with a stick.
+constexpr float kLucyLeg = 10.5f;
+const float kLucyBody[14][2] = {{-4.2f, -7.4f}, {1.0f, -7.6f}, {7.0f, -8.6f}, {11.0f, -9.6f}, {14.2f, -8.6f},
+                                {16.4f, -5.0f}, {16.0f, -0.5f}, {14.0f, 3.6f},  {10.0f, 4.4f},  {6.5f, 2.2f},
+                                {3.0f, -0.2f},  {-1.0f, 0.6f},  {-4.6f, -0.8f}, {-5.6f, -4.4f}};
+const float kLucyBib[8][2] = {{12.4f, -7.6f}, {14.4f, -8.5f}, {16.4f, -5.0f}, {16.0f, -0.5f},
+                               {14.0f, 3.6f},  {11.0f, 4.2f},  {11.8f, 0.4f},  {12.0f, -3.8f}};
+// Head frame: origin at the neck joint, muzzle along +x.
+const float kLucyHead[12][2] = {{-3.4f, -4.2f}, {-0.2f, -6.6f}, {3.6f, -6.8f}, {6.2f, -5.0f}, {9.0f, -4.0f}, {10.4f, -2.8f},
+                                {10.6f, 0.4f},  {9.8f, 2.8f},  {6.6f, 3.8f},  {2.8f, 5.0f},  {-0.8f, 5.8f}, {-4.0f, 2.0f}};
+// The white: a narrow blaze up the forehead, then the whole muzzle, the chin and the throat.
+const float kLucyFace[13][2] = {{2.8f, -6.75f}, {4.5f, -6.7f}, {8.2f, -4.3f}, {10.4f, -2.8f}, {10.6f, 0.4f},
+                                {9.8f, 2.8f},   {6.6f, 3.8f},  {2.8f, 5.0f},  {-0.8f, 5.8f}, {0.8f, 2.8f},
+                                {4.4f, 1.0f},   {6.0f, -2.2f}, {4.8f, -4.8f}};
+const float kLucyEar[4][2] = {{-0.6f, -5.8f}, {1.0f, -9.4f}, {3.8f, -8.5f}, {3.4f, -6.0f}};
+constexpr float kLucyHeadK = 1.15f;
+
+void buildLucy(const Critter& c, const Look& L, Prims& ps) {
+  const CritterPose& P = L.p;
+  const float th = P.pitch + P.rear * kRearAng[CR_DOG];
+  const float low = clamp01(P.crouch);
+  const float hipH = kLucyLeg * (1.f - 0.65f * low);
+  const Xf B = xf(Vec2{-7.0f, -hipH}, th);
+  const float lf = kLucyLeg * (1.f + 0.55f * clamp01(P.rear));
+  auto legAt = [&](float x, float y, float ang, float len, float w, float lift, Tint t, bool sock) {
+    const Vec2 root = at(B, x, y);
+    const Vec2 d = dirA(ang);
+    Vec2 foot = add(root, mul(d, len));
+    foot.y -= lift;
+    capT(ps, root, foot, w, t);
+    if (sock) capT(ps, add(foot, mul(d, -2.4f)), foot, w + 0.2f, TINT_WHITE);
+    contact(ps, foot.y + 0.5f * w);
+    return foot;
+  };
+  const float wide = 1.f + 0.6f * low;
+  legAt(-1.2f, 0.f, P.hind[1], kLucyLeg, 3.4f * wide, L.lift_h[1], TINT_FUR_DARK, false);
+  legAt(13.8f, 0.6f, P.fore[1], lf, 3.0f, L.lift_f[1], TINT_FUR_DARK, false);
+  {   // the tail: thick at the root, a whip at the tip, carried about level
+    const float a = -1.05f - 1.25f * (P.tail + c.tail_add) + 0.4f * th;
+    const Vec2 root = at(B, -4.9f, -5.2f);
+    taper(ps, root, add(root, mul(dirA(a), 9.6f)), 3.0f, 1.1f, TINT_FUR);
+  }
+  polyIn(ps, B, kLucyBody, 14, true);
+  ps.v[ps.n - 1].tint = TINT_FUR;
+  ps.belly = maxX(ps.v[ps.n - 1]);
+  polyIn(ps, B, kLucyBib, 8, false);
+  ps.v[ps.n - 1].tint = TINT_WHITE;
+  legAt(-2.4f, 0.f, P.hind[0], kLucyLeg, 3.9f * wide, L.lift_h[0], TINT_FUR, true);
+  ps.paw = legAt(12.6f, 0.8f, P.fore[0], lf, 3.4f, L.lift_f[0], TINT_FUR, true);
+  ps.has_paw = true;
+  const Xf H0 = xf(at(B, 14.6f + P.look, -8.0f), th + P.head);
+  const Xf H{H0.o, H0.c * kLucyHeadK, H0.s * kLucyHeadK};
+  polyIn(ps, H, kLucyHead, 12, false);
+  ps.v[ps.n - 1].tint = TINT_FUR;
+  polyIn(ps, H, kLucyFace, 13, false);
+  ps.v[ps.n - 1].tint = TINT_WHITE;
+  polyIn(ps, H, kLucyEar, 4, false);
+  ps.v[ps.n - 1].tint = TINT_FUR_DARK;
+  ellipse(ps, at(H, 10.1f, -1.6f), 1.5f, 1.4f);   // the nose, dark on the white muzzle
+  ps.mouth = at(H, 9.0f, 2.0f);
+  ps.has_mouth = true;
+  houseDogCarry(c, ps, ps.mouth, th + P.head);
+}
+
+// Copper: a small golden copper spaniel, drawn at kCopperScale. A level
+// topline and rounded chest with a feathered fringe under it, short legs, a
+// domed head (drawn big, as a spaniel's is) with a medium muzzle, a long ear
+// hanging from the top of the head well below the jaw, in a darker auburn,
+// that swings as it trots, and a feathered plume of a tail in a paler gold,
+// carried up and busy. 10 primitives, 12 with a stick.
+constexpr float kCopperLeg = 8.8f;
+const float kCopperBody[12][2] = {{-4.6f, -6.6f}, {2.0f, -7.2f}, {8.6f, -7.6f}, {12.2f, -7.4f}, {14.6f, -4.6f}, {14.4f, -0.6f},
+                                  {12.2f, 2.4f},  {7.4f, 2.2f},  {3.0f, 0.8f},  {-1.0f, 1.2f},  {-4.6f, 0.0f},  {-5.6f, -3.4f}};
+const float kCopperFringe[7][2] = {{12.0f, 1.4f}, {9.6f, 4.4f}, {8.0f, 3.2f}, {6.0f, 4.6f}, {4.4f, 2.8f}, {2.4f, 3.6f}, {1.4f, 0.6f}};
+const float kCopperHead[13][2] = {{-3.0f, -3.8f}, {-0.6f, -6.8f}, {2.6f, -7.2f}, {5.0f, -5.4f}, {6.4f, -3.6f}, {10.0f, -3.0f}, {11.0f, -1.6f},
+                                  {10.8f, 0.8f},  {9.0f, 2.0f},   {5.0f, 2.8f},  {1.0f, 4.6f},  {-2.4f, 5.0f}, {-4.2f, 1.0f}};
+// The ear in its own frame (origin at its root on the skull), hanging down.
+const float kCopperEar[9][2] = {{-1.8f, -1.2f}, {2.0f, -1.8f}, {3.4f, 1.0f}, {3.8f, 5.0f}, {3.0f, 8.8f},
+                                {1.2f, 10.2f},  {-0.8f, 9.2f}, {-2.4f, 5.4f}, {-2.6f, 1.6f}};
+// The plume in its own frame: x along the tail, root at the origin.
+const float kCopperTail[8][2] = {{0.0f, -1.3f}, {3.0f, -2.4f}, {6.5f, -2.6f}, {9.8f, -0.4f},
+                                 {8.6f, 1.6f},  {5.6f, 2.8f},  {2.4f, 2.2f},  {0.0f, 1.3f}};
+constexpr float kCopperHeadK = 1.26f;
+
+void buildCopper(const Critter& c, const Look& L, Prims& ps) {
+  const CritterPose& P = L.p;
+  const float th = P.pitch + P.rear * kRearAng[CR_DOG];
+  const float low = clamp01(P.crouch);
+  const float hipH = kCopperLeg * (1.f - 0.65f * low);
+  const Xf B = xf(Vec2{-6.0f, -hipH}, th);
+  const float lf = kCopperLeg * (1.f + 0.6f * clamp01(P.rear));
+  auto legAt = [&](float x, float y, float ang, float len, float w, float lift, Tint t) {
+    const Vec2 root = at(B, x, y);
+    Vec2 foot = add(root, mul(dirA(ang), len));
+    foot.y -= lift;
+    capT(ps, root, foot, w, t);
+    contact(ps, foot.y + 0.5f * w);
+    return foot;
+  };
+  const float wide = 1.f + 0.7f * low;
+  legAt(-1.4f, 0.f, P.hind[1], kCopperLeg, 2.8f * wide, L.lift_h[1], TINT_FUR_DARK);
+  legAt(12.4f, 0.4f, P.fore[1], lf, 2.5f, L.lift_f[1], TINT_FUR_DARK);
+  {   // the plume, carried higher than the others' tails
+    const float a = -0.55f - 1.6f * (P.tail + c.tail_add + 0.15f) + 0.4f * th;
+    const Xf T = xf(at(B, -4.8f, -4.8f), a - 1.5707963f);
+    polyIn(ps, T, kCopperTail, 8, false);
+    ps.v[ps.n - 1].tint = TINT_FUR_LIGHT;
+  }
+  polyIn(ps, B, kCopperBody, 12, true);
+  ps.v[ps.n - 1].tint = TINT_FUR;
+  ps.belly = maxX(ps.v[ps.n - 1]);
+  polyIn(ps, B, kCopperFringe, 7, false);
+  ps.v[ps.n - 1].tint = TINT_FUR;
+  legAt(-2.5f, 0.f, P.hind[0], kCopperLeg, 3.1f * wide, L.lift_h[0], TINT_FUR);
+  ps.paw = legAt(11.2f, 0.4f, P.fore[0], lf, 2.8f, L.lift_f[0], TINT_FUR);
+  ps.has_paw = true;
+  const Xf H0 = xf(at(B, 12.4f + P.look, -6.6f), th + P.head);
+  const Xf H{H0.o, H0.c * kCopperHeadK, H0.s * kCopperHeadK};
+  polyIn(ps, H, kCopperHead, 13, false);
+  ps.v[ps.n - 1].tint = TINT_FUR;
+  {   // the ear hangs from the top of the head, turning only a little with it, and swings in the trot
+    const float flop = c.moving ? 0.22f * c.gait_w * sinT(2.f * c.phase + 0.15f) : 0.f;
+    const Xf E = xf(at(H, 0.8f, -4.6f), 0.3f * (th + P.head) + flop);
+    const Xf Es{E.o, E.c * kCopperHeadK, E.s * kCopperHeadK};
+    polyIn(ps, Es, kCopperEar, 9, false);
+    ps.v[ps.n - 1].tint = TINT_FUR_DARK;
+  }
+  ellipse(ps, at(H, 10.9f, -1.0f), 1.35f, 1.35f);
+  ps.mouth = at(H, 9.4f, 1.2f);
+  ps.has_mouth = true;
+  houseDogCarry(c, ps, ps.mouth, th + P.head);
+}
+
 void buildDog(const Critter& c, const Look& L, Prims& ps) {
+  if (c.tone == DT_LUCY) {
+    buildLucy(c, L, ps);
+    return;
+  }
+  if (c.tone == DT_COPPER) {
+    buildCopper(c, L, ps);
+    return;
+  }
   const CritterPose& P = L.p;
   const float th = P.pitch + P.rear * kRearAng[CR_DOG];
   const float low = clamp01(P.crouch);
@@ -1260,10 +1456,28 @@ int g_last_prims = 0;
 // dim at night with the rest: TENT's rust pulled toward TRUNK's brown, a
 // warm mid-brown by day (tone 0), and mostly TRUNK for the darker second dog
 // (tone 1). The shade (ear, far legs) is that with ACTOR mixed in.
+//
+// Lucy (Mike's black and white dog) is ACTOR with a little TRUNK in it, so she
+// is near black like the hiker but not his flat ink; her white is the stream's
+// light ripple warmed a touch with the lit tent's colour, so it is white by day,
+// cream at golden hour and a moonlit grey-blue at night, always under the night
+// cap. Copper is golden copper: the tent's rust with the lit tent's gold and a
+// little trunk brown, so he reads warmer and lighter than the camp dog and
+// still apart from the orange tent; his ears and far legs are a darker auburn,
+// his feathering a paler gold.
 Pixel furColor(const Palette& pal, uint8_t tone, bool shade) {
-  const Pixel base = tone == 0 ? mixRGB(pal[TENT], pal[TRUNK], 0.38f) : mixRGB(pal[TRUNK], pal[TENT], 0.2f);
-  return shade ? mixRGB(base, pal[ACTOR], 0.5f) : base;
+  Pixel base;
+  switch (tone) {
+    case DT_CAMP: base = mixRGB(pal[TENT], pal[TRUNK], 0.38f); break;
+    case DT_LUCY: base = mixRGB(pal[ACTOR], pal[TRUNK], 0.22f); break;
+    case DT_COPPER: base = mixRGB(mixRGB(pal[TENT], pal[TENT_LIT], 0.34f), pal[TRUNK], 0.25f); break;
+    default: base = mixRGB(pal[TRUNK], pal[TENT], 0.2f); break;
+  }
+  if (!shade) return base;
+  return mixRGB(base, tone == DT_COPPER ? pal[TRUNK] : pal[ACTOR], tone == DT_COPPER ? 0.4f : 0.5f);
 }
+Pixel dogWhite(const Palette& pal) { return mixRGB(pal[WATER_LIGHT], pal[TENT_LIT], 0.15f); }
+Pixel dogLight(const Palette& pal, uint8_t tone) { return mixRGB(furColor(pal, tone, false), pal[TENT_LIT], 0.35f); }
 
 void startAction(Critter& c, CritterAction a, float seconds) {
   c.from = compose(c).p;   // the figure on screen, motion included
@@ -1437,7 +1651,10 @@ void critterTick(Critter& c, float dt) {
     } else if (c.kind == CR_BIRD && c.action == CA_MOVE) {
       c.phase = wrap1(c.phase + dt * 5.f);
     } else {
-      const float stride = c.action == CA_RUN ? ki.run_stride : ki.stride;
+      float stride = c.action == CA_RUN ? ki.run_stride : ki.stride;
+      // Lucy and Copper: legs as long as their size, so a stride is too (big Lucy's legs swing slower
+      // than Copper's quick little steps at the same speed). The camp dogs keep the old stride.
+      if (c.kind == CR_DOG && c.tone >= DT_LUCY) stride *= c.scale;
       // Backing up (moving against its facing, not turning): the legs step backward.
       const bool backing = c.turn_t < 0.f && remain * (float)c.facing < 0.f;
       if (stride > 0.f) c.phase = wrap1(c.phase + (backing ? -step : step) / stride);
@@ -1523,12 +1740,21 @@ void critterDraw(const Critter& c, Surface& s, const Palette& pal, const Rect& c
   build(c, ps);
   const Pixel fur = c.kind == CR_DOG ? furColor(pal, c.tone, false) : pal[ACTOR];
   const Pixel fur_dark = c.kind == CR_DOG ? furColor(pal, c.tone, true) : pal[ACTOR];
+  const Pixel white = c.kind == CR_DOG && c.tone == DT_LUCY ? dogWhite(pal) : pal[ACTOR];
+  const Pixel light = c.kind == CR_DOG && c.tone == DT_COPPER ? dogLight(pal, c.tone) : pal[ACTOR];
   for (int k = 0; k < ps.n; ++k) {
     const Prim& p = ps.v[k];
     float x0, y0, x1, y1;
     primExtent(p, x0, y0, x1, y1);
     if (x1 < (float)clip.x0 || x0 > (float)clip.x1 || y1 < (float)clip.y0 || y0 > (float)clip.y1) continue;
-    const Pixel col = p.tint == TINT_FUR ? fur : (p.tint == TINT_FUR_DARK ? fur_dark : pal[p.slot]);
+    Pixel col = pal[p.slot];
+    switch (p.tint) {
+      case TINT_FUR: col = fur; break;
+      case TINT_FUR_DARK: col = fur_dark; break;
+      case TINT_WHITE: col = white; break;
+      case TINT_FUR_LIGHT: col = light; break;
+      default: break;
+    }
     switch (p.kind) {
       case PRIM_CAP: strokeCapsule(s, p.p[0], p.p[1], p.w, col, clip); break;
       case PRIM_ELLIPSE:

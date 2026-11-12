@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include "../core/dog.h"
 #include "../core/mail.h"
+#include "../core/note.h"
 #include "../core/requests.h"
 #include "../core/settings.h"
 #include "../core/status.h"
@@ -78,6 +79,10 @@ bool load_comfort_pending(tc::ComfortPending *out, int max, int &n);
 void save_comfort_pending(const tc::ComfortPending *p, int n);
 bool load_requests(tc::RequestState &s);  // the heat and cooling arrows held (requests.h)
 void save_requests(const tc::RequestState &s);
+// The two floors' tile messages (note.h, Mike 2026-11-07), [0] upstairs, [1] downstairs, saved together.
+// load: false if nothing is saved, or what is saved has text with no NUL in it.
+bool load_notes(tc::NoteState *notes2);
+void save_notes(const tc::NoteState *notes2);
 uint8_t load_clock_quality();
 void save_clock_quality(uint8_t q);
 // The calendar's files (tc::Platform::read_file names), in /tcomm on the SD card (Mike,
@@ -106,6 +111,16 @@ struct CalendarFs {
   int files;                   // in /tcomm
 };
 bool calendar_fs_info(CalendarFs &out);
+// A card that fails while running: the write is tried again after a remount (at most one a minute),
+// and if that fails too the calendar's files move to the FAT partition for the rest of the run. A
+// marker file there makes the next start-up with a readable card merge them onto it.
+// storage_on_fallback: the files are on the FAT partition (the card was unreadable at start-up, or
+// failed since). storage_write_failures: write tries that failed this run, even those a retry saved.
+bool storage_on_fallback();
+uint32_t storage_write_failures();
+// For tests over serial: 1 makes the card fail for good (writes fail, the remount fails, the FAT
+// partition takes over; a restart undoes it), 2 fails one try (the remount works), 0 is normal.
+void storage_test_fail(int mode);
 // Serial "sd": what the card is. "sd format yes": formats the card as FAT32, only if it can't be
 // mounted as it is (an exFAT card can't: this core reads FAT only), then moves the calendar's
 // files onto it. UNVERIFIED on the panel.
@@ -143,12 +158,6 @@ bool radio_begin();
 void radio_send(uint8_t to, const uint8_t *data, size_t len);
 bool radio_poll(uint8_t *out, size_t *len);  // one received frame from a known peer, if any
 void radio_report();  // for serial "radio": counts, and the last frames in and out
-// Internet time (radio build, with a Wi-Fi name in secrets.h): join the home Wi-Fi for a few
-// seconds and ask a time server. time_sync_start begins a try (false if one is under way or there's
-// no Wi-Fi set up); time_sync_poll, from loop(), returns the UTC time once it has one, else 0.
-bool time_sync_start();
-bool time_sync_busy();
-uint32_t time_sync_poll();
 
 // ---- Wi-Fi updates (board_update.cpp, docs/wifi-updates.md). ----
 // The updater is its own small sketch (updater) in the app slot this firmware isn't

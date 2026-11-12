@@ -116,6 +116,15 @@ void DevicePlatform::save_requests(const tc::RequestState &s) {
   taskEXIT_CRITICAL(&g_save_mux);
 }
 
+// The tile messages (note.h, Mike 2026-11-07): both floors' copies, written with the next flush.
+void DevicePlatform::save_notes(const tc::NoteState *notes2) {
+  taskENTER_CRITICAL(&g_save_mux);
+  notes_[0] = notes2[0];
+  notes_[1] = notes2[1];
+  dirty_ |= kDirtyNotes;
+  taskEXIT_CRITICAL(&g_save_mux);
+}
+
 // Called in the LVGL task: queued for the loop task (flush_saves), like write_file.
 void DevicePlatform::append_line(const char *name, const char *header, const char *line) {
   PendingLine l = {};
@@ -227,11 +236,12 @@ void DevicePlatform::flush_saves() {
   tc::Settings settings;
   uint32_t comfort;
   tc::RequestState requests;
+  tc::NoteState notes[2];
   static tc::ComfortPending pending[tc::kComfortPendingMax];  // a copy, outside the lock; only this task uses it
   int npending;
   uint8_t q;
   taskENTER_CRITICAL(&g_save_mux);
-  uint8_t d = dirty_;
+  uint16_t d = dirty_;
   dirty_ = 0;
   own = own_;
   dog = dog_;
@@ -239,6 +249,8 @@ void DevicePlatform::flush_saves() {
   settings = settings_;
   comfort = comfort_n_;
   requests = requests_;
+  notes[0] = notes_[0];
+  notes[1] = notes_[1];
   npending = npending_;
   if (d & kDirtyPending)
     for (int i = 0; i < npending; i++) pending[i] = pending_[i];
@@ -252,6 +264,7 @@ void DevicePlatform::flush_saves() {
   if (d & kDirtyComfort) board::save_comfort_count(comfort);
   if (d & kDirtyRequests) board::save_requests(requests);
   if (d & kDirtyPending) board::save_comfort_pending(pending, npending);
+  if (d & kDirtyNotes) board::save_notes(notes);
   if (d & kDirtyClock) save_clock_quality(q);
 
   // A flash write stalls both cores' caches; worth seeing next to a sound that went unheard.

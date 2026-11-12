@@ -4,8 +4,13 @@
 // A capsule filled with the status color, the status word in the panel's UI
 // font, a thin outline in the scene palette (CHIP_OUTLINE). When a dog is out,
 // a round badge with a dog silhouette sits just left of the chip, one badge
-// per dog. A doorbell pulses the chip: rings in the status color grow out
-// from its edge and fade, and the chip brightens a little at each peak.
+// per dog. On the upstairs panel the tenant's heat and cooling requests sit
+// left of the badges as round arrow badges, drawn as the home screen's
+// UPSTAIRS tile draws them (firmware art.cpp request_arrow: mild light red or
+// light blue, urgent red or blue with a doubled head, flashing lit and dim
+// half a second each), newest on the right. A doorbell pulses the chip: rings
+// in the status color grow out from its edge and fade, and the chip brightens
+// a little at each peak.
 //
 // The module is standalone: App owns a ChipState, feeds it the inputs each
 // tick and draws it last (on top of everything) in every dirty strip.
@@ -42,6 +47,10 @@ constexpr int kChipY0 = SS_HEIGHT - kChipMargin - kChipH;    // 424
 constexpr int kChipBadgeD = 34;       // dog badge diameter
 constexpr int kChipBadgeGap = 12;     // chip edge to the first badge (clear of the pulse ring)
 constexpr int kChipBadgeStep = 6;     // between two badges
+constexpr int kChipArrowD = 34;       // request arrow diameter (the tile's art::kArrow)
+constexpr int kChipArrowStep = 38;    // centre to centre (the tile's kReqStep)
+constexpr int kChipArrowGap = 10;     // the badges (or the chip) to the newest arrow
+constexpr float kChipFlashHalf = 0.5f;   // an urgent arrow: lit half a second, dim half a second (the tile's kFlashHalfMs)
 
 // ---- tuning (all PROPOSED; the look is UNVERIFIED on the panel) -------------
 
@@ -65,6 +74,9 @@ struct ChipLook {
   uint8_t glow;     // pulse brightening of the chip, 0..255
   uint8_t ring_r;   // pulse ring distance beyond the chip's edge, quarter pixels
   uint8_t ring_a;   // pulse ring opacity, 0..255 (0 = no ring)
+  uint8_t req[3];   // the request arrows shown, oldest first (Inputs::req values, 0 none)
+  uint8_t req_n;    // how many
+  uint8_t req_dim;  // the urgent arrows are in the dim half of their flash (0 or 1)
 };
 
 // POD, lives by value in the App. About 50 bytes.
@@ -74,6 +86,8 @@ struct ChipState {
   float night_f;    // 0 day .. 1 night, eases toward the night flag
   float pop_f[2];   // badge pop-in progress 0..1
   float pulse_t;    // seconds since the doorbell; < 0 when not pulsing
+  float flash_t;    // the urgent arrows' flash clock, seconds
+  uint8_t req_want[3], req_want_n;   // the arrows asked for (chipRequests), taken at the next chipUpdate
   bool primed;      // the first chipUpdate has run (it sets the look with no fade)
 };
 
@@ -90,8 +104,14 @@ Rect chipUpdate(ChipState& c, int status, int dog_out, bool night, float dt);
 // Start the pulse (or restart it if one is running). Takes effect at the next chipUpdate.
 void chipDoorbell(ChipState& c);
 
-// Everything the chip covers now: the capsule, the badges shown, the pulse ring
-// if one is visible. Always inside the frame.
+// The request arrows to show (Inputs::req values, oldest first, no zeros; at most 3 are kept).
+// Takes effect at the next chipUpdate, which then also runs their flash.
+void chipRequests(ChipState& c, const uint8_t* req, int n);
+// Where request arrow i (0 the oldest) of the look's arrows is centred; its radius is kChipArrowD / 2.
+float chipArrowX(const ChipState& c, int i);
+
+// Everything the chip covers now: the capsule, the badges shown, the request
+// arrows, the pulse ring if one is visible. Always inside the frame.
 Rect chipBounds(const ChipState& c);
 
 // Draw onto `strip` (a strip or a whole frame; frame coordinates), touching

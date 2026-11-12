@@ -59,6 +59,12 @@ class Actions {
   virtual bool updater_installed() { return false; }  // Settings > Update over Wi-Fi
   virtual void start_updater() {}
   virtual void start_updater_both() {}  // Update over Wi-Fi > Both panels (Controller::update_both)
+  // This panel's own tile message (note.h): the keyboard's SEND (text, how long), or a tap on it.
+  virtual void set_note(const char *text, uint32_t duration_s) {
+    (void)text;
+    (void)duration_s;
+  }
+  virtual void clear_note() {}
   virtual DemoInfo demo_info() = 0;
   virtual void demo(DemoAction a) = 0;
   // The calendar. save_event returns the event's id, or 0 if it couldn't be kept (the calendar is
@@ -98,7 +104,7 @@ void set_art_scratch(uint8_t *buf, size_t bytes);
 void set_copy_pause(void (*pause)());
 
 // For the simulator: open sheets the way a touch would, and scroll the open one's list.
-enum class Sheet { None, Status, Timer, Settings, TimeDate, Test, CleanScreen, Ringtone, Zambretti, Screensaver, Comfort, Chart };
+enum class Sheet { None, Status, Timer, Settings, TimeDate, Test, CleanScreen, Ringtone, Zambretti, Screensaver, Comfort, Chart, Note, Outside, Presence };
 void open_sheet(Sheet s, tc::Status timed = tc::Status::Private);
 void scroll_sheet(int y);
 void tap_gear();  // as a tap on the gear (Settings rolls down or up), for testing over serial

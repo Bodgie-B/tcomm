@@ -11,7 +11,7 @@
 
 namespace gw {
 
-constexpr const char *kFirmware = "gateway-c6 0.1";
+constexpr const char *kFirmware = "gateway-c6 0.3";
 constexpr size_t kMaxLine = 512;  // the bridge's lines are far shorter; anything longer is dropped
 constexpr int kChannel = 1;       // TCOMM_ESPNOW_CHANNEL
 
@@ -45,15 +45,19 @@ class Gateway {
   void boot();                                 // the first line after a reset: boot true
   void on_line(const char *line, size_t len);  // one line from the Pi, without its newline
   // A frame that came in over ESP-NOW. from: the sender's role by its MAC (kUpstairs,
-  // kDownstairs), or -1 for any other MAC. Only ACKs matter; anything else is ignored.
+  // kDownstairs), or -1 for any other MAC. ACKs answer the requests; a NOTICE from the upstairs
+  // panel (a house event for the Pi, Mike 2026-11-11) is ACKed and printed as one "event" line,
+  // once however many times it is sent; anything else is ignored.
   void on_frame(int from, const uint8_t *data, size_t len);
   void tick();  // retries, and the give-ups; call often (every few ms)
 
   const GwStatus &status() const { return st_; }
-  int in_flight() const;  // requests waiting for an ACK (0 to 2)
+  int in_flight() const;  // requests waiting for an ACK (0 to 3)
 
  private:
-  enum Kind { kOutside = 0, kLucy = 1 };
+  // kUpdate: the Pi's "start both panels' Wi-Fi updaters" (Mike, 2026-11-07; firmware/docs/remote-update.md).
+  enum Kind { kOutside = 0, kLucy = 1, kUpdate = 2 };
+  static constexpr int kKinds = 3;
   struct Pending {
     bool used = false;
     int64_t id = 0;
@@ -67,13 +71,15 @@ class Gateway {
   void hello(bool boot);
   void send_try(Pending &p);
   void finish(Kind k, const char *line);
+  void on_notice(const tc::Msg &m);
   uint16_t next_seq();
-  static const char *kind_name(Kind k) { return k == kOutside ? "outside" : "lucy"; }
+  static const char *kind_name(Kind k) { return k == kOutside ? "outside" : k == kLucy ? "lucy" : "update"; }
 
   GatewayIO &io_;
   char mac_[18];
   uint16_t seq_;
-  Pending p_[2];  // one per type: OUTSIDE, LUCY
+  Pending p_[kKinds];  // one per type: OUTSIDE, LUCY, UPDATE
+  tc::Dedup notices_;  // a NOTICE the panel sends again (our ACK was lost) is printed once
   GwStatus st_;
 };
 

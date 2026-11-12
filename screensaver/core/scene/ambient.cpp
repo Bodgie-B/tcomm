@@ -37,6 +37,28 @@ constexpr float kSmokeRise = 55.f;          // px over a puff's life; puffs over
 
 constexpr float kBirdHalfSpan = 5.5f;       // V is ~11 px wide
 
+// The big blaze (fire and ice, the cold). Only the cold's fuel goes over 1. Over 1 the fire is drawn
+// wild: much taller, five uneven tongues that flick up and down on their own, the whole fire leaning
+// with gusts, licks of flame leaping off the top, sparks flying high, and a soft glow round it. All
+// from the fire's clock: no state. (fireice.cpp kBlazeMild / kBlazeUrgent set the fuel.)
+constexpr float kBlazeTall = 3.2f;      // extra height per unit of fuel over 1, times the 32 px fire
+constexpr float kBlazeWide = 16.f;      // extra half width (px) per unit of fuel over 1
+constexpr float kBlazeGust = 0.30f;     // how far the tips lean with a gust, times their height
+constexpr float kBlazeSparkUp = 1.45f;  // the sparks' highest point, times the blaze's height
+constexpr float kBlazeGlowW = 2.0f;     // the glow's half width, times the flames' half width
+constexpr int kBlazeGlowA = 30;         // each of the glow's three rings, of 255 (the middle gets all three)
+constexpr int kBlazeLicks = 3, kBlazeSparks = 16;
+
+inline float fracf(float x) { return x - floorf(x); }
+inline float blazeWild(float I) { return minf(1.f, (I - 1.f) / 0.6f); }
+inline float blazeH(float I) { return 32.f * (1.f + kBlazeTall * (I - 1.f)); }
+inline float blazeBW(float I) { return 13.f + kBlazeWide * (I - 1.f); }
+// The gust's lean, times kBlazeGust times wildness: slow, so the fire leans and comes back. Mostly
+// downwind (toward -x, as the smoke trails), now and then a moment upright or a little the other way.
+inline float blazeGust(float clock, float wild) {
+  return -kBlazeGust * wild * (0.35f + 0.65f * sumSines(clock * 0.31f + 0.2f, 3));
+}
+
 void updateSway(World& w) {
   Ambient& a = w.amb;
   // Slow swell, 20 s; the weather's wind scales it (exactly 1 when calm).
@@ -110,12 +132,14 @@ bool smokeGeom(const World& w, int i, Vec2& c, float& r) {
   float age = w.amb.wind_t / kSmokeLife + fl(i) / fl(AMB_SMOKE_MAX);
   age -= floorf(age);
   // Grows fast, then shrinks away as it rises: fading without alpha.
-  r = 13.f * minf(1.f, age * 3.f) * (1.f - age) * f.intensity * w.amb.smoke_k * weatherSmokeMul(w);   // more in the rain
+  // More in the rain; a big blaze (fire and ice) only a little more than a good fire.
+  r = 13.f * minf(1.f, age * 3.f) * (1.f - age) * minf(f.intensity, 1.1f) * w.amb.smoke_k * weatherSmokeMul(w);
   if (r < 0.6f) return false;
   const float drift = -40.f * age * sqrtf(age);
   const float pulled = (w.amb.smoke_to_x - f.pos.x) * minf(1.f, age * 1.8f);
   c.x = f.pos.x + lerp(drift, pulled, w.amb.smoke_pull) + 3.f * sinT(age * 1.3f + fl(i) * 0.27f);
-  c.y = f.pos.y - 24.f - kSmokeRise * age;
+  // Above a big blaze too (fireice.h): 24 px for a good fire, and most of what the blaze adds.
+  c.y = f.pos.y - (f.intensity > 1.f ? 24.f + 0.95f * (blazeH(f.intensity) - 32.f) : 24.f) - kSmokeRise * age;
   return true;
 }
 
@@ -185,6 +209,148 @@ void flamePool(Surface& s, Vec2 base, float bw, float H, float clock, float ph, 
   p[n++] = Vec2{base.x + bw * 0.6f, base.y + 1.5f};
   p[n++] = Vec2{base.x - bw * 0.6f, base.y + 1.5f};
   fillPolygon(s, p, n, col, clip);
+}
+
+// ---- the big blaze (fire and ice, the cold) ------------------------------------------------------
+// Everything it draws comes from these geometry functions, so fireBounds can fold the very same
+// points and the dirty box is no bigger than what is drawn.
+struct Blaze {
+  Vec2 b;          // the pit
+  float H, bw;     // height and half width
+  float gust;      // the lean, times a height
+  float wild;      // 0..1
+  float t;         // the fire's clock
+};
+Blaze blazeOf(const FirePit& f) {
+  const float I = f.intensity;
+  return Blaze{f.pos, blazeH(I), blazeBW(I), blazeGust(f.clock, blazeWild(I)), blazeWild(I), f.clock};
+}
+
+// The three flame layers, back to front: a deep red edge, orange, a yellow heart.
+struct BlazeLayer { float bw, H, dy, ph; };
+const BlazeLayer kBlazeLayers[3] = {{1.08f, 1.f, 0.f, 0.f}, {0.85f, 0.86f, -0.5f, 0.13f}, {0.48f, 0.5f, -1.f, 0.5f}};
+constexpr int kBlazeTongues = 5, kBlazePts = 2 * kBlazeTongues + 3;
+
+// One wild flame layer's outline: five tongues, each its own height (0.44..1 of the envelope) and
+// lean, all sheared by the gust. A flat polygon like flamePool, just more of it.
+int blazeLayerPts(const Blaze& z, int k, Vec2* p) {
+  const BlazeLayer& L = kBlazeLayers[k];
+  const Vec2 base{z.b.x, z.b.y + L.dy};
+  const float bw = z.bw * L.bw, H = z.H * L.H, ph = L.ph, t = z.t;
+  int n = 0;
+  p[n++] = Vec2{base.x - bw, base.y - 1.f};
+  for (int j = 0; j < kBlazeTongues; ++j) {
+    const float u = (fl(j) + 0.5f) / fl(kBlazeTongues);
+    const float env = 1.f - 0.55f * fabsf(2.f * u - 1.f);
+    const float jump = sumSines(t * 1.45f + fl(j) * 0.41f + ph, 3);
+    const float hj = H * env * (0.72f + 0.28f * jump);
+    const float lean = (2.f * sumSines(t * 0.9f + fl(j) * 0.61f + ph, 2)) * (hj / 9.f) + z.gust * hj;
+    p[n++] = Vec2{base.x - bw + 2.f * bw * u + lean, base.y - hj};
+    if (j + 1 < kBlazeTongues) {
+      const float vu = fl(j + 1) / fl(kBlazeTongues);
+      const float vh = H * (0.28f + 0.1f * sumSines(t * 1.2f + fl(j) + ph, 2));
+      p[n++] = Vec2{base.x - bw + 2.f * bw * vu + z.gust * vh, base.y - vh};
+    }
+  }
+  p[n++] = Vec2{base.x + bw, base.y - 1.f};
+  p[n++] = Vec2{base.x + bw * 0.6f, base.y + 1.5f};
+  p[n++] = Vec2{base.x - bw * 0.6f, base.y + 1.5f};
+  return n;
+}
+
+// A lick: a tongue of flame torn off the top, leaping up and shrinking. False while it is not out.
+bool blazeLick(const Blaze& z, int i, Vec2* q) {
+  const float u = fracf(z.t / (0.62f + 0.17f * fl(i)) + 0.37f * fl(i));
+  const float r = (1.f - u) * (2.5f + 3.f * z.wild);
+  if (u > 0.85f || r < 0.9f) return false;
+  const float up = z.H * (0.62f + 0.6f * u);
+  const float x = z.b.x + z.bw * 0.45f * fl(i - 1) + z.gust * up + 3.f * sinT(u * 0.8f + 0.3f * fl(i));
+  const float y = z.b.y - up;
+  q[0] = Vec2{x, y - 2.8f * r};
+  q[1] = Vec2{x + r, y};
+  q[2] = Vec2{x, y + 1.3f * r};
+  q[3] = Vec2{x - r, y};
+  return true;
+}
+
+// A spark: a bright dot flying up well above the flames, drifting with the gust.
+bool blazeSpark(const Blaze& z, int i, Vec2& c, float& r, bool& hot) {
+  const float per = 1.25f + 0.17f * fl(i % 5);
+  const float u = fracf(z.t / per + 0.618f * fl(i));
+  if (u > 0.93f) return false;
+  const float up = z.H * (0.45f + (kBlazeSparkUp - 0.45f) * u);
+  const float sx = z.bw * 0.7f * (2.f * fracf(0.37f * fl(i) + 0.11f) - 1.f);
+  c = Vec2{z.b.x + sx + 0.6f * z.gust * up + 5.f * sinT(u * 1.3f + 0.27f * fl(i)), z.b.y - up};
+  r = u < 0.5f ? 1.7f : 1.2f;
+  hot = u < 0.55f;
+  return true;
+}
+
+// The glow: soft rings of firelight round the flames' middle, breathing with the fire.
+constexpr int kGlowRings = 3, kGlowPts = 20;
+void blazeGlowPts(const Blaze& z, int k, Vec2* p) {
+  const float breathe = 1.f + 0.06f * sumSines(z.t * 0.8f + 0.4f, 2);
+  const float s = (1.f - 0.22f * fl(k)) * breathe;
+  const float rx = kBlazeGlowW * z.bw * s, ry = 0.55f * z.H * s;
+  const Vec2 c{z.b.x + 0.3f * z.gust * z.H, z.b.y - 0.36f * z.H};
+  for (int i = 0; i < kGlowPts; ++i) {
+    const float a = fl(i) / fl(kGlowPts);
+    p[i] = Vec2{c.x + rx * cosT(a), c.y + ry * sinT(a)};
+  }
+}
+
+void blazeDraw(const FirePit& f, Surface& s, const Rect& clip, const Palette& pal) {
+  const Blaze z = blazeOf(f);
+  const Pixel cols[3] = {mixRGB(pal[FIRE], pal[ACTOR], 0.28f), pal[FIRE], pal[FIRE_CORE]};
+  Vec2 p[kBlazePts];
+  for (int k = 0; k < 3; ++k) fillPolygon(s, p, blazeLayerPts(z, k, p), cols[k], clip);
+  for (int i = 0; i < kBlazeLicks; ++i)
+    if (blazeLick(z, i, p)) fillPolygon(s, p, 4, i == 1 ? pal[FIRE_CORE] : pal[FIRE], clip);
+  for (int i = 0; i < kBlazeSparks; ++i) {
+    Vec2 c;
+    float r;
+    bool hot;
+    if (blazeSpark(z, i, c, r, hot)) fillCircle(s, c, r, hot ? pal[FIRE_CORE] : pal[FIRE], clip);
+  }
+}
+
+void blazeGlow(const FirePit& f, Surface& s, const Rect& clip, const Palette& pal) {
+  const Blaze z = blazeOf(f);
+  Vec2 p[kGlowPts];
+  for (int k = 0; k < kGlowRings; ++k) {
+    blazeGlowPts(z, k, p);
+    fillPolygonAlpha(s, p, kGlowPts, pal[FIRE], (uint8_t)kBlazeGlowA, clip);
+  }
+}
+
+// What the blaze draws, flames, licks, sparks and glow, folded into one box.
+Rect blazeBounds(const FirePit& f) {
+  const Blaze z = blazeOf(f);
+  float x0 = z.b.x - 27.f, x1 = z.b.x + 28.f, y0 = z.b.y - 40.f, y1 = z.b.y + 10.f;   // the stones' box
+  auto fold = [&](Vec2 v, float pad) {
+    x0 = minf(x0, v.x - pad);
+    x1 = maxf(x1, v.x + pad);
+    y0 = minf(y0, v.y - pad);
+    y1 = maxf(y1, v.y + pad);
+  };
+  Vec2 p[kBlazePts];
+  for (int k = 0; k < 3; ++k) {
+    const int n = blazeLayerPts(z, k, p);
+    for (int i = 0; i < n; ++i) fold(p[i], 1.f);
+  }
+  for (int i = 0; i < kBlazeLicks; ++i)
+    if (blazeLick(z, i, p))
+      for (int j = 0; j < 4; ++j) fold(p[j], 1.f);
+  for (int i = 0; i < kBlazeSparks; ++i) {
+    Vec2 c;
+    float r;
+    bool hot;
+    if (blazeSpark(z, i, c, r, hot)) fold(c, r + 1.f);
+  }
+  Vec2 g[kGlowPts];
+  blazeGlowPts(z, 0, g);   // the biggest ring holds the others
+  for (int i = 0; i < kGlowPts; ++i) fold(g[i], 1.f);
+  return boundsOf(x0 - 1.f, y0 - 1.f, x1 + 1.f, y1 + 1.f);
 }
 
 // Ring of six stones on an ellipse round the pit; laid in this order.
@@ -340,7 +506,22 @@ Rect ambientSmokeBounds(const World& w, int i) {
 Rect fireBounds(const FirePit& f) {
   if (f.stones <= 0.f && f.intensity <= 0.f) return kEmpty;
   const int x = (int)floorf(f.pos.x), y = (int)floorf(f.pos.y);
+  if (f.intensity > 1.f) return blazeBounds(f);   // the big blaze (fire and ice): flames, licks, sparks, glow
   return Rect{x - 27, y - 40, x + 28, y + 10};
+}
+
+// A small fire on the ground (fire and ice): the campfire's flame shape at size k, no stones.
+Rect smallFireBounds(Vec2 base, float k) {
+  if (k <= 0.02f) return kEmpty;
+  const float bw = 4.f + 8.f * k, H = 7.f + 22.f * k;
+  return boundsOf(base.x - bw - 4.f, base.y - 1.2f * H - 3.f, base.x + bw + 4.f, base.y + 3.f);
+}
+
+void smallFireDraw(Vec2 base, float k, float clock, Surface& s, const Rect& clip, const Palette& pal) {
+  if (k <= 0.02f || !overlaps(smallFireBounds(base, k), clip)) return;
+  const float bw = 4.f + 8.f * k, H = 7.f + 22.f * k;
+  flamePool(s, base, bw, H, clock, 0.f, pal[FIRE], clip);
+  if (k > 0.3f) flamePool(s, Vec2{base.x, base.y - 0.5f}, bw * 0.5f, H * 0.5f, clock, 0.5f, pal[FIRE_CORE], clip);
 }
 
 void ambientDrawTuft(const World& w, int i, Surface& s, const Rect& clip, const Palette& pal) {
@@ -388,6 +569,11 @@ void ambientDrawSmoke(const World& w, Surface& s, const Rect& clip, const Palett
   }
 }
 
+void fireGlowDraw(const FirePit& f, Surface& s, const Rect& clip, const Palette& pal) {
+  if (f.intensity <= 1.f || !overlaps(fireBounds(f), clip)) return;
+  blazeGlow(f, s, clip, pal);
+}
+
 void fireDraw(const FirePit& f, Surface& s, const Rect& clip, const Palette& pal) {
   if (!overlaps(fireBounds(f), clip)) return;
   drawStones(f, s, clip, pal[ROCK], false);
@@ -397,7 +583,9 @@ void fireDraw(const FirePit& f, Surface& s, const Rect& clip, const Palette& pal
     strokeCapsule(s, Vec2{f.pos.x - 6.f * k, f.pos.y - 1.f * k}, Vec2{f.pos.x + 5.f * k, f.pos.y - 3.2f * k}, 1.6f * k,
                   mixRGB(pal[TRUNK], pal[ACTOR], 0.4f), clip);
   }
-  if (f.intensity > 0.03f) {
+  if (f.intensity > 1.f) {
+    blazeDraw(f, s, clip, pal);
+  } else if (f.intensity > 0.03f) {
     const float I = f.intensity;
     const float H = 32.f * I, bw = 10.f + 3.f * I;   // about a third of the hiker's height
     flamePool(s, f.pos, bw, H, f.clock, 0.f, pal[FIRE], clip);

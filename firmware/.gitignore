@@ -15,3 +15,6 @@ __pycache__/
 
 # The screensaver core, copied in from ../screensaver/core by tools/fw.sh before each panel build
 libraries/ss_core/src/
+
+# Mike's own trigger commands (they name his Pi)
+*.local.sh

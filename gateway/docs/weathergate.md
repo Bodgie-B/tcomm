@@ -19,7 +19,7 @@ downstairs one. Layout as in `firmware/tcomm/src/core/protocol.h`, little-endian
 | temp_tenths_f | i16 | outside temperature, tenths of a °F (`485` is 48.5 °F) |
 | humidity | u8 | percent, 0–100 |
 | forecast | u8 | the symbol code, below |
-| time | u32 | UTC seconds when the reading was taken, or 0 if unknown |
+| time | u32 | UTC seconds: since 2026-11-07 the Pi's internet-verified time when it sends (the panels set their clocks from it); 0 if the Pi hasn't synced |
 | phrase_len | u8 | 0–48 |
 | phrase | bytes | the forecast text, printable ASCII, no terminator |
 

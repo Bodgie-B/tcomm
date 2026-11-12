@@ -143,9 +143,12 @@ void weatherStep(World& w);
 // From worldTick, last: dirty marks for everything the weather draws.
 void weatherTrack(World& w, Renderer& r);
 // The weather's part of the palette inputs (app.cpp computeAppPalette):
-// overcast (max) and fog (added) into `t`, untouched in clear weather; the
-// return is the lightning's flash, in fixed steps (0 none).
+// overcast (max), fog (added) and the rain's gloom into `t`, untouched in
+// clear weather; the return is the lightning's flash, in fixed steps (0 none).
 float weatherTint(const World& w, WeatherTint& t);
+// The least cloud cover this weather needs, 0..1 (rain, a storm and snow fall
+// from a covered sky whatever the host's overcast says); 0 for the rest.
+float weatherCloudCover(const World& w);
 
 // Hooks for the rest of the scene.
 float weatherSwayMul(const World& w);   // grass sway amplitude, 1 in calm weather

@@ -56,7 +56,7 @@ bool screensaver_auto();
 void screensaver_set_idle(uint32_t seconds);
 uint32_t screensaver_idle();
 void screensaver_set_mood(float mood);     // 0 night .. 5 dusk (palette.h) in place of the clock's; < 0: the clock's again
-void screensaver_set_scene(int family);    // the next loop's: 0 its own pick, 1 evening, 2 morning, 3 midday, 4 lookout
+void screensaver_set_scene(int family);    // the next loop's: 0 its own pick, 1 evening, 2 morning, 3 midday, 4 lookout, 5 sunrise
 // The scene weather by hand (0 clear, 1 rain, 2 snow, 3 wind, 4 heat, 5 fog, 6 chill, 7 storm), with
 // the tint such a reading brings; -1 back to the outside reading. The loop's weather is planned at
 // its start, so start a new one (ss seed N) to see it.
@@ -64,8 +64,10 @@ void screensaver_set_weather(int code);
 // The night scene's brightness (palette.h WeatherTint::night_gain): 1.6 to begin with; 0 is the PC
 // preview's look (0.55), which on the panel's night backlight leaves only the stream readable.
 void screensaver_set_night_gain(float gain);
-// The Lookout (stage 10): 0 plays it in the window round the real sunset, once an evening (the
-// default); 1 on now, every loop; 2 off. Until restart.
+// The set pieces (stage 10, stage 15): 0 plays the Lookout in the window round the real sunset and the
+// sunrise overlook in the window round the real sunrise, each once a day, counted once its key moment
+// has played (the default); 1 the Lookout now, every loop; 2 both off; 3 the sunrise now, every loop.
+// Until restart. (Serial: ss lookout N.)
 void screensaver_set_lookout(int mode);
 // How fast a medium palette step (the Lookout's sunset) washes down the screen: bands a frame; 0, at
 // once, is the default (Mike's choice). Until restart.

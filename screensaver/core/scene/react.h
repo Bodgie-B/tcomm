@@ -23,9 +23,17 @@ namespace ss {
 constexpr float kReactSeconds = 3.4f;   // PROPOSED
 constexpr int kReactTicks = 85;         // kReactSeconds at SS_TICK_HZ, counted in whole ticks
 
-// He can react now: in the scene and in frame, not a Lookout loop, not faded out.
+// The wave to a passer-by (stage 14, Inputs::passer_by): the same hold on the story, shorter, with
+// no jump, no turn and no point; he lifts his head to the viewer and waves the near arm. Only with
+// his hands empty and no major's key moment (World::busy) or fire-and-ice hurry on.
+constexpr int kWaveTicks = 65;          // 2.6 s, PROPOSED
+
+// He can react now: in the scene and in frame, not a Lookout loop, not faded out; during fire and
+// ice only in a mild spell while he stands still with nothing in his hands (fireIceWaveOk).
 bool reactCanStart(const World& w);
-void reactStart(World& w);
+void reactStart(World& w, bool wave = false);
+// The passer-by's wave may start now: reactCanStart, hands empty, no major's key moment.
+bool reactWaveOk(const World& w);
 // One tick while active: sets his pose offsets and facing for the reaction;
 // after kReactTicks puts both back and ends it.
 void reactStep(World& w);

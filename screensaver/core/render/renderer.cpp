@@ -18,8 +18,23 @@ bool Renderer::init(const HostAlloc& alloc, Pixel* strip) {
   spread_next = false;
   spread_mask = 0;
   spread_pos = 0;
+  patch_n = 0;
   markAllDirty();
   return true;
+}
+
+void Renderer::repaintRows(int y0, int y1) {
+  if (y0 < 0) y0 = 0;
+  if (y1 > SS_HEIGHT) y1 = SS_HEIGHT;
+  if (y1 <= y0) return;
+  if (patch_n < 2) {
+    patch_y0[patch_n] = (int16_t)y0;
+    patch_y1[patch_n] = (int16_t)y1;
+    ++patch_n;
+    return;
+  }
+  if (y0 < patch_y0[1]) patch_y0[1] = (int16_t)y0;
+  if (y1 > patch_y1[1]) patch_y1[1] = (int16_t)y1;
 }
 
 void Renderer::shutdown(const HostAlloc& alloc) {
@@ -102,8 +117,20 @@ int Renderer::render(Surface& fb, const SceneDraw& scene) {
       if (scene.draw_static) scene.draw_static(scene.user, full, palette);
       markAllDirty();
       lap(prof.static_us);
+      patch_n = 0;   // the whole cache is new: nothing left to patch
     }
     cache_valid = true;
+  }
+
+  // Small repaints (repaintRows): just those rows of the cache, as the spread's bands are done.
+  if (patch_n) {
+    for (int k = 0; k < patch_n; ++k) {
+      const int y0 = patch_y0[k];
+      Surface band{cache + (size_t)y0 * SS_WIDTH, SS_WIDTH, patch_y1[k] - y0, SS_WIDTH, y0};
+      if (scene.draw_static) scene.draw_static(scene.user, band, palette);
+    }
+    patch_n = 0;
+    lap(prof.static_us);
   }
 
   // The spread: this frame's share of the bands still in the old colours, going on round the frame

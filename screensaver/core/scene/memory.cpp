@@ -14,7 +14,7 @@ void memoryBeginLoop(World& w, Rng& rng) {
   const uint32_t roll = rng.next();
   // The Lookout plays somewhere else: the camp's memory waits for the next
   // camp loop as it was (but the loop count, which worldBeginLoop moves).
-  if (w.plan.family == SF_LOOKOUT) return;
+  if (spineSetPiece(w.plan.family)) return;
   if (m.persona_age == 0 || m.persona_age >= 2) {   // the first camp loop (even after a Lookout), then every 2
     m.brave = (uint16_t)(roll & ((1u << CR_COUNT) - 1u));
     m.persona_age = 0;
@@ -32,7 +32,7 @@ void memoryBeginLoop(World& w, Rng& rng) {
 
 void memoryEndLoop(World& w) {
   Memory& m = w.memory;
-  if (w.plan.family == SF_LOOKOUT) return;
+  if (spineSetPiece(w.plan.family)) return;
   m.cairn_n = w.cairn.n;
   if (m.mouse_tent_runs >= 2) m.mouse_hole = true;
   if (m.boom_stuck != 0) --m.boom_stuck;   // stuck 2: this loop and the next; 1: gone after this one

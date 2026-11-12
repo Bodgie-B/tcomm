@@ -41,13 +41,21 @@ struct Memory;
 // the stage 4 to 6 spine (arrival .. close); morning wakes in fog and breaks
 // camp (spine_morning.cpp); midday comes back from a day hike, lunches,
 // wades, naps (spine_midday.cpp). The Lookout (lookout.cpp) is the sunset
-// set piece on its own landscape, played in the host's sunset window.
-enum SpineFamily : uint8_t { SF_EVENING = 0, SF_MORNING, SF_MIDDAY, SF_LOOKOUT, SF_COUNT };
+// set piece on its own landscape, played in the host's sunset window. The
+// sunrise (sunrise.cpp) is its morning twin: a rock ledge over a foggy valley,
+// played in the host's sunrise window.
+enum SpineFamily : uint8_t { SF_EVENING = 0, SF_MORNING, SF_MIDDAY, SF_LOOKOUT, SF_SUNRISE, SF_COUNT };
 const char* spineFamilyName(int family);
 // The family this loop plays: in.spine_force when set, else the Lookout in
-// its window, the evening at night, the morning at mood [0.5, 2.5), midday at
-// [2.5, 3.5), the evening otherwise.
+// its window, the sunrise in its (not on a rain, storm or snow morning), the
+// evening at night, the morning at mood [0.5, 2.5), midday at [2.5, 3.5), the
+// evening otherwise.
 uint8_t spineFamilyFor(const Inputs& in);
+// A set piece (the Lookout or the sunrise): its own landscape, no camp, no
+// fillers, majors, minors, dogs' camp life, mail bird, fire and ice or visitors.
+inline bool spineSetPiece(int family) { return family == SF_LOOKOUT || family == SF_SUNRISE; }
+// The sunrise's weather rule: skipped (the camp plays) on a rain, storm or snow reading.
+bool spineSunriseWeatherOk(const Inputs& in);
 
 enum SpineBeatId : uint8_t {
   SB_ARRIVAL = 0, SB_SETUP, SB_FIREWOOD, SB_FIRE, SB_DINNER, SB_FOODBAG, SB_BEAR, SB_CLOSE, SB_COUNT
@@ -110,6 +118,7 @@ struct LoopPlan {
   // sunset's palette steps and how many birds cross in it.
   uint8_t fsec[8];
   uint8_t fsteps, fbirds;
+  // The sunrise (sunrise.cpp) uses fsec, pause_s and fsteps the same way, in its own beat order.
 };
 
 // Variants a beat draws from at random, and a plan's pick. (Dinner also has

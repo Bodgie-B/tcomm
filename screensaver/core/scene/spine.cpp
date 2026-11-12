@@ -2606,8 +2606,13 @@ Beat spineFillerBeat(const LoopPlan& p, int f) {
 }
 
 const char* spineFamilyName(int family) {
-  static const char* const kNames[SF_COUNT] = {"evening", "morning", "midday", "lookout"};
+  static const char* const kNames[SF_COUNT] = {"evening", "morning", "midday", "lookout", "sunrise"};
   return family >= 0 && family < SF_COUNT ? kNames[family] : "?";
+}
+
+bool spineSunriseWeatherOk(const Inputs& in) {
+  // Scene weather codes (ss_app.h): 1 rain, 2 snow, 7 storm. A gray, dry morning still plays (muted).
+  return !(in.have_outside && (in.weather_code == 1 || in.weather_code == 2 || in.weather_code == 7));
 }
 
 uint8_t spineFamilyFor(const Inputs& in) {
@@ -2616,6 +2621,8 @@ uint8_t spineFamilyFor(const Inputs& in) {
     f = (uint8_t)(in.spine_force - 1);
   } else if (in.lookout_window) {
     f = SF_LOOKOUT;
+  } else if (in.sunrise_window && spineSunriseWeatherOk(in)) {
+    f = SF_SUNRISE;
   } else if (!in.night_mode) {
     const float m = in.mood - 6.f * floorf(in.mood / 6.f);   // wrapped into [0, 6)
     if (m >= 0.5f && m < 2.5f) f = SF_MORNING;
@@ -2798,6 +2805,9 @@ void spinePlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
   } else if (p.family == SF_LOOKOUT) {
     lookoutPlan(p, rng, in);
     return;   // memory is the camp's: the Lookout leaves it as it was (but the loop count)
+  } else if (p.family == SF_SUNRISE) {
+    sunrisePlan(p, rng, in);
+    return;   // the same for the sunrise
   } else {
     p.family = SF_EVENING;
     eveningPlan(p, rng, in, mem);
@@ -2813,6 +2823,7 @@ void spineBeginLoop(World& w, Rng& rng) {
   if (w.plan.family == SF_MORNING) morningLayout(w);
   if (w.plan.family == SF_MIDDAY) middayLayout(w);
   if (w.plan.family == SF_LOOKOUT) lookoutBeginLoop(w, rng);
+  if (w.plan.family == SF_SUNRISE) sunriseBeginLoop(w, rng);
 }
 
 void spineLayout(World& w) {
@@ -2930,6 +2941,7 @@ void spineBuildTimeline(Timeline& tl, const LoopPlan& p) {
   if (p.family == SF_MORNING) return morningBuildTimeline(tl, p);
   if (p.family == SF_MIDDAY) return middayBuildTimeline(tl, p);
   if (p.family == SF_LOOKOUT) return lookoutBuildTimeline(tl, p);
+  if (p.family == SF_SUNRISE) return sunriseBuildTimeline(tl, p);
   tl.add(kBuildBeat);
   for (int b = 0; b < SB_COUNT; ++b) {
     tl.add(Beat{kBeatNames[b], (float)beatSeconds(p, b), kBegin[b], kUpdate[b], kEnd[b]});
@@ -2953,6 +2965,7 @@ uint32_t spineLoopTicks(const LoopPlan& p) {
   if (p.family == SF_MORNING) return morningLoopTicks(p);
   if (p.family == SF_MIDDAY) return middayLoopTicks(p);
   if (p.family == SF_LOOKOUT) return lookoutLoopTicks(p);
+  if (p.family == SF_SUNRISE) return sunriseLoopTicks(p);
   // Every beat is whole seconds except the build, which is whole ticks.
   const uint32_t build = (uint32_t)ceilf(SS_BUILD_SECONDS * (float)SS_TICK_HZ - 1e-3f);
   const int rest = busySeconds(p) - (int)(SS_BUILD_SECONDS + 0.5f) + pauseSeconds(p);
@@ -2964,6 +2977,7 @@ int spineFormatPlan(const LoopPlan& p, char* buf, size_t n) {
   if (p.family == SF_MORNING) return morningFormatPlan(p, buf, n);
   if (p.family == SF_MIDDAY) return middayFormatPlan(p, buf, n);
   if (p.family == SF_LOOKOUT) return lookoutFormatPlan(p, buf, n);
+  if (p.family == SF_SUNRISE) return sunriseFormatPlan(p, buf, n);
   int k = snprintf(buf, n, "family=evening arrival=%d setup=%d firewood=%d fire=%d dinner=%d foodbag=%d bear=%d close=%d fillers=",
                    p.arrival, p.setup, p.firewood, p.fire, p.dinner, p.foodbag, p.bear, p.close);
   if (k < 0 || (size_t)k >= n) return k;

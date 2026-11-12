@@ -7,6 +7,11 @@
 #   bash tools/fw.sh radio [COM5]      the panel with its real ESP-NOW on and demo mode off, for
 #                                      testing against the C6 gateway (bash tools/fw.sh COM5 goes back)
 #   bash tools/fw.sh gateway [COM7]    the same for the ESP32-C6-GEEK gateway (../gateway/docs/gateway-c6.md)
+#   bash tools/fw.sh gateway-remote    the gateway build, sent to the Pi it lives on and written there
+#                                      (Mike, 2026-11-07: the gateway stays on the Pi): runs
+#                                      tools/gateway_flash.local.sh (your untracked file: scp + the
+#                                      Pi's flash command) and checks the version the gateway reports
+#                                      (docs/weathergate-remote-brief.md)
 #   bash tools/fw.sh listener [COM5]   the same for the gateway's test listener, onto the panel
 #   bash tools/fw.sh mac COM7          read a board's MAC and write nothing (a new panel's line in
 #                                      secrets.h); close any serial monitor on that port first
@@ -18,6 +23,11 @@
 #                                      Settings > Update over Wi-Fi > BOTH PANELS (or serial "update
 #                                      both") on a panel first; tools/find_panels.py finds the two
 #                                      updaters, and the build goes to downstairs, then upstairs
+#   bash tools/fw.sh ota-remote        ota-both with no touch on either panel (Mike, 2026-11-07): runs
+#                                      tools/remote_trigger.local.sh (your untracked file: the command
+#                                      that asks the Pi to send the gateway its UPDATE line), waits up
+#                                      to 90 s for both updaters to appear, then builds and uploads as
+#                                      ota-both does (docs/remote-update.md)
 #
 # Run it from Git Bash. Bitdefender's Advanced Threat Defense stopped the same compile started from
 # PowerShell (2026-10-25: powershell.exe running arduino-cli.exe) and quarantined the gateway's
@@ -50,7 +60,7 @@ fi
 
 WHAT=panel
 case "${1:-}" in
-  gateway | listener | radio | updater | ota | ota-both)
+  gateway | gateway-remote | listener | radio | updater | ota | ota-both | ota-remote)
     WHAT=$1
     shift
     ;;
@@ -69,7 +79,7 @@ case $WHAT in
     UP="$LOCALAPPDATA/tcomm/b/upload32.log"
     EXTRA=(--libraries libraries)
     ;;
-  radio | ota | ota-both)
+  radio | ota | ota-both | ota-remote)
     # The same sketch with the two switches in tcomm_config.h set from here, in its own build
     # folder so going back and forth doesn't rebuild everything. ota sends this same build.
     SKETCH=tcomm
@@ -79,7 +89,7 @@ case $WHAT in
     UP="$LOCALAPPDATA/tcomm/b/upload-$WHAT.log"
     EXTRA=(--libraries libraries --build-property "compiler.cpp.extra_flags=-DTCOMM_RADIO_ESPNOW=1 -DTCOMM_DEMO=0")
     ;;
-  gateway)
+  gateway | gateway-remote)
     # The C6-GEEK: 4 MB flash. CDCOnBoot puts Serial on the chip's USB Serial/JTAG port, which
     # the Pi talks to; DebugLevel none keeps the core's own log lines off it.
     SKETCH=../gateway/gateway-c6
@@ -128,12 +138,12 @@ ota_send() {  # ota_send HOST LOGFILE
 # The build cache only knows about the file it used last, so a secrets.h made after a build would
 # be missed and the old placeholder keys flashed. Their own files always recompile (a few seconds;
 # the Arduino core stays cached).
-if [ "$WHAT" = gateway ] || [ "$WHAT" = listener ] || [ "$WHAT" = updater ]; then rm -rf "$OUT/sketch"; fi
+if [ "$WHAT" = gateway ] || [ "$WHAT" = gateway-remote ] || [ "$WHAT" = listener ] || [ "$WHAT" = updater ]; then rm -rf "$OUT/sketch"; fi
 
 # The campsite screensaver's core (screensaver/core, plain C++17) builds into the panel firmware as
 # the ss_core library: refreshed into libraries/ss_core/src (not in git) before each panel build, so
 # there is one copy of it in git. On GitHub the screensaver sits beside firmware/.
-if [ "$WHAT" = panel ] || [ "$WHAT" = radio ] || [ "$WHAT" = ota ] || [ "$WHAT" = ota-both ]; then
+if [ "$WHAT" = panel ] || [ "$WHAT" = radio ] || [ "$WHAT" = ota ] || [ "$WHAT" = ota-both ] || [ "$WHAT" = ota-remote ]; then
   SS_CORE=screensaver/core
   [ -d "$SS_CORE" ] || SS_CORE=../screensaver/core
   [ -d "$SS_CORE" ] || { echo "screensaver/core not found: the panel firmware builds the screensaver in"; exit 1; }
@@ -142,14 +152,47 @@ if [ "$WHAT" = panel ] || [ "$WHAT" = radio ] || [ "$WHAT" = ota ] || [ "$WHAT" 
   python "$SYNC" "$SS_CORE" libraries/ss_core/src || exit 1   # -O2 on the screensaver only
 fi
 
-if [ "$WHAT" = ota-both ]; then
-  # Find both waiting updaters before compiling, so a missing one stops the run at once and the
-  # ten-minute wait isn't spent on the compile first (review, 2026-11-07).
+if [ "$WHAT" = ota-remote ]; then
+  # Mike, 2026-11-07: no touch on either panel. The trigger file is Mike's own (untracked, matched
+  # by *.local.sh in .gitignore): it holds the command that asks his Pi to write the UPDATE
+  # line to the gateway, and should print the gateway's answer. Nothing about the Pi lives in git.
+  TRIGGER=tools/remote_trigger.local.sh
+  if [ ! -f "$TRIGGER" ]; then
+    echo "NOT STARTED: $TRIGGER doesn't exist yet. Make it (it stays out of git) with the one command"
+    echo "that asks your Pi to send the gateway its UPDATE line and print the gateway's answer, for"
+    echo "example a line like:   ssh YOUR-PI 'your-update-command'"
+    echo "Then run this again. How it works, and what to ask the Pi project for: docs/remote-update.md."
+    exit 1
+  fi
+fi
+if [ "$WHAT" = gateway-remote ]; then
+  # Mike, 2026-11-07: the gateway stays plugged into the Pi; the laptop reaches the Pi with ssh and
+  # scp only. The flash file is Mike's own (untracked, matched by *.local.sh): given a folder with
+  # the image and its .sha256, it copies them to the Pi and runs the Pi's flash command, which
+  # checks the image and the chip's MAC, writes app0 only and prints the gateway's hello reply last.
+  FLASH=tools/gateway_flash.local.sh
+  if [ ! -f "$FLASH" ]; then
+    echo "NOT STARTED: $FLASH doesn't exist yet. The WeatherGate session gives you its contents"
+    echo "(docs/weathergate-remote-brief.md, \"What runs on the laptop\"). It stays out of git."
+    exit 1
+  fi
+  if [ ! -f tcomm/src/config/secrets.h ] || grep -q '"0123456789abcdef"' tcomm/src/config/secrets.h; then
+    echo "NOT SENT: secrets.h is missing or still has the placeholder key, so the gateway couldn't talk"
+    echo "to the panels (../gateway/docs/gateway-c6.md, The secrets file)."
+    exit 1
+  fi
+fi
+if [ "$WHAT" = ota-both ] || [ "$WHAT" = ota-remote ]; then
+  # Checked before anything starts the updaters or compiles (review, 2026-11-07).
   ota_pass=$(sed -n 's/^#define TCOMM_OTA_PASS *"\(.*\)".*/\1/p' tcomm/src/config/secrets.h 2>/dev/null)
   if [ -z "$ota_pass" ]; then
     echo "NOT UPLOADED: secrets.h needs TCOMM_OTA_PASS filled in (docs/wifi-updates.md)."
     exit 1
   fi
+fi
+if [ "$WHAT" = ota-both ]; then
+  # Find both waiting updaters before compiling, so a missing one stops the run at once and the
+  # ten-minute wait isn't spent on the compile first (review, 2026-11-07).
   found=$(python -I tools/find_panels.py) || { echo "NOT UPLOADED: tools/find_panels.py failed"; exit 1; }
   ip_down=$(echo "$found" | sed -n 's/^DOWNSTAIRS \([0-9.]*\)$/\1/p')
   ip_up=$(echo "$found" | sed -n 's/^UPSTAIRS \([0-9.]*\)$/\1/p')
@@ -171,7 +214,55 @@ if ! "$ACLI" compile --fqbn "$FQBN" "${EXTRA[@]}" --warnings default --build-pat
 fi
 grep "Sketch uses\|Global variables" "$LOG"
 grep -n "warning" "$LOG" | grep -v "libraries[/\\]lvgl" | head -20
-if [ "$WHAT" = ota-both ]; then
+if [ "$WHAT" = gateway-remote ]; then
+  # The image holds the radio keys: it goes to the Pi from a folder of its own that is deleted
+  # afterwards, whatever happens. The Pi keeps its copy in a folder only the bridge's user reads.
+  want=$(sed -n 's/^constexpr const char \*kFirmware = "\(.*\)";.*/\1/p' ../gateway/gateway-c6/src/gw/gateway.h)
+  [ -n "$want" ] || { echo "NOT SENT: couldn't read kFirmware from gateway.h"; exit 1; }
+  STAGE="$LOCALAPPDATA/tcomm/b/gateway-send"
+  rm -rf "$STAGE"
+  mkdir -p "$STAGE"
+  cp "$OUT/gateway-c6.ino.bin" "$STAGE/" || { rm -rf "$STAGE"; echo "NOT SENT: no gateway image"; exit 1; }
+  (cd "$STAGE" && sha256sum gateway-c6.ino.bin > gateway-c6.ino.bin.sha256)
+  echo "sending $want to the Pi ($FLASH):"
+  out=$(timeout 300 bash "$FLASH" "$STAGE" 2>&1)
+  rc=$?
+  rm -rf "$STAGE"
+  echo "$out" | tail -n 25
+  last=$(echo "$out" | grep '^{' | tail -1)
+  if [ "$rc" -eq 0 ] && echo "$last" | grep -qF "\"fw\":\"$want\""; then
+    echo "gateway OK: it reports $want"
+    exit 0
+  fi
+  echo "GATEWAY NOT CONFIRMED (exit $rc): the lines above say which step stopped. If the write"
+  echo "happened, the Pi's rollback command puts the old firmware back."
+  exit 1
+fi
+if [ "$WHAT" = ota-remote ]; then
+  # Compiled first, so the panels wait only for the upload. The trigger gets 30 s (a stuck ssh
+  # mustn't hang the run); then the panels start their updaters a few seconds after the gateway's
+  # line (the UPDATE frame, then ACK + 700 ms, then the Wi-Fi join): look every 5 s for up to 90 s.
+  echo "asking the gateway to start both updaters ($TRIGGER):"
+  timeout 30 bash "$TRIGGER" || { echo "NOT UPLOADED: $TRIGGER failed or took over 30 s, so no update was started"; exit 1; }
+  found=""
+  ip_down=""
+  ip_up=""
+  SECONDS=0
+  while :; do
+    found=$(python -I tools/find_panels.py) || { echo "NOT UPLOADED: tools/find_panels.py failed"; exit 1; }
+    ip_down=$(echo "$found" | sed -n 's/^DOWNSTAIRS \([0-9.]*\)$/\1/p')
+    ip_up=$(echo "$found" | sed -n 's/^UPSTAIRS \([0-9.]*\)$/\1/p')
+    [ -n "$ip_down" ] && [ -n "$ip_up" ] && break
+    if [ "$SECONDS" -ge 90 ]; then
+      echo "NOT UPLOADED: both updaters didn't appear within 90 s. Did the gateway's answer say acked?"
+      echo "$found"
+      exit 1
+    fi
+    sleep 5
+  done
+  echo "both updaters found after $SECONDS s"
+fi
+if [ "$WHAT" = ota-both ] || [ "$WHAT" = ota-remote ]; then
   # Mike, 2026-11-07: both panels from one command. Compiled once above; the addresses came from
   # tools/find_panels.py before the compile (it prints no secrets).
   rc=0

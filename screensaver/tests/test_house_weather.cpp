@@ -6,7 +6,10 @@
 //     95 percent humidity and 60 F, in that order of precedence;
 //   - wet forecasts (rain, heavy rain, storm, snow) are never overridden;
 //   - a sweep: wind never comes from data, every tint is 0..1, have_outside is
-//     exactly "valid and a known forecast";
+//     exactly "valid" (a reading with no known forecast is a clear sky, never
+//     the core's random weather);
+//   - the forecast's words (its Zambretti letter) decide before the icon code:
+//     Mike's four groups, the fine texts and unknown texts falling to the code;
 //   - every code it produces is one the scene maps to the kind it means
 //     (scene/weather.cpp kCodeKinds).
 // Plain executable; returns non-zero on failure.
@@ -45,16 +48,19 @@ static const float kT = 70.0f;
 static const float kH = 50.0f;
 
 static const Case kCases[] = {
-    // No reading, no forecast, or a forecast we do not know: the core picks its own weather.
+    // No reading: the core picks its own weather.
     {"not valid, rain", false, OFC_RAIN, kT, kH, false, SWC_CLEAR, 0.0f, 0.0f},
     {"not valid, storm, cold and damp", false, OFC_STORM, 20.0f, 99.0f, false, SWC_CLEAR, 0.0f, 0.0f},
-    {"forecast 0 (none)", true, 0, kT, kH, false, SWC_CLEAR, 0.0f, 0.0f},
-    {"forecast 0, hot", true, 0, 100.0f, kH, false, SWC_CLEAR, 0.0f, 0.0f},
-    {"unknown 6 (the boards' night)", true, 6, kT, kH, false, SWC_CLEAR, 0.0f, 0.0f},
-    {"unknown 42", true, 42, kT, kH, false, SWC_CLEAR, 0.0f, 0.0f},
-    {"unknown 10", true, 10, kT, kH, false, SWC_CLEAR, 0.0f, 0.0f},
-    {"unknown -1", true, -1, kT, kH, false, SWC_CLEAR, 0.0f, 0.0f},
-    {"unknown 6, cold", true, 6, 20.0f, kH, false, SWC_CLEAR, 0.0f, 0.0f},
+    // A reading with no forecast, or one we do not know: a clear sky with the
+    // temperature rules, never random weather (it could snow in July).
+    {"forecast 0 (none)", true, 0, kT, kH, true, SWC_CLEAR, 0.0f, 0.0f},
+    {"forecast 0, hot", true, 0, 100.0f, kH, true, SWC_HEAT, 0.0f, 0.0f},
+    {"forecast 0, cold and damp", true, 0, 35.0f, 97.0f, true, SWC_FOG, 0.0f, 0.6f},
+    {"unknown 6 (the boards' night)", true, 6, kT, kH, true, SWC_CLEAR, 0.0f, 0.0f},
+    {"unknown 42", true, 42, kT, kH, true, SWC_CLEAR, 0.0f, 0.0f},
+    {"unknown 10", true, 10, kT, kH, true, SWC_CLEAR, 0.0f, 0.0f},
+    {"unknown -1", true, -1, kT, kH, true, SWC_CLEAR, 0.0f, 0.0f},
+    {"unknown 6, cold", true, 6, 20.0f, kH, true, SWC_CHILL, 0.0f, 0.0f},
 
     // Every forecast code at mild weather.
     {"1 sunny", true, OFC_SUNNY, kT, kH, true, SWC_CLEAR, 0.0f, 0.0f},
@@ -160,9 +166,98 @@ static void testFlags() {
   CHECK(sceneWeatherFromOutside(r).code == SWC_RAIN, "the heat warning overrode rain");
 }
 
+// The forecast's words, as the Zambretti letter (Mike's groups, 2026-11-11).
+static void testPhrases() {
+  // Each letter's group: t storm, r rain, g gray and dry, s some cloud, f fine (the icon decides).
+  const char* groups = "ffssggrrrffssgggrrtffffsfs";
+  // The icon WeatherGate sends with each letter (firmware core/zambretti.cpp), as OUTSIDE codes.
+  const int icons[26] = {1, 1, 2, 2, 4, 4, 9, 9, 9, 1, 1, 2, 2, 3, 4, 4, 9, 9, 7, 1, 1, 8, 8, 2, 8, 3};
+  int n = 0;
+  for (int i = 0; i < 26; ++i) {
+    OutsideReading r = {};
+    r.valid = true;
+    r.phrase = (char)('A' + i);
+    r.forecast = icons[i];
+    r.temp_f = kT;
+    r.humidity = kH;
+    const SceneWeather w = sceneWeatherFromOutside(r);
+    int code = SWC_CLEAR;
+    float oc = 0.0f;
+    switch (groups[i]) {
+      case 't': code = SWC_STORM; oc = 1.0f; break;
+      case 'r': code = SWC_RAIN; oc = 0.9f; break;
+      case 'g': oc = 0.7f; break;
+      case 's': oc = 0.3f; break;
+      default: oc = icons[i] == 8 ? 0.2f : 0.0f; break;   // fine: the sun's row, or clearing's
+    }
+    CHECK(w.have_outside && w.code == code && near(w.overcast, oc) && near(w.fog, 0.0f),
+          "letter %c: code %d overcast %.2f, want %d %.2f", 'A' + i, w.code, (double)w.overcast, code, (double)oc);
+    // The words win over any icon: a rain icon with dry words stays dry, a sun icon with rain words rains.
+    if (groups[i] != 'f') {
+      for (int f = 0; f <= 9; ++f) {
+        r.forecast = f;
+        const SceneWeather v = sceneWeatherFromOutside(r);
+        CHECK(v.code == code && near(v.overcast, oc), "letter %c with icon %d: code %d", 'A' + i, f, v.code);
+      }
+    }
+    // The dry groups take the temperature rules; the wet ones never do.
+    r.forecast = icons[i];
+    r.temp_f = 95.0f;
+    const int hot = sceneWeatherFromOutside(r).code;
+    r.temp_f = 30.0f;
+    const int cold = sceneWeatherFromOutside(r).code;
+    r.temp_f = 50.0f;
+    r.humidity = 98.0f;
+    const SceneWeather damp = sceneWeatherFromOutside(r);
+    const bool wet = groups[i] == 't' || groups[i] == 'r';
+    CHECK(hot == (wet ? code : SWC_HEAT) && cold == (wet ? code : SWC_CHILL) && damp.code == (wet ? code : SWC_FOG),
+          "letter %c: hot %d cold %d damp %d", 'A' + i, hot, cold, damp.code);
+    CHECK(near(damp.overcast, oc), "letter %c: the fog changed the overcast", 'A' + i);
+    ++n;
+  }
+  // The cases the change was for: "rain later" texts with a rain icon no longer rain.
+  {
+    OutsideReading r = {};
+    r.valid = true;
+    r.temp_f = kT;
+    r.humidity = kH;
+    r.forecast = OFC_RAIN;
+    r.phrase = 'F';   // "Unsettled, Rain Later"
+    CHECK(sceneWeatherFromOutside(r).code == SWC_CLEAR, "Unsettled, Rain Later rained");
+    r.phrase = 'O';   // "Changeable, Some Rain"
+    CHECK(sceneWeatherFromOutside(r).code == SWC_CLEAR, "Changeable, Some Rain rained");
+    r.phrase = 0;     // words we do not know: the icon, as before
+    CHECK(sceneWeatherFromOutside(r).code == SWC_RAIN && near(sceneWeatherFromOutside(r).overcast, 0.7f),
+          "unknown words with a rain icon didn't rain");
+    // A snow wording ("Snow at Times, Worse Later") is not one of the 26: the snow icon's rule.
+    r.forecast = OFC_SNOW;
+    r.temp_f = 30.0f;
+    CHECK(sceneWeatherFromOutside(r).code == SWC_SNOW, "snow icon, cold: no snow");
+    r.temp_f = 45.0f;
+    CHECK(sceneWeatherFromOutside(r).code == SWC_RAIN, "snow icon, warm: no rain");
+    // "No Pressure Data": no words, no icon, a July afternoon. Clear and valid, so never random snow.
+    r.forecast = 0;
+    r.temp_f = 82.0f;
+    const SceneWeather w = sceneWeatherFromOutside(r);
+    CHECK(w.have_outside && w.code == SWC_CLEAR && near(w.overcast, 0.0f), "no forecast: not a clear sky");
+    // Bytes outside A to Z are no words at all.
+    r.forecast = OFC_STORM;
+    const int bytes[] = {'a', 's', '@', '[', 1, 127, -1};
+    for (int c : bytes) {
+      r.phrase = (char)c;
+      CHECK(sceneWeatherFromOutside(r).code == SWC_STORM, "phrase byte %d was read as words", c);
+    }
+    // No reading at all: still the core's own pick, whatever the words.
+    r.valid = false;
+    r.phrase = 'S';
+    CHECK(!sceneWeatherFromOutside(r).have_outside, "an old reading's words were used");
+  }
+  printf("house weather: %d letters\n", n);
+}
+
 // Over every forecast code from -2 to 12, -20 to 120 F and 0 to 100 percent:
-// no wind, tints in range, have_outside exactly "valid and known", and the
-// scene reads each code as the kind it names.
+// no wind, tints in range, have_outside exactly "valid", and the scene reads
+// each code as the kind it names.
 static void testSweep() {
   int n = 0, wind = 0, range = 0, flag = 0, kind = 0;
   for (int valid = 0; valid < 2; ++valid)
@@ -176,10 +271,9 @@ static void testSweep() {
           r.humidity = (float)h * 5.0f;
           const SceneWeather w = sceneWeatherFromOutside(r);
           ++n;
-          const bool known = f == 1 || f == 2 || f == 3 || f == 4 || f == 5 || f == 7 || f == 8 || f == 9;
           if (w.code == SWC_WIND) ++wind;
           if (!(w.overcast >= 0.0f && w.overcast <= 1.0f && w.fog >= 0.0f && w.fog <= 1.0f)) ++range;
-          if (w.have_outside != (valid && known)) ++flag;
+          if (w.have_outside != (valid != 0)) ++flag;
           if (!w.have_outside && (w.code != SWC_CLEAR || w.overcast != 0.0f || w.fog != 0.0f)) ++flag;
           static const uint8_t kWant[8] = {WX_CLEAR, WX_RAIN, WX_SNOW, WX_WIND, WX_HEAT, WX_FOG, WX_CHILL, WX_STORM};
           if (w.code < 0 || w.code > 7 || weatherKindForCode(w.code) != kWant[w.code]) ++kind;
@@ -194,6 +288,7 @@ static void testSweep() {
 int main() {
   testTable();
   testFlags();
+  testPhrases();
   testSweep();
   if (g_fail) {
     printf("test_house_weather: %d FAILED\n", g_fail);

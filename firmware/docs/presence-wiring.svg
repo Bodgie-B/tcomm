@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1050 620" font-family="Segoe UI, Arial, sans-serif" font-size="14">
+  <title>PIR sensor (HC-SR501 type) wired to the upstairs panel's screw terminal through one transistor</title>
+  <rect width="1050" height="620" fill="#ffffff"/>
+  <text x="30" y="36" font-size="20" font-weight="700" fill="#1a1a1a">PIR sensor (HC-SR501 type) to the upstairs panel</text>
+  <text x="30" y="58" fill="#555">Panel seen from the back, green terminal on the right, VIN at the bottom. Power the panel off while wiring.</text>
+
+  <!-- wires -->
+  <g fill="none" stroke-width="5" stroke-linejoin="round" stroke-linecap="round">
+    <!-- blue: collector to DI0 -->
+    <path d="M540,200 V215 H660 V112 H780" stroke="#1f5fd0"/>
+    <!-- orange: OUT to base, through the resistor -->
+    <path d="M150,330 V300 H300 M370,300 H520 V200" stroke="#e8820c"/>
+    <!-- black: emitter + sensor GND to GND -->
+    <path d="M500,200 V240 H120 V330 M120,290 H22 V585 H740 V308 H780" stroke="#1a1a1a"/>
+    <!-- red: VCC to 5V -->
+    <path d="M180,330 V318 H600 V252 H780" stroke="#d42020"/>
+  </g>
+  <circle cx="120" cy="290" r="6" fill="#1a1a1a"/>
+
+  <!-- resistor -->
+  <rect x="300" y="289" width="70" height="22" rx="4" fill="#f3e3b5" stroke="#8a6d1c" stroke-width="2"/>
+  <text x="335" y="305" text-anchor="middle" font-size="13" fill="#3a2e08">10 kΩ</text>
+  <text x="335" y="282" text-anchor="middle" font-size="12" fill="#555">resistor</text>
+
+  <!-- transistor -->
+  <path d="M478,170 V132 Q478,112 498,112 H542 Q562,112 562,132 V170 Z" fill="#2b2b2b" stroke="#000" stroke-width="2"/>
+  <g stroke="#9a9a9a" stroke-width="5" stroke-linecap="round">
+    <line x1="500" y1="170" x2="500" y2="198"/><line x1="520" y1="170" x2="520" y2="198"/><line x1="540" y1="170" x2="540" y2="198"/>
+  </g>
+  <text x="520" y="136" text-anchor="middle" font-size="12" font-weight="700" fill="#fff">2N3904</text>
+  <g font-size="12" font-weight="700" fill="#fff" text-anchor="middle">
+    <text x="500" y="162">E</text><text x="520" y="162">B</text><text x="540" y="162">C</text>
+  </g>
+  <text x="520" y="100" text-anchor="middle" font-size="12" fill="#555">NPN transistor, flat side facing you, legs down</text>
+
+  <!-- sensor board -->
+  <rect x="40" y="350" width="220" height="150" rx="6" fill="#2e7d4f" stroke="#1d5133" stroke-width="2"/>
+  <g fill="#222"><rect x="112" y="330" width="16" height="24"/><rect x="142" y="330" width="16" height="24"/><rect x="172" y="330" width="16" height="24"/></g>
+  <g font-size="12" font-weight="700" text-anchor="middle" fill="#fff">
+    <text x="120" y="372">GND</text><text x="150" y="372">OUT</text><text x="182" y="372">VCC</text>
+  </g>
+  <rect x="48" y="440" width="14" height="40" fill="#f2c300" stroke="#8a6d1c"/>
+  <rect x="120" y="455" width="34" height="30" rx="4" fill="#e8820c" stroke="#8a4a06"/>
+  <rect x="180" y="455" width="34" height="30" rx="4" fill="#e8820c" stroke="#8a4a06"/>
+  <text x="150" y="420" text-anchor="middle" font-size="13" fill="#d8efe0">PIR board, parts side up</text>
+  <g font-size="12" fill="#333">
+    <text x="40" y="520">Jumper on H</text>
+    <text x="137" y="520" text-anchor="middle">Distance:</text><text x="137" y="536" text-anchor="middle">middle</text>
+    <text x="205" y="520" text-anchor="middle">Time:</text><text x="205" y="536" text-anchor="middle">shortest</text>
+  </g>
+
+  <!-- wire labels -->
+  <g font-size="13" font-weight="700">
+    <text x="610" y="206" fill="#1f5fd0">to DI0</text>
+    <text x="610" y="244" fill="#d42020">5 V</text>
+    <text x="300" y="578" fill="#1a1a1a">GND (sensor GND and the transistor's E leg together)</text>
+  </g>
+
+  <!-- terminal strip, 16 at the top to 1 at the bottom -->
+  <rect x="780" y="70" width="64" height="448" rx="4" fill="#3c9a57" stroke="#1d5133" stroke-width="2"/>
+  <g fill="#d9d9d9" stroke="#555">
+    <circle cx="812" cy="84" r="8"/><circle cx="812" cy="112" r="8"/><circle cx="812" cy="140" r="8"/><circle cx="812" cy="168" r="8"/>
+    <circle cx="812" cy="196" r="8"/><circle cx="812" cy="224" r="8"/><circle cx="812" cy="252" r="8"/><circle cx="812" cy="280" r="8"/>
+    <circle cx="812" cy="308" r="8"/><circle cx="812" cy="336" r="8"/><circle cx="812" cy="364" r="8"/><circle cx="812" cy="392" r="8"/>
+    <circle cx="812" cy="420" r="8"/><circle cx="812" cy="448" r="8"/><circle cx="812" cy="476" r="8"/><circle cx="812" cy="504" r="8"/>
+  </g>
+  <g font-size="13" fill="#777">
+    <text x="854" y="89">16 DI1</text>
+    <text x="854" y="145">14 GND</text>
+    <text x="854" y="173">13 DI COM (leave empty)</text>
+    <text x="854" y="201">12 DO1</text>
+    <text x="854" y="229">11 DO0</text>
+    <text x="854" y="285">9 5V</text>
+    <text x="854" y="341">7 GND</text>
+    <text x="854" y="369">6 SCL</text>
+    <text x="854" y="397">5 SDA</text>
+    <text x="854" y="425">4 GND</text>
+    <text x="854" y="453">3 VOUT</text>
+    <text x="854" y="481">2 GND</text>
+    <text x="854" y="509">1 VIN</text>
+  </g>
+  <g font-size="14" font-weight="700">
+    <text x="854" y="117" fill="#1f5fd0">15 DI0</text>
+    <text x="854" y="257" fill="#d42020">10 5V</text>
+    <text x="854" y="313" fill="#1a1a1a">8 GND</text>
+  </g>
+
+  <text x="30" y="610" font-size="13" fill="#333">On the panel afterwards: Settings, PRESENCE SENSOR, Fitted YES, Active level LOW.</text>
+</svg>

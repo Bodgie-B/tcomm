@@ -58,6 +58,7 @@ uint16_t *g_fb = nullptr;
 char g_host[24] = "tcomm-panel";
 const esp_partition_t *g_panel_slot = nullptr;  // app0, the panel firmware
 bool g_receiving = false, g_stay = false;
+bool g_waiting = false;  // the server is up and the ten minutes are running
 uint32_t g_wait_from = 0, g_last_data = 0;
 WebServer g_web(80);
 HTTPUpdateServer g_update;  // writes into app0 and, once it's all there, restarts into it
@@ -182,6 +183,7 @@ void setup() {
   line(1, "JOINING THE WI-FI");
   WiFi.mode(WIFI_STA);
   WiFi.setHostname(g_host);
+  WiFi.setAutoReconnect(true);  // after a drop, rejoin without help
   WiFi.begin(TCOMM_WIFI_SSID, TCOMM_WIFI_PASS);
   for (uint32_t t0 = millis(); WiFi.status() != WL_CONNECTED && millis() - t0 < kJoinMs;) delay(250);
   if (WiFi.status() != WL_CONNECTED) {
@@ -217,6 +219,7 @@ void setup() {
   g_update.setup(&g_web, "/update", "tcomm", TCOMM_OTA_PASS);
   g_web.begin();
   g_wait_from = millis();
+  g_waiting = true;
   line(2, "READY FOR THE UPLOAD");
 }
 
@@ -227,7 +230,18 @@ void loop() {
     g_wait_from = millis();  // a fresh 10 minutes to try again
     line(2, "UPLOAD FAILED. TRY AGAIN", kRed);
   }
-  if (!g_receiving && !g_stay && WiFi.status() == WL_CONNECTED) {
+  // Wi-Fi dropped after the join (or came back): say so, and let the stack reconnect by itself.
+  static bool was_up = true;
+  bool up = WiFi.status() == WL_CONNECTED;
+  if (g_waiting && !g_receiving && up != was_up) {
+    was_up = up;
+    if (up) line(2, "READY FOR THE UPLOAD");
+    else line(2, "WI-FI LOST. RECONNECTING", kRed);
+  }
+  // The ten minutes run on the clock, Wi-Fi or not: a panel left on this screen is off the house
+  // intercom. Never in the middle of an upload, though: a restart there would leave app0 half written.
+  bool writing = g_receiving || Update.isRunning();
+  if (g_waiting && !writing && !g_stay) {
     uint32_t waited = millis() - g_wait_from;
     if (waited >= kWaitMs) {
       back_to_panel("NO UPLOAD. BACK TO THE PANEL");

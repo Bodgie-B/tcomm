@@ -62,6 +62,20 @@ const char *zambretti_text(char letter) {
   return kLetters[letter - 'A'].text;
 }
 
+char zambretti_letter(const char *text) {
+  if (!text || !*text) return 0;
+  auto lower = [](char c) { return c >= 'A' && c <= 'Z' ? (char)(c + 32) : c; };
+  for (int i = 0; i < 26; ++i) {
+    const char *a = kLetters[i].text, *b = text;
+    while (*a && lower(*a) == lower(*b)) {
+      ++a;
+      ++b;
+    }
+    if (!*a && !*b) return (char)('A' + i);
+  }
+  return 0;
+}
+
 Forecast forecast_from_key(const char *key) {
   if (!key) return Forecast::Unknown;
   for (const auto &k : kKeys)

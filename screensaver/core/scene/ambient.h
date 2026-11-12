@@ -86,5 +86,12 @@ void ambientDrawGlints(const World& w, Surface& s, const Rect& clip, const Palet
 void ambientDrawBird(const World& w, Surface& s, const Rect& clip, const Palette& pal);
 void ambientDrawSmoke(const World& w, Surface& s, const Rect& clip, const Palette& pal);
 void fireDraw(const FirePit& f, Surface& s, const Rect& clip, const Palette& pal);
+// The big blaze's soft glow (intensity over 1 only), sorted as its own actor behind the people near
+// the fire (world.cpp). Inside fireBounds.
+void fireGlowDraw(const FirePit& f, Surface& s, const Rect& clip, const Palette& pal);
+// A small fire on the ground at `base`, size k 0..1.35 (fire and ice, fireice.h): the campfire's
+// flames with no stones; `clock` in seconds keeps each one flickering on its own.
+Rect smallFireBounds(Vec2 base, float k);
+void smallFireDraw(Vec2 base, float k, float clock, Surface& s, const Rect& clip, const Palette& pal);
 
 }  // namespace ss

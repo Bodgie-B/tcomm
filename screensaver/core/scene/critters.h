@@ -53,7 +53,24 @@ enum CritterAction : uint8_t {
 // Items a critter can hold (small ACTOR shapes at the mouth or paws). The dog's:
 // CC_STICK a fetch stick held crosswise in the mouth; CC_BRANCH a branch about
 // three times the dog's length, held by one end and dragged along the ground.
-enum CritterCarry : uint8_t { CC_NONE, CC_NUT, CC_CRUMB, CC_SHOE, CC_BAR, CC_STICK, CC_BRANCH, CC_COUNT };
+// CC_LETTER: the mail bird's letter (mailbird.h), a small pale envelope held by one corner.
+enum CritterCarry : uint8_t { CC_NONE, CC_NUT, CC_CRUMB, CC_SHOE, CC_BAR, CC_STICK, CC_BRANCH, CC_LETTER, CC_COUNT };
+
+// Which dog a CR_DOG is (Critter::tone). The camp dog of the fetch major when
+// no house dog is out, in its warm brown (and a darker brown for a second one);
+// or the house's own two dogs (Mike, stage 13), each with its own build:
+//   DT_LUCY    a 65 lb black and white pit/boxer mix: big, deep chest, broad
+//              head with a short blunt muzzle, folded rose ears, white chest,
+//              blaze and paws, a strong straight tail, a heavy steady trot
+//   DT_COPPER  a 15 lb golden copper spaniel: small, domed head, long hanging
+//              ears in a darker auburn, a feathered plume of a tail and a
+//              feathered belly, a quick light trot
+// They are drawn at their own scales (kLucyScale, kCopperScale): set
+// Critter::scale to dogToneScale(tone) when spawning one.
+enum DogTone : uint8_t { DT_CAMP = 0, DT_CAMP2 = 1, DT_LUCY = 2, DT_COPPER = 3, DT_COUNT };
+constexpr float kLucyScale = 1.3f;      // about 48 px long and 36 px tall to the ear tips: half the hiker
+constexpr float kCopperScale = 0.62f;   // about 23 px long and 16 px tall: well under half of Lucy
+inline float dogToneScale(uint8_t tone) { return tone == DT_LUCY ? kLucyScale : (tone == DT_COPPER ? kCopperScale : 1.f); }
 
 // The blended body state. Lengths in px at scale 1, angles in radians.
 // fore[]/hind[] are the near (0) and far (1) limbs, absolute from straight down,
@@ -81,7 +98,7 @@ struct Critter {
   float speed_dial;    // 0..1 per loop: timid slow mover .. quick; scales move speed and gait rate
   float jitter_dial;   // 0..1 per loop: calm .. fidgety; scales idle fidget size and rate
   uint8_t carry;       // CritterCarry
-  uint8_t tone;        // dog: 0 the camp dog's warm brown, 1 a darker brown (the second dog); others: unused
+  uint8_t tone;        // dog: DogTone (the camp dog's browns, or Lucy or Copper); others: unused
   // Offsets the caller lays over the drawn pose (not the blend, so a new action
   // never starts from them): radians added to the near fore limb (a bear's paw
   // reaching from the trunk) and to the head (+ up). Ease them back to 0.

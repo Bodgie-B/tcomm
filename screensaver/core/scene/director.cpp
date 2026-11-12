@@ -77,9 +77,17 @@ float directorDryY(const World& w, Vec2 from, float to_x) {
 }
 
 int directorSpawn(World& w, CritterKind k, Vec2 feet, int facing) {
-  for (int i = 0; i < CRITTER_MAX; ++i) {
+  for (int i = 0; i < CRITTER_STORY; ++i) {
+    if (w.crit[i].in_use) continue;
+    directorSpawnAt(w, i, k, feet, facing);
+    return i;
+  }
+  return -1;
+}
+
+void directorSpawnAt(World& w, int i, CritterKind k, Vec2 feet, int facing) {
+  {
     CritterSlot& s = w.crit[i];
-    if (s.in_use) continue;
     Critter& c = w.critters[i];
     critterInit(c, k, feet, facing);
     c.speed_dial = s.speed_dial;
@@ -96,9 +104,7 @@ int directorSpawn(World& w, CritterKind k, Vec2 feet, int facing) {
     s.path_y0 = s.path_y1 = feet.y;
     s.sort_y = 0;
     w.critter_rect[i] = Rect{0, 0, 0, 0};
-    return i;
   }
-  return -1;
 }
 
 void directorRelease(World& w, int slot) {
@@ -209,7 +215,7 @@ bool directorOwns(const World& w, int slot, uint8_t tag) {
 
 int directorCount(const World& w) {
   int n = 0;
-  for (const CritterSlot& s : w.crit) n += s.in_use ? 1 : 0;
+  for (const CritterSlot& s : w.crit) n += s.in_use && s.tag != CT_HOUSEDOG && s.tag != CT_MAIL ? 1 : 0;
   return n;
 }
 

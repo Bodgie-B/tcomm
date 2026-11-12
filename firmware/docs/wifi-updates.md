@@ -104,20 +104,22 @@ only in `secrets.h`, which never goes to GitHub.
 
 ## The clock after a power cut
 
-The panels have no coin cell, so a power cut stops the clock. A panel that starts without a clock,
-or with one less sure than internet time (copied from the other panel, taken from the Pi's weather
-messages, or set by hand), joins the home Wi-Fi half a minute after start-up, asks pool.ntp.org for
-the time, and goes back to its ESP-NOW channel. That takes a few seconds. While it's joined, the
-other panel and the gateway can't reach it unless the router is on channel 1 too; their messages are
-retried. If it can't get the time, it tries again after 2, 4, 8 minutes and so on, at most hourly.
-Once the internet has set the clock it doesn't ask again until the next start-up. The other panel's
-clock and the Pi's weather time stay as fallbacks (the Pi's ran 10 minutes slow on 2026-10-31).
+The panels have no coin cell, so a power cut stops the clock. Since 2026-11-07 (Mike) the clock
+comes from the WeatherGate: the Pi checks its own time against the internet, and the gateway sends
+that time with every weather reading (the OUTSIDE message's time field; upstairs passes it on to
+downstairs). A panel takes it as internet quality (kClockNetwork) whenever its clock isn't set or is
+more than 2 seconds off in either direction, which also puts it ahead of a clock set by hand or
+copied from the other panel. A time below the floor (the Pi sends 0 before it has synced) is never
+taken.
 
-Over USB serial, `timesync` asks right away, and `radio` shows the tries and the last result.
+The panel no longer joins the home Wi-Fi to ask pool.ntp.org, and there is no `timesync` command.
+That check (2026-10-31) needed ESP-IDF's network stack, about 150 KB of code that these builds copy
+into PSRAM, and while the panel was joined the other panel and the gateway could not reach it. The
+Wi-Fi station join and SNTP are no longer linked into the panel firmware; ESP-NOW is unchanged. The
+Wi-Fi updater (a separate program) and setting the time by hand stay as they were.
 
-The cost is ESP-IDF's network stack, about 150 KB of code that these builds copy into PSRAM: the
-radio build went from 1,794,686 to 1,948,938 bytes. Checked on the upstairs panel, 2026-10-31: after
-70 seconds unplugged, it showed the right time within a minute and a half.
+If the Pi is down after a power cut, there is no time until it is back or someone sets it by hand
+(Settings). The clock then runs on from there.
 
 ## Not yet checked
 

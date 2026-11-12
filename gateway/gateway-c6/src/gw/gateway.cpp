@@ -22,7 +22,7 @@ uint16_t Gateway::next_seq() {
   return s;
 }
 
-int Gateway::in_flight() const { return (p_[0].used ? 1 : 0) + (p_[1].used ? 1 : 0); }
+int Gateway::in_flight() const { return (p_[0].used ? 1 : 0) + (p_[1].used ? 1 : 0) + (p_[2].used ? 1 : 0); }
 
 void Gateway::hello(bool boot) {
   char line[128];
@@ -71,6 +71,7 @@ void Gateway::on_line(const char *line, size_t len) {
   Kind k;
   if (type && type->type == JType::String && !strcmp(type->s, "outside")) k = kOutside;
   else if (type && type->type == JType::String && !strcmp(type->s, "lucy")) k = kLucy;
+  else if (type && type->type == JType::String && !strcmp(type->s, "update")) k = kUpdate;
   else {
     io_.reply("{\"error\":\"unknown_type\"}");
     return;
@@ -86,7 +87,17 @@ void Gateway::on_line(const char *line, size_t len) {
   }
 
   Msg m;
-  if (k == kOutside) {
+  if (k == kUpdate) {
+    // Only the id matters. One update at a time: a repeat while one is in flight is answered
+    // without a second send (and is not "latest wins": the one in flight keeps its reply).
+    if (p_[kUpdate].used) {
+      snprintf(out, sizeof(out), "{\"type\":\"update\",\"id\":%" PRId64 ",\"busy\":true,\"seq\":%u}", id,
+               (unsigned)p_[kUpdate].seq);
+      io_.reply(out);
+      return;
+    }
+    m.type = MsgType::Update;  // its one reserved byte is always 0 (the encoder writes it)
+  } else if (k == kOutside) {
     int64_t t = 0, h = 0, fc = 0, fl = 0, tm = 0;
     const JField *ph = o.get("phrase");
     if (!why) why = whole(o.get("temp_tenths_f"), -32768, 32767, "temp_tenths_f must fit an int16", t);
@@ -152,14 +163,66 @@ void Gateway::on_line(const char *line, size_t len) {
   send_try(p);
 }
 
+namespace {
+
+const char *notice_kind_name(uint8_t k) {
+  switch ((tc::NoticeKind)k) {
+    case tc::NoticeKind::Knock: return "knock";
+    case tc::NoticeKind::ArrowUrgent: return "arrow_urgent";
+    case tc::NoticeKind::ArrowMild: return "arrow_mild";
+    case tc::NoticeKind::Mail: return "mail";
+    case tc::NoticeKind::DogOut: return "dog_out";
+    case tc::NoticeKind::Status: return "status";
+    case tc::NoticeKind::Note: return "note";
+  }
+  return "unknown";  // can't happen: decode only takes kinds 1 to 7
+}
+
+}  // namespace
+
+// A house event from the upstairs panel. ACKed every time (our first ACK may be what was lost),
+// printed once. The ACK goes the way every gateway frame goes, to the upstairs panel, so a NOTICE
+// from any other sender is ignored.
+void Gateway::on_notice(const Msg &m) {
+  Msg a;
+  a.type = MsgType::Ack;
+  a.sender = tc::kSenderGateway;  // seq stays 0, as in a panel's own ACK
+  a.u.ack.seq = m.seq;
+  a.u.ack.type = (uint8_t)MsgType::Notice;
+  uint8_t buf[16];
+  size_t n = tc::encode(a, buf, sizeof(buf));
+  if (n) io_.send_frame(buf, n);
+  if (notices_.seen(m.sender, m.seq, io_.now_ms())) return;
+  // The text is printable ASCII already (decode); only the quote and the backslash need escaping.
+  char text[2 * tc::kNoticeTextMax + 1];
+  size_t t = 0;
+  for (uint8_t i = 0; i < m.u.notice.text_len; i++) {
+    char c = m.u.notice.text[i];
+    if (c == '"' || c == '\\') text[t++] = '\\';
+    text[t++] = c;
+  }
+  text[t] = 0;
+  char out[256];
+  snprintf(out, sizeof(out), "{\"event\":\"notice\",\"kind\":\"%s\",\"floor\":\"%s\",\"value\":%d,\"time\":%lu,\"text\":\"%s\"}",
+           notice_kind_name(m.u.notice.kind), panel_name(m.u.notice.floor), (int)m.u.notice.value,
+           (unsigned long)m.u.notice.time, text);
+  io_.reply(out);
+}
+
 void Gateway::on_frame(int from, const uint8_t *data, size_t len) {
   // The same check the panels make: a known MAC, and the sender byte that goes with it.
   if (from != kUpstairs && from != kDownstairs) return;
   if (len < 3 || data[2] != (uint8_t)from) return;
   Msg m;
-  if (!tc::decode(data, len, m) || m.type != MsgType::Ack) return;
+  if (!tc::decode(data, len, m)) return;
+  if (m.type == MsgType::Notice) {
+    if (from == kUpstairs) on_notice(m);
+    return;
+  }
+  if (m.type != MsgType::Ack) return;
   Kind k;
   if (m.u.ack.type == (uint8_t)MsgType::Outside) k = kOutside;
+  else if (m.u.ack.type == (uint8_t)MsgType::Update) k = kUpdate;
   else if (m.u.ack.type == (uint8_t)MsgType::Lucy) k = kLucy;
   else return;
   Pending &p = p_[k];
@@ -177,7 +240,7 @@ void Gateway::tick() {
   // TComm's schedule (RetryQueue): tries at 0, 150, 400, 750 and 1150 ms, each timed from the one
   // before it, then give up 350 ms after the last (1.5 s from the first without stalls).
   const uint32_t now = io_.now_ms();
-  for (int k = 0; k < 2; k++) {
+  for (int k = 0; k < kKinds; k++) {
     Pending &p = p_[k];
     if (!p.used) continue;
     if (p.tries < RetryQueue::kTries) {

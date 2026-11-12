@@ -264,6 +264,8 @@ struct Schedule {
     in.chip = chip;
     in.night_mode = night;
     in.lookout_window = tod >= 19 * 3600 && tod < 19 * 3600 + 45 * 60;
+    in.sunrise_window = tod >= 6 * 3600 && tod < 6 * 3600 + 45 * 60;   // the sunrise overlook (stage 15)
+    in.visitors = true;                                                  // and the visiting couple
     in.spine_force = 0;
   }
 };
@@ -540,8 +542,8 @@ struct Soak {
     if (cur.overruns != 0) violate(V_OVERRUN, lb, "%d spine beat(s) ran past their script | plan=%s", cur.overruns, cur.plan);
     if (cur.forced != 0) violate(V_FORCED, lb, "%d minor(s) had to be forced to end | plan=%s", cur.forced, cur.plan);
     const double secs = (double)cur.expected / SS_TICK_HZ;
-    const bool look = cur.family == SF_LOOKOUT;
-    const double lo = look ? 250.0 : 480.0, hi = look ? 320.0 : 660.0;   // test_lookout / the evening, morning, midday tests
+    const bool look = cur.family == SF_LOOKOUT || cur.family == SF_SUNRISE;
+    const double lo = look ? (cur.family == SF_SUNRISE ? 240.0 : 250.0) : 480.0, hi = look ? 320.0 : 660.0;   // test_lookout, test_sunrise / the evening, morning, midday tests
     if (secs < lo || secs > hi) violate(V_LEN_RANGE, lb, "loop is %.1f s, want %.0f..%.0f", secs, lo, hi);
     // The doorbell reaction holds the story still (react.h), so a loop lasts appLoopTicks plus the ticks it held.
     if (actual != (uint64_t)cur.expected + cur.held)
@@ -598,6 +600,7 @@ struct Soak {
       case SF_MORNING: strict = strcmp(bn, "leave") != 0 && strcmp(bn, "day_hike") != 0 && !isMajorBeat(bn); break;   // both exits walk off by design
       case SF_MIDDAY: strict = strcmp(bn, "return") != 0 && !isMajorBeat(bn); break;
       case SF_LOOKOUT: strict = strcmp(bn, "approach") != 0; break;
+      case SF_SUNRISE: break;   // he walks in from the left and out again by design
       default: break;
     }
     const bool rows = r.y0 >= 0 && r.y1 <= SS_HEIGHT;
@@ -950,7 +953,7 @@ int main(int argc, char** argv) {
 
   printf("ss_soak: %.2f h simulated from 06:00 (%llu ticks at %d Hz), seed %llu, render every %d tick(s)%s\n", cfg.hours,
          (unsigned long long)total, SS_TICK_HZ, (unsigned long long)cfg.seed, cfg.every, cfg.quiet ? ", quiet" : "");
-  printf("inputs: mood by the clock (steps spread over 20-30 min), night_mode 22:00-06:00, lookout_window 19:00-19:45, weather code every 1-4 h with OUTSIDE outages, status every 5-90 min, dogs 0-3, doorbell every 1-3 h\n");
+  printf("inputs: mood by the clock (steps spread over 20-30 min), night_mode 22:00-06:00, lookout_window 19:00-19:45, sunrise_window 06:00-06:45, visitors on, weather code every 1-4 h with OUTSIDE outages, status every 5-90 min, dogs 0-3, doorbell every 1-3 h\n");
 
   Stats st;
   const Clock::time_point w0 = Clock::now();

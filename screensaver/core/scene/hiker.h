@@ -42,6 +42,12 @@ enum PoseId : uint8_t {
   POSE_COUNT
 };
 
+// The rig's people. The hiker: brimmed hat, tall pack with a bedroll, all ACTOR. The visitors keep
+// the flat silhouette with one colour each: Ann (LOOK_ANN) slighter, chestnut hair in a bob with a
+// ponytail (hat_on draws it), a small red daypack; Ben (LOOK_BEN) broad, a ball cap with a forward bill, a big blue
+// pack with its bedroll. Their sizes are their own (Hiker::height).
+enum HikerLook : uint8_t { LOOK_HIKER = 0, LOOK_ANN, LOOK_BEN, LOOK_COUNT };
+
 enum CarryId : uint8_t {
   CARRY_NONE, CARRY_WOOD, CARRY_MUG, CARRY_BOOK, CARRY_BAG, CARRY_STICK, CARRY_ROCK, CARRY_JAR,
   CARRY_ROD,   // a long thin rod in both hands, tip forward and up from the near hand (see Hiker::rod_*)
@@ -68,6 +74,9 @@ struct Hiker {
   bool pack_on;        // false once the pack is set down (stage 4 draws it as a prop)
   int lit_from;        // -1 fire to the left, +1 to the right, 0 no rim
   bool hat_on;         // false: bareheaded (the hat is then an item, props ITEM_HAT)
+  // Who the rig draws (HikerLook): 0 the hiker, as always; the visiting couple (visitors.h) have
+  // their own build, headgear and coloured pack. hikerInit sets 0.
+  uint8_t look;
 
   // CARRY_ROD. The rod leaves the near hand along the forearm plus a fixed
   // angle plus `rod_tilt` (radians, + tip up), `rod_len` units of height long

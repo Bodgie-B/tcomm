@@ -65,6 +65,9 @@ struct Renderer {
   uint16_t spread_mask;         // strips still showing the previous palette
   uint8_t spread_pos;           // the band the spread goes on from: round the frame, so a new step mid-spread
                                 // still reaches every band within SS_STRIP_COUNT / spread_per_frame frames
+  // Rows of the cache to repaint in the next render, same palette (repaintRows): up to two bands.
+  int16_t patch_y0[2], patch_y1[2];
+  uint8_t patch_n;
   uint32_t (*clock_us)();       // the host's microsecond clock for the profile, or nullptr
   RenderProfile prof;
   bool cache_valid;
@@ -88,6 +91,12 @@ struct Renderer {
     spread_mask = 0;
     markAllDirty();
   }
+
+  // Same palette, a small change in the static content (the sun or the moon moved a pixel): the
+  // next render repaints only cache rows [y0, y1), full width, so every pixel is what a whole
+  // rebuild would give. It marks nothing dirty: the caller marks the area that really changed,
+  // and only that is composited. A third band before a render joins the second.
+  void repaintRows(int y0, int y1);
 
   // Mark the strips covering frame rows [y0, y1) dirty. Call for every
   // dynamic element's bounding box, both its previous and current position.

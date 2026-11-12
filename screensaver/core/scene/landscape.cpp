@@ -319,6 +319,146 @@ void drawSkyBody(const Landscape& ls, Surface& s, const Palette& pal, float mood
   fillCircle(s, c, r, pal[SUN], clip);
 }
 
+// ---- the real sky --------------------------------------------------------
+//
+// With the host's real sun and moon (SkyDraw::real) the bodies stand where they are in the sky.
+// The scene looks south: east is the left edge, west the right, and the frame takes in
+// kSkyAzSpan degrees either side of south (the midsummer sun rises and sets near the edges, the
+// midwinter one well inside). Height is squeezed so a low winter noon still clears the ridges:
+// the horizon is at kSkyHorizonY (behind the ridges, so a body sets behind them a little early,
+// as behind real hills) and straight overhead is kSkyRise px above it.
+constexpr float kSkyAzSpan = 125.f;
+constexpr float kSkyHorizonY = 268.f;
+constexpr float kSkyRise = 212.f;
+constexpr float kSkyBelowPxPerDeg = 7.f;   // under the horizon a body goes on down at this rate
+// The moon by day: a pale disc, shown only when a good part of it is lit. false: no moon by day.
+constexpr bool kDayMoon = true;
+constexpr float kMoonMinLit = 0.04f;       // thinner than this (about 2 days from new) is no moon
+constexpr float kDayMoonMinLit = 0.25f;
+
+// 1 at full night (mood 0), 0 from half a step away: the old sky's star fade.
+float nightness(float mood) {
+  const float m = mood - 6.f * floorf(mood / 6.f);
+  const float dn = m < 3.f ? m : 6.f - m;
+  return clamp01(1.f - 2.f * dn);
+}
+
+inline int skyBand(int y) { return y < 58 ? 0 : (y < 118 ? 1 : (y < 178 ? 2 : (y < 228 ? 3 : 4))); }
+
+Vec2 skyPoint(float az, float alt) {
+  float d = az - 180.f;
+  d -= 360.f * floorf((d + 180.f) / 360.f);   // -180..180: how far west of south
+  float x = 400.f + d * (400.f / kSkyAzSpan);
+  x = x < 40.f ? 40.f : (x > 760.f ? 760.f : x);   // a body that is up is never off the frame
+  const float kRad = 3.14159265f / 180.f;
+  const float y = alt >= 0.f ? kSkyHorizonY - kSkyRise * powf(sinf(alt * kRad), 0.6f)
+                             : kSkyHorizonY - alt * kSkyBelowPxPerDeg;
+  return Vec2{x, y};
+}
+
+inline uint32_t mix32(uint32_t h) {
+  h ^= h >> 16;
+  h *= 0x7FEB352Du;
+  h ^= h >> 15;
+  h *= 0x846CA68Bu;
+  h ^= h >> 16;
+  return h;
+}
+
+// The lit part of the moon: the outer edge is half the disc's rim, the inner edge the same rim
+// squeezed sideways (an ellipse), from a thin crescent through half to nearly full. Seen from the
+// northern hemisphere a waxing moon is lit on the right, a waning one on the left.
+void drawMoon(Surface& s, Vec2 c, int phase64, Pixel col, const Rect& clip) {
+  const float r = fl(LS_MOON_R);
+  if (phase64 >= 30 && phase64 <= 34) {   // full, near enough
+    fillCircle(s, c, r, col, clip);
+    return;
+  }
+  const float squeeze = cosf(fl(phase64) * (6.2831853f / 64.f));   // 1 new, 0 half, -1 full
+  const float side = phase64 < 32 ? 1.f : -1.f;
+  constexpr int kN = 12;
+  Vec2 p[2 * (kN + 1)];
+  int n = 0;
+  for (int i = 0; i <= kN; ++i) {   // the rim, top to bottom
+    const float t = 3.14159265f * fl(i) / fl(kN);
+    p[n++] = Vec2{c.x + side * r * sinf(t), c.y - r * cosf(t)};
+  }
+  for (int i = kN; i >= 0; --i) {   // back up the shadow's edge
+    const float t = 3.14159265f * fl(i) / fl(kN);
+    p[n++] = Vec2{c.x + side * squeeze * r * sinf(t), c.y - r * cosf(t)};
+  }
+  fillPolygon(s, p, n, col, clip);
+}
+
+void drawSkyReal(const Landscape& ls, Surface& s, const Palette& pal, float mood, const SkyDraw& sky,
+                 const Rect& clip) {
+  const float night = nightness(mood);
+  if (night > 0.f) {
+    const float keep = fl(LS_MOON_R + 8);   // no star shows through the moon's dark side
+    const float mx = fl(sky.moon_x), my = fl(sky.moon_y);
+    auto star = [&](float x, float y, float r, float k) {
+      if (sky.moon && (x - mx) * (x - mx) + (y - my) * (y - my) < keep * keep) return;
+      fillCircle(s, Vec2{x, y}, r, mixRGB(pal[(Slot)(SKY0 + skyBand((int)y))], pal[STAR], k), clip);
+    };
+    // With no moon the stars own the sky: the usual ones a little bigger, and more of them.
+    for (int i = 0; i < LS_STAR_COUNT; ++i) {
+      star(fl(ls.stars[i].x), fl(ls.stars[i].y), ls.stars[i].r + (sky.dark ? 0.4f : 0.f), night);
+    }
+    if (sky.dark) {
+      const uint32_t place = (uint32_t)(ls.stars[0].x * 977 + ls.stars[1].y * 131 + ls.stars[2].x);
+      for (int i = 0; i < LS_EXTRA_STARS; ++i) {
+        const uint32_t h = mix32(place + (uint32_t)i * 0x9E3779B9u);
+        star(fl(10 + (int)(h % 780u)), fl(8 + (int)((h >> 10) % 190u)), 0.9f + 0.6f * fl((int)((h >> 20) & 7)) / 7.f,
+             night * 0.85f);
+      }
+    }
+  }
+  if (sky.sun) fillCircle(s, Vec2{fl(sky.sun_x), fl(sky.sun_y)}, fl(sky.sun_r), pal[SUN], clip);
+  if (sky.moon) {
+    // By day a pale disc, part sky; at night the palette's moon colour (the SUN slot, as before).
+    const Pixel pale = mixRGB(pal[(Slot)(SKY0 + skyBand(sky.moon_y))], pal[STAR], 0.5f);
+    drawMoon(s, Vec2{fl(sky.moon_x), fl(sky.moon_y)}, sky.moon_phase, mixRGB(pale, pal[SUN], night), clip);
+  }
+}
+
+// Cloud cover that stays put (it sits in the cache, so it costs nothing per frame): a few high
+// clouds for "some cloud", and from half cover up a deck across the top of the sky with a lumpy
+// underside, deeper the more cover there is. The two drifting clouds go on drifting under it.
+void drawCloudCover(const Landscape& ls, Surface& s, const Palette& pal, int cover, const Rect& clip) {
+  if (cover < 2) return;
+  // Shapes from the place itself, so each loop has its own sky and every repaint of it is the same.
+  Rng rng;
+  rng.seed(0x434C4F5544ull + (uint64_t)(uint16_t)ls.stars[0].x * 65537u + (uint64_t)(uint16_t)ls.stars[1].y);
+  if (cover < 4) {
+    static const float kAt[3][2] = {{130.f, 64.f}, {410.f, 40.f}, {690.f, 78.f}};
+    for (const float* at : kAt) {
+      Cloud c;
+      const float jx = rng.range(-50.f, 50.f);
+      const float jy = rng.range(-8.f, 8.f);
+      cloudGenerate(c, rng, at[0] + jx, at[1] + jy, 0.f);
+      cloudDraw(c, s, pal, clip);
+    }
+    return;
+  }
+  const float edge = 30.f + 16.f * fl(cover);   // the deck's underside: y 94 at half cover, 158 at full
+  fillRect(s, Rect{0, 0, SS_WIDTH, (int)edge - 12}, pal[CLOUD_SHADE], clip);
+  for (float x = -30.f; x < fl(SS_WIDTH) + 60.f;) {
+    const float rx = rng.range(58.f, 100.f);
+    const float ry = rng.range(13.f, 24.f);
+    const float dy = rng.range(-7.f, 7.f);
+    fillEllipse(s, Vec2{x, edge - 12.f + dy}, rx, ry, pal[CLOUD_SHADE], clip);
+    x += rng.range(52.f, 84.f);
+  }
+  // Paler rolls inside it, so it reads as cloud and not as a lid.
+  for (int i = 0; i < 5 + cover; ++i) {
+    const float x = rng.range(-20.f, fl(SS_WIDTH) + 20.f);
+    const float y = rng.range(10.f, edge - 30.f);
+    const float rx = rng.range(70.f, 150.f);
+    const float ry = rng.range(6.f, 12.f);
+    fillEllipse(s, Vec2{x, y}, rx, ry, pal[CLOUD_LIT], clip);
+  }
+}
+
 // ---- ridges and trees ----------------------------------------------------
 
 // `drop` 0..1 sinks the ridge until its highest point is just under the ground
@@ -496,6 +636,14 @@ void landscapeDrawFgPine(const Landscape& ls, int k, Surface& s, const Rect& cli
   else drawPine(s, ls.fg[0], pal[FOLIAGE_DARK], pal[TRUNK], 7.f, 0.28f, clip);
 }
 
+void landscapeFgPineTier(const Landscape& ls, int k, int i, float& base_y, float& half_w) {
+  const LsPine& p = ls.fg[k ? 1 : 0];   // drawPine's geometry at hs 1 (trunk_frac 0.28)
+  const float h = fl(p.h);
+  const Tier t = tierGeom(i, p.tiers, fl(p.base_y) - h, fl(p.base_y) - maxf(4.f, h * 0.28f), standWidth(h, 1.f), fl(p.width_pct));
+  base_y = t.base_y;
+  half_w = t.half_w;
+}
+
 Rect landscapeCampPineBounds(const Landscape& ls) {
   const LsPine& p = ls.camp;
   const int hw = (int)ceilf(0.5f * fl(p.width_pct) * 0.01f * fl(p.h)) + 4;
@@ -623,17 +771,24 @@ void drawStream(const Landscape& ls, Surface& frame, const Palette& pal, const R
 // Sky bands, stars and sun or moon. `fade` < 1 pulls every sky slot toward the
 // horizon color (the build-up starts from a flat SKY4 field). The lowest band
 // runs down to the ground line so nothing shows behind the rising ridges.
-void drawSky(const Landscape& ls, Surface& frame, const Palette& pal0, float mood, float fade, const Rect& clip) {
+void drawSky(const Landscape& ls, Surface& frame, const Palette& pal0, float mood, float fade, const Rect& clip,
+             const SkyDraw* sky) {
   Palette pal = pal0;
   if (fade < 1.f) {
     static const Slot kFade[6] = {SKY0, SKY1, SKY2, SKY3, SUN, STAR};
     for (Slot k : kFade) pal.c[k] = mixRGB(pal0[SKY4], pal0[k], fade);
+    if (sky && sky->cover >= 2) {   // the still cloud cover fades in with the sky, as the drifting clouds do
+      pal.c[CLOUD_LIT] = mixRGB(pal0[SKY4], pal0[CLOUD_LIT], fade);
+      pal.c[CLOUD_SHADE] = mixRGB(pal0[SKY4], pal0[CLOUD_SHADE], fade);
+    }
   }
   static const int kBand[6] = {0, 58, 118, 178, 228, LS_GROUND_Y};
   for (int b = 0; b < 5; ++b) {
     fillRect(frame, Rect{0, kBand[b], SS_WIDTH, kBand[b + 1]}, pal[(Slot)(SKY0 + b)], clip);
   }
-  drawSkyBody(ls, frame, pal, mood, clip);
+  if (sky && sky->real) drawSkyReal(ls, frame, pal, mood, *sky, clip);
+  else drawSkyBody(ls, frame, pal, mood, clip);
+  if (sky) drawCloudCover(ls, frame, pal, sky->cover, clip);   // over the sun and moon: they go behind it
 }
 
 // Rock scaled about its base center (build-up pop).
@@ -697,10 +852,10 @@ void drawMushroom(const Landscape& ls, Surface& s, const Palette& pal, const Rec
 }
 
 void drawLayer(const Landscape& ls, int layer, Surface& s, const Palette& pal, float mood,
-               const BuildState& b, const Rect& clip) {
+               const BuildState& b, const Rect& clip, const SkyDraw* sky) {
   switch (layer) {
     case BL_SKY:
-      drawSky(ls, s, pal, mood, buildSkyFade(b), clip);
+      drawSky(ls, s, pal, mood, buildSkyFade(b), clip, sky);
       break;
     case BL_RIDGES:
       for (int k = 0; k < 3; ++k) drawRidge(ls, s, k, pal[(Slot)(RIDGE_FAR + k)], clip, buildRidgeDrop(b, k));
@@ -750,21 +905,73 @@ void drawLayer(const Landscape& ls, int layer, Surface& s, const Palette& pal, f
 
 }  // namespace
 
+SkyDraw landscapeSky(const SkyInputs& in, float mood, float cover) {
+  SkyDraw s = {};
+  s.cover = (uint8_t)(clamp01(cover) * 8.f + 0.5f);
+  // Written as "inside", so a position that is not a number gives the old sky.
+  const bool sane = in.sun_alt >= -90.f && in.sun_alt <= 90.f && in.moon_alt >= -90.f && in.moon_alt <= 90.f &&
+                    fabsf(in.sun_az) <= 720.f && fabsf(in.moon_az) <= 720.f && fabsf(in.moon_phase) <= 8.f;
+  if (!in.have || !sane) return s;
+  s.real = true;
+  const float night = nightness(mood);
+  // The sun: drawn until it is well under the ridges, and never once the night's colours have
+  // begun (the SUN slot is the moon's by then). Low in the west it swells a little, as before.
+  if (in.sun_alt > -6.f && night <= 0.f) {
+    const Vec2 p = skyPoint(in.sun_az, in.sun_alt);
+    const float low = clamp01((12.f - in.sun_alt) / 12.f);
+    const float west = in.sun_az - 360.f * floorf(in.sun_az / 360.f) > 180.f ? 1.f : 0.f;
+    s.sun = true;
+    s.sun_x = toI16(p.x);
+    s.sun_y = toI16(p.y);
+    s.sun_r = toI16(30.f + 6.f * low * west);
+  }
+  const float ph = in.moon_phase - floorf(in.moon_phase);
+  const float lit = 0.5f * (1.f - cosf(6.2831853f * ph));
+  const float need = kDayMoon ? lerp(kDayMoonMinLit, kMoonMinLit, night) : (night > 0.f ? kMoonMinLit : 2.f);
+  if (in.moon_alt > -3.f && lit >= need) {
+    const Vec2 p = skyPoint(in.moon_az, in.moon_alt);
+    s.moon = true;
+    s.moon_x = toI16(p.x);
+    s.moon_y = toI16(p.y);
+    s.moon_phase = (uint8_t)((int)(ph * 64.f + 0.5f) & 63);
+  }
+  s.dark = night > 0.f && !(in.moon_alt > 0.f && lit >= kMoonMinLit);
+  return s;
+}
+
+bool landscapeSkySame(const SkyDraw& a, const SkyDraw& b) {
+  return a.real == b.real && a.sun == b.sun && a.moon == b.moon && a.dark == b.dark && a.sun_x == b.sun_x &&
+         a.sun_y == b.sun_y && a.sun_r == b.sun_r && a.moon_x == b.moon_x && a.moon_y == b.moon_y &&
+         a.moon_phase == b.moon_phase && a.cover == b.cover;
+}
+
+Rect landscapeSunBounds(const SkyDraw& s) {
+  if (!s.real || !s.sun) return Rect{0, 0, 0, 0};
+  const int r = s.sun_r + 2;
+  return Rect{s.sun_x - r, s.sun_y - r, s.sun_x + r + 1, s.sun_y + r + 1}.clipped(Rect{0, 0, SS_WIDTH, LS_GROUND_Y});
+}
+
+Rect landscapeMoonBounds(const SkyDraw& s) {
+  if (!s.real || !s.moon) return Rect{0, 0, 0, 0};
+  const int r = LS_MOON_R + 12;   // the star-free ring, and a star's own size
+  return Rect{s.moon_x - r, s.moon_y - r, s.moon_x + r + 1, s.moon_y + r + 1}.clipped(Rect{0, 0, SS_WIDTH, LS_GROUND_Y});
+}
+
 void landscapeDrawStatic(const Landscape& ls, Surface& frame, const Palette& pal, float mood,
-                         const BuildState& b) {
+                         const BuildState& b, const SkyDraw* sky) {
   const Rect clip = frame.bounds();
   // Before the sky is in the cache the build-up draws everything over it; a
   // flat fill keeps the cache contents defined.
   if (!buildCached(b, BL_SKY)) fillRect(frame, clip, pal[SKY4], clip);
   for (int L = 0; L < BL_COUNT; ++L) {
-    if (buildCached(b, L)) drawLayer(ls, L, frame, pal, mood, b, clip);
+    if (buildCached(b, L)) drawLayer(ls, L, frame, pal, mood, b, clip, sky);
   }
 }
 
 void landscapeDrawLayers(const Landscape& ls, Surface& s, const Rect& clip, const Palette& pal,
-                         float mood, const BuildState& b, int first, int last) {
+                         float mood, const BuildState& b, int first, int last, const SkyDraw* sky) {
   for (int L = first; L <= last && L < BL_COUNT; ++L) {
-    if (buildDrawn(b, L) && !buildCached(b, L)) drawLayer(ls, L, s, pal, mood, b, clip);
+    if (buildDrawn(b, L) && !buildCached(b, L)) drawLayer(ls, L, s, pal, mood, b, clip, sky);
   }
 }
 
