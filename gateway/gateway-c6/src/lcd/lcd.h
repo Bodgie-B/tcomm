@@ -17,6 +17,10 @@ constexpr uint16_t kBlack = 0x0000, kWhite = 0xFFFF, kGrey = 0x8410, kGreen = 0x
                    kRed = 0xF800;
 
 void begin();
+// The screen dark and drawing nothing: the backlight off and the controller held in reset. For a
+// gateway nobody looks at (Mike, 2026-11-15: it hangs facing the floor on the Pi, whose 5 V supply
+// is marginal). Call it first thing. begin() lights the screen again (the side button does that).
+void off();
 void fill(int x, int y, int w, int h, uint16_t c);
 // One line of text (upper case; lower case is drawn as upper), each pixel scale x scale, on bg.
 // Characters the font hasn't got are drawn as "?". Returns the x after the text.

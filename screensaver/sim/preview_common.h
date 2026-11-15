@@ -22,6 +22,7 @@ struct PreviewOptions {
   bool lookout = false;
   bool sunrise = false;         // --sunrise: inside the sunrise window (Inputs::sunrise_window)
   bool visitors = false;        // --visitors: the visiting couple may come (Inputs::visitors)
+  int month = 0;                // --month N: the month for the stream's leaves, 1-12 (Inputs::month); 0 unknown
   int spine = 0;                // 0 auto; 1 + SpineFamily forces it (--spine evening|morning|midday|lookout)
   int status = 0;
   int dog = 0;

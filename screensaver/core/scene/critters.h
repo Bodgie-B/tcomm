@@ -34,6 +34,7 @@
 
 #include "../gfx/raster.h"
 #include "../palette.h"
+#include "xmas_switch.h"
 
 namespace ss {
 
@@ -71,6 +72,19 @@ enum DogTone : uint8_t { DT_CAMP = 0, DT_CAMP2 = 1, DT_LUCY = 2, DT_COPPER = 3, 
 constexpr float kLucyScale = 1.3f;      // about 48 px long and 36 px tall to the ear tips: half the hiker
 constexpr float kCopperScale = 0.62f;   // about 23 px long and 16 px tall: well under half of Lucy
 inline float dogToneScale(uint8_t tone) { return tone == DT_LUCY ? kLucyScale : (tone == DT_COPPER ? kCopperScale : 1.f); }
+#if SS_XMAS
+// Critter::tone on a raccoon or a bird: 0 (every scene's) is the plain silhouette. The Christmas
+// mockups (xmas.h, PROPOSED) draw them in their own colours so they read at a glance:
+//   kToneMasked    a raccoon: grey coat, darker legs, a pale face with the black mask across the
+//                  eyes, a dark nose, dark rings on a grey tail
+//   kToneCardinal  a bird: a cardinal's red, a darker red wing, a crest, a black face round an
+//                  orange-red beak
+constexpr uint8_t kToneMasked = 1, kToneCardinal = 1;
+// A colour that is not a palette slot, lit as `ref` is lit now: scaled by ref's brightness against
+// its day key and warmed a little toward it, so it dims at dusk and under the night rule with the
+// rest of the scene. (The Christmas mockups' cardinal red and wrapping paper.)
+Pixel critterLitAs(const Palette& pal, uint32_t hex, Slot ref);
+#endif
 
 // The blended body state. Lengths in px at scale 1, angles in radians.
 // fore[]/hind[] are the near (0) and far (1) limbs, absolute from straight down,

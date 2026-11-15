@@ -140,10 +140,23 @@ void sortActors(World& w) {
     if (b.kind == BIT_CONE) L.add(ACT_BIT, (uint8_t)i, baseY(b.land_y + 1.f));
     else if (b.kind != BIT_NONE) L.add(ACT_BIT, (uint8_t)i, baseY(b.land_y));
   }
+  {
+    int16_t y;
+    if (streamActorY(w, y)) L.add(ACT_STREAM, 0, y);   // the boulder (stream.h)
+    if (streamVisitY(w, y)) L.add(ACT_STREAM, 1, y);   // the heron (stream.h)
+  }
   for (int i = 0; i < WX_BITS; ++i)   // the weather's leaves, drips, rings (weather.h)
     if (w.weather.bit[i].kind != BIT_NONE) L.add(ACT_WXBIT, (uint8_t)i, baseY(w.weather.bit[i].land_y));
   for (int i = 0; i < GLYPH_MAX; ++i)   // a major's glyphs (majors.h)
     if (w.major.g[i].kind != GL_NONE) L.add(ACT_MAJOR, (uint8_t)i, w.major.g[i].base_y);
+#if SS_XMAS
+  if (xmasOn(w)) {   // the Christmas mockups (xmas.h): nothing unless posed
+    for (int i = 0; i < XMAS_ACTORS; ++i) {
+      int16_t y;
+      if (xmasActorY(w, i, y)) L.add(ACT_XMAS, (uint8_t)i, y);
+    }
+  }
+#endif
   }
   const int n = L.n;
   ActorRef* a = w.actors;
@@ -388,11 +401,13 @@ void worldBeginLoop(World& w, Rng& rng) {
   }
   for (Bit& b : w.bits) b = Bit{};
   minorsInit(w, rng);
+  streamInit(w, rng);   // from a copy of the loop RNG, as the minors
 
   sortActors(w);
 
   WorldDirty& d = w.dirty;
   d.cloud[0] = d.cloud[1] = d.bird = d.fire = kEmpty;
+  for (Rect& r : d.high) r = kEmpty;
   for (Rect& r : d.glint) r = kEmpty;
   for (Rect& r : d.tuft) r = kEmpty;
   for (Rect& r : d.smoke) r = kEmpty;
@@ -527,6 +542,7 @@ void worldTick(World& w, Rng& rng, Renderer& r) {
   ++w.tick;
   for (Cloud& c : w.clouds) cloudStep(c);
   ambientStep(w, rng);
+  streamStep(w);   // ambient: the stream's life goes on through the doorbell and fire and ice too
   if (w.react.active) {
     // The doorbell reaction: he answers the bell while the camp holds still
     // (critters, minors and the director wait with the beats; react.h).
@@ -617,6 +633,11 @@ void worldTick(World& w, Rng& rng, Renderer& r) {
 
   const bool sky_fading = buildSkyFade(b) < 1.f;   // clouds fade in with the sky
   for (int i = 0; i < 2; ++i) track(r, d.cloud[i], cloudBounds(w.clouds[i]), sky_fading);
+  {   // the high clouds of cover 2-3 (whole pixels: a move every 5th tick); empty once when the cover leaves 2-3
+    Rect hb[CLOUD_HIGH_COUNT] = {kEmpty, kEmpty, kEmpty};
+    if (cloudHighShown(w.sky_cover)) cloudHighBounds(w.land, w.tick, hb);
+    for (int i = 0; i < CLOUD_HIGH_COUNT; ++i) track(r, d.high[i], hb[i], sky_fading);
+  }
   track(r, d.bird, ambientBirdBounds(w), w.amb.bird.active);
 
   const FirePit& f = w.fire;
@@ -675,6 +696,10 @@ void worldTick(World& w, Rng& rng, Renderer& r) {
   track(r, w.mail.d_letter, mailLetterBounds(w), w.mail.letter && w.mail.lt < 0.8f);
   fireIceTrack(w, r);
   visitorsTrack(w, r);
+  streamTrack(w, r);
+#if SS_XMAS
+  xmasTrack(w, r);   // the Christmas mockups (xmas.h): nothing unless posed
+#endif
 }
 
 void worldDrawWater(const World& w, Surface& s, const Rect& clip, const Palette& pal) {
@@ -706,6 +731,9 @@ void worldDrawStatic(const World& w, Surface& frame, const Palette& pal, float m
   }
   landscapeDrawStatic(w.land, frame, pal, mood, w.build, sky);
   fireIceDrawStatic(w, frame, pal);   // the ice over the ground, icicles on the camp pine (nothing without)
+#if SS_XMAS
+  xmasDrawStatic(w, frame, pal);      // the Christmas mockups' snow (xmas.h; nothing unless posed)
+#endif
 }
 
 // The per-strip draw order, far to near. Everything dynamic is drawn here and
@@ -729,18 +757,24 @@ void worldDrawDynamic(const World& w, Surface& strip, const Rect& clip, const Pa
   // 1. The sky, while it fades in (otherwise it is in the cache).
   landscapeDrawLayers(w.land, strip, clip, pal, mood, b, BL_SKY, BL_SKY, sky);
 
-  // 2. Sky actors: clouds (fading in with the sky) and the distant bird.
+  // 2. Sky actors: clouds (fading in with the sky: the high ones of cover 2-3, then the two lower
+  // ones) and the distant bird. All drift left together, in front of the cached sun and moon.
   const float fade = buildSkyFade(b);
   if (fade < 1.f) {
     Palette cp = pal;
     cp.c[CLOUD_LIT] = mixRGB(pal[SKY4], pal[CLOUD_LIT], fade);
     cp.c[CLOUD_SHADE] = mixRGB(pal[SKY4], pal[CLOUD_SHADE], fade);
+    if (cloudHighShown(w.sky_cover)) cloudHighDraw(w.land, w.tick, strip, cp, clip);   // behind the two lower ones
     for (const Cloud& c : w.clouds) cloudDraw(c, strip, cp, clip);
   } else {
+    if (cloudHighShown(w.sky_cover)) cloudHighDraw(w.land, w.tick, strip, pal, clip);
     for (const Cloud& c : w.clouds) cloudDraw(c, strip, pal, clip);
   }
   ambientDrawBird(w, strip, clip, pal);
   visitorsDrawSky(w, strip, clip, pal);   // a shooting star (the visitors' telescopes)
+#if SS_XMAS
+  xmasDrawSky(w, strip, clip, pal);       // the Christmas mockups' sleigh and north star (xmas.h; nothing unless posed)
+#endif
 
   // 3. Build-up: the layers animating now and every built layer in front of them.
   landscapeDrawLayers(w.land, strip, clip, pal, mood, b, BL_RIDGES, BL_COUNT - 1);
@@ -748,9 +782,14 @@ void worldDrawDynamic(const World& w, Surface& strip, const Rect& clip, const Pa
   // 4. Stream highlights, and a skipped stone's rings on the water.
   ambientDrawGlints(w, strip, clip, pal);
   skipDraw(w.skip, strip, clip, pal);
+  streamDrawWater(w, strip, clip, pal);   // the boulder's wake, fish and their rings, things drifting by
 
   // 4b. Fog bands over the mid pines, behind everything on the ground.
   weatherDrawFog(w, strip, clip, pal);
+#if SS_XMAS
+  // 4c. The Christmas mockups on the camp pine's layer (xmas.h; nothing unless posed).
+  xmasDrawTree(w, strip, clip, pal);
+#endif
 
   // 5. Ground actors far to near.
   for (int i = 0; i < w.n_actors; ++i) {
@@ -760,7 +799,15 @@ void worldDrawDynamic(const World& w, Surface& strip, const Rect& clip, const Pa
         if (a.idx == 1) fireGlowDraw(w.fire, strip, clip, pal);
         else fireDraw(w.fire, strip, clip, pal);
         break;
+#if SS_XMAS
+      case ACT_TUFT: {   // frosted in the Christmas mockups' snow (xmas.h); the same palette otherwise
+        Palette tp;
+        ambientDrawTuft(w, a.idx, strip, clip, xmasTuftPal(w, pal, tp));
+        break;
+      }
+#else
       case ACT_TUFT: ambientDrawTuft(w, a.idx, strip, clip, pal); break;
+#endif
       case ACT_HIKER:
         hikerDraw(w.hiker, strip, pal, clip);
         armloadDraw(w.hiker, w.fx.armload, strip, clip, pal);
@@ -777,6 +824,13 @@ void worldDrawDynamic(const World& w, Surface& strip, const Rect& clip, const Pa
       case ACT_FX: fireIceDrawActor(w, a.idx, strip, clip, pal); break;
       case ACT_MAIL: mailDrawLetter(w, strip, clip, pal); break;
       case ACT_VISITOR: visitorsDrawActor(w, a.idx, strip, clip, pal); break;
+      case ACT_STREAM:
+        if (a.idx == 1) streamDrawVisit(w, strip, clip, pal);
+        else streamDrawNear(w, strip, clip, pal);
+        break;
+#if SS_XMAS
+      case ACT_XMAS: xmasDrawActor(w, a.idx, strip, clip, pal); break;
+#endif
       case ACT_PACK: packDraw(w.pack, strip, clip, pal); break;
       case ACT_BAG: bagDraw(w.bag, strip, clip, pal); break;
       case ACT_CAIRN: cairnDraw(w.cairn, strip, clip, pal); break;
@@ -801,6 +855,9 @@ void worldDrawDynamic(const World& w, Surface& strip, const Rect& clip, const Pa
         if (!c.empty()) {
           landscapeDrawFgPine(w.land, a.idx & 1, strip, c, pal);
           fireIceDrawIcicles(w, strip, c, pal, 2u << (a.idx & 1));   // its icicles in the cold
+#if SS_XMAS
+          xmasDrawFgPineSnow(w, a.idx & 1, strip, c, pal);           // the Christmas mockups' snow on it
+#endif
         }
         break;
       }

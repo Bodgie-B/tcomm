@@ -266,6 +266,7 @@ struct Schedule {
     in.lookout_window = tod >= 19 * 3600 && tod < 19 * 3600 + 45 * 60;
     in.sunrise_window = tod >= 6 * 3600 && tod < 6 * 3600 + 45 * 60;   // the sunrise overlook (stage 15)
     in.visitors = true;                                                  // and the visiting couple
+    in.month = (uint8_t)(1 + (abs_sec / 7200) % 12);                     // a new month every 2 simulated hours: a day sees them all
     in.spine_force = 0;
   }
 };

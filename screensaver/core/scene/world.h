@@ -24,12 +24,14 @@
 #include "lookout_land.h"
 #include "props.h"
 #include "spine.h"
+#include "stream.h"
 #include "sunrise.h"
 #include "visitors.h"
 #include "minors.h"
 #include "majors.h"
 #include "memory.h"
 #include "weather.h"
+#include "xmas.h"
 
 namespace ss {
 
@@ -70,7 +72,15 @@ enum ActorKind : uint8_t {
   // ground (mailbird.h).
   ACT_FX, ACT_MAIL,
   // The visiting couple (visitors.h): idx 0, 1 Ann and Ben, 2, 3 their packs, 4 the disc, 5, 6 the telescopes.
-  ACT_VISITOR
+  ACT_VISITOR,
+  // The boulder in the current (stream.h), sorted at its waterline: the rock over what passed behind it,
+  // a snagged floater, the foam.
+  ACT_STREAM,
+#if SS_XMAS
+  // The Christmas mockups (xmas.h; only while its mock is posed): idx the piece. Added last, after the
+  // glyphs, so a full list drops them and nothing of the scene's (WORLD_ACTOR_MAX is not raised for them).
+  ACT_XMAS
+#endif
 };
 struct ActorRef {
   uint8_t kind;
@@ -85,9 +95,10 @@ struct ActorRef {
 // 88 holds them all; the weather's bits (WX_BITS 4) on top; the kite, the
 // boomerang and the eagle (3) on top of those: the stuck boomerang stays in
 // the camp pine into the next loop, so it can meet the evening's 28 glyphs.
-#define WORLD_ACTOR_MAX 128   // the visiting couple's 7 and their pine redraws (they never meet fire and ice's 7); 98 and the morning stay's four items (pan, cake, brush, sack), and the day pieces' second part (day.h);
+#define WORLD_ACTOR_MAX 130   // the visiting couple's 7 and their pine redraws (they never meet fire and ice's 7); 98 and the morning stay's four items (pan, cake, brush, sack), and the day pieces' second part (day.h);
                               // Lucy and Copper (housedogs.h) 2 more critters with their pine redraws
                               // the mail bird with its pine redraws and its letter (4), fire and ice's 7 (FI_ACTORS)
+                              // the boulder in the current and the heron (2, stream.h)
 
 // Critters in the scene: slots the director (director.h) hands out. The story's
 // critters get the first CRITTER_STORY; the last two belong to Lucy and Copper
@@ -99,7 +110,8 @@ struct ActorRef {
 #define CRITTER_MAX 11
 
 // Who holds a critter slot, and how the director treats it.
-enum CritterTag : uint8_t { CT_NONE = 0, CT_DINNER, CT_BEAR, CT_THIEF, CT_MINOR, CT_MAJOR, CT_HOUSEDOG, CT_MAIL };
+enum CritterTag : uint8_t { CT_NONE = 0, CT_DINNER, CT_BEAR, CT_THIEF, CT_MINOR, CT_MAJOR, CT_HOUSEDOG, CT_MAIL,
+                            CT_STREAM };   // CT_STREAM: the stream's visiting deer (stream.h)
 enum CritterMode : uint8_t {
   CM_FREE = 0,     // the owner drives it
   CM_STARTLE,      // scattered: a startle, then CM_FLEE
@@ -164,6 +176,7 @@ struct DoorbellReact {
 // Previous bounds per element, so a move dirties both where it was and where it is.
 struct WorldDirty {
   Rect cloud[2];
+  Rect high[CLOUD_HIGH_COUNT];   // the high clouds of cover 2-3 (landscape.h cloudHigh); empty when not shown
   Rect bird;
   Rect fire;
   Rect glint[AMB_GLINT_MAX];
@@ -211,7 +224,20 @@ struct World {
     Sunrise sr;       // the sunrise overlook (sunrise.h)
     Visitors vis;     // the visiting couple (visitors.h)
   };
-  LookoutState look;
+  // The Lookout's running state, and the camp's own that a Lookout or sunrise loop never touches: the
+  // Christmas mockups (xmas.h) and the stream's life (stream.h). A camp loop never touches the Lookout's,
+  // a set-piece loop never steps, tracks or draws these, so they share the bytes. worldBeginLoop zeroes
+  // the World and streamInit seeds the stream; a Lookout loop then resets `look` whole
+  // (lookoutBeginLoop), and the app gives the stream its inputs in camp loops only.
+  union {
+    LookoutState look;
+    struct {
+#if SS_XMAS
+      XmasState xmas;   // only in the host builds (xmas_switch.h): the panel's World has no room for it
+#endif
+      StreamLife stream;   // the boulder's foam and wake, things drifting by, fish, the visitors (stream.h)
+    };
+  };
   Cloud clouds[2];
   BuildState build;
   Ambient amb;
@@ -238,6 +264,10 @@ struct World {
   // A beat that owns critters is running (dinner, bear, close, a major): the
   // minors wait. Set and cleared by those beats' begin and end hooks.
   bool busy;
+  // The cloud cover in eighths the cache was drawn with (App::sky.cover, landscape.h SkyDraw), set by
+  // the app at loop start and before every worldTick: cover 2-3 brings the three drifting high clouds
+  // (cloudHigh), which worldTick tracks and worldDrawDynamic draws. 0 in the Lookout and the sunrise.
+  uint8_t sky_cover;
   MajorState major;  // the surprise major running now, and its glyphs (majors.h)
   // The daytime majors' own pieces. day: the kite, the bike, the archery, the slackline or the ropes
   // course, whichever runs (a union: day.h), none (DAY_NONE, all zero) otherwise. boom: the boomerang
@@ -274,6 +304,12 @@ struct World {
 // The shared block costs no more than the Lookout's landscape did.
 static_assert(sizeof(Sunrise) <= sizeof(LookoutLand), "the sunrise must fit in the Lookout's place");
 static_assert(sizeof(Visitors) <= sizeof(LookoutLand), "the visitors must fit in the Lookout's place");
+#if SS_XMAS
+static_assert(sizeof(XmasState) + sizeof(StreamLife) <= sizeof(LookoutState),
+              "the Christmas mockups and the stream's life must fit in the Lookout's running state");
+#else
+static_assert(sizeof(StreamLife) <= sizeof(LookoutState), "the stream's life must fit in the Lookout's running state");
+#endif
 
 // The story's clock: ticks since loop start, less the doorbell freezes. Every
 // deadline the story keeps (the minors' gaps, the weather's gags and gusts, the

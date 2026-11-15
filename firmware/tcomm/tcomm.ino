@@ -65,6 +65,38 @@ static void load_display_test() {
 }
 static void save_display_test() { board::save_display_test((uint8_t)(g_disp | (g_strips ? 0x80 : 0))); }
 
+// Strip drawing's 32 KB of internal RAM is taken only while it is on, not at every start (memory
+// audit 2026-11-12, recommendation 2). On: false, with a line in the log (and on serial), when there
+// isn't the memory; strip drawing then stays off.
+static bool strip_scratch_on() {
+  if (!g_scratch) g_scratch = (uint8_t *)heap_caps_malloc(kScratch, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  if (!g_scratch) {
+    g_strips = false;
+    board::elog("strip drawing: refused, no %u bytes of internal RAM free in one piece (largest %u); it stays off",
+                (unsigned)kScratch, (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    return false;
+  }
+  g_strips = true;
+  ui::set_art_scratch(g_scratch, kScratch);
+  return true;
+}
+
+// Off: the drawing task stops taking the scratch at once; a drawing that began with it may still be
+// using it, so it is freed when that one is done (up to 2 s here; the drawing task needs no lock).
+// Still busy after that (it shouldn't be): kept, and used again if strip drawing comes back on.
+static void strip_scratch_off() {
+  g_strips = false;
+  ui::set_art_scratch(nullptr, 0);
+  if (!g_scratch) return;
+  for (int i = 0; i < 400 && ui::art_scratch_busy(); i++) delay(5);
+  if (ui::art_scratch_busy()) {
+    board::elog("strip drawing: off; its scratch is still in use by a drawing, so it is kept");
+    return;
+  }
+  heap_caps_free(g_scratch);
+  g_scratch = nullptr;
+}
+
 class PanelPlatform : public board::DevicePlatform {
  public:
   void display_test_label(char *out, size_t n) override {
@@ -88,8 +120,8 @@ class PanelPlatform : public board::DevicePlatform {
   bool updater_installed() override { return board::updater_installed(); }
   void start_updater() override { board::restart_into_updater(); }
   void toggle_strip_drawing() override {
-    g_strips = !g_strips && g_scratch;
-    ui::set_art_scratch(g_strips ? g_scratch : nullptr, g_strips ? kScratch : 0);
+    if (g_strips) strip_scratch_off();
+    else if (!strip_scratch_on()) return;  // refused (no memory): stays off, nothing saved
     save_display_test();
   }
 };
@@ -487,9 +519,9 @@ void setup() {
   // Strip drawing (a display test, off unless chosen): the drawing task works in 32 KB of internal
   // RAM a strip of rows at a time and writes each finished strip to PSRAM once. Mike found the
   // screen worse with it on (2026-10-22), so it stays a choice until the display tests settle it.
-  g_scratch = (uint8_t *)heap_caps_malloc(kScratch, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-  if (!g_scratch) g_strips = false;
-  ui::set_art_scratch(g_strips ? g_scratch : nullptr, g_strips ? kScratch : 0);
+  // Its 32 KB are only taken when it is on (strip_scratch_on; without the memory it stays off, the
+  // log says so, and the line below shows "off").
+  if (g_strips) strip_scratch_on();
   ui::set_copy_pause([] { delayMicroseconds(20); });  // between the 4 KB pieces of a picture's copy
   xTaskCreatePinnedToCore(art_task, "art", 8192, nullptr, 1, nullptr, 0);
   Serial.printf("[tcomm] started: %s, clock %s, free PSRAM %u\n", tc::floor_word(settings.floor),
@@ -896,6 +928,14 @@ static void command(char *s) {
     Serial.printf("floor %s, status %s, clock %s (quality %u, utc %lu), free heap %u, free PSRAM %u\n",
                   tc::floor_word(g_ctrl.settings().floor), tc::status_word(g_ctrl.own().status), w.valid ? "set" : "NOT SET",
                   w.quality, (unsigned long)w.utc, (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getFreePsram());
+    // The memory audit's savings (2026-11-12), to measure on a panel: compare with the screensaver
+    // running (ss stats has the same figures) and with danger cold showing.
+    Serial.printf("memory: internal free %u (largest block %u), PSRAM free %u (largest block %u); spare picture %s; "
+                  "strip drawing scratch %s; icicles %s\n",
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM),
+                  ui::spare_lent() ? "lent to the screensaver" : "home", g_scratch ? "held (32,768 bytes)" : "not held",
+                  ui::icicles_held() ? "held (240,000 bytes)" : "not held");
     Serial.printf("since the last info (%lu s): %lu redraws, %lu px, %lu ms drawing, slowest %lu ms\n",
                   (unsigned long)((millis() - g_stats_since) / 1000), (unsigned long)g_refr_count,
                   (unsigned long)g_refr_px, (unsigned long)g_refr_ms, (unsigned long)g_refr_max);

@@ -5,7 +5,9 @@
 // While it runs: LVGL draws the main screen's changes (a slice after each scene frame) into a copy of the
 // main screen in PSRAM (768,000 bytes; LVGL's direct mode), not onto the panel; LVGL's 64,000-byte
 // draw buffer (internal RAM) is lent to the scene as its fast block; the scene's layer cache
-// (768 KB) and its App go in PSRAM; an LVGL timer ticks it at 25 Hz and writes the strips that
+// (768 KB) is the interface's spare picture, lent for the run (art change-overs wait until it
+// stops; ss_host.cpp sceneAlloc, core/spare_loan.h), or its own PSRAM when the spare isn't free;
+// its App goes in PSRAM; an LVGL timer ticks it at 25 Hz and writes the strips that
 // changed straight into the panel's frame buffer. LVGL's other timers (the controller, the radio,
 // the interface's updates) keep running behind it, so the main screen underneath stays current.
 // Without room for the copy it still runs: LVGL then draws nothing (its invalidations are dropped,

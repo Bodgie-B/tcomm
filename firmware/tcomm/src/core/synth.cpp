@@ -338,6 +338,9 @@ void build(Song &s, Sound sound, uint8_t ringtone) {
       strike(s, G6, 0.0f, 0.4f, kBlip);
       strike(s, C6, 0.16f, 0.5f, kBlip);
       break;
+    case Sound::DogAlert:  // a dog out too long: five quick dings on one note, like no doorbell here
+      for (int i = 0; i < 5; i++) strike(s, G6, 0.26f * i, i == 4 ? 0.9f : 0.45f, kBar);
+      break;
     default: break;
   }
 }

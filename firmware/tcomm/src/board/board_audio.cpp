@@ -26,7 +26,7 @@ struct Clip {
   size_t frames = 0, cap = 0;
 };
 // Indexed by tc::Sound; [0] holds the chosen ringtone's chime, in a buffer its own size.
-static Clip g_clips[4];
+static Clip g_clips[5];
 static QueueHandle_t g_q = nullptr;
 static volatile uint8_t g_ringtone = 0;  // chosen (set from the interface task)
 static uint8_t g_rendered = 0xFF;        // in g_clips[0]
@@ -233,8 +233,8 @@ static void recover() {
 }
 
 static const char *sound_name(int s) {
-  static const char *const kNames[] = {"chime", "soft chime", "come on", "not now"};
-  return s >= 0 && s < 4 ? kNames[s] : "?";
+  static const char *const kNames[] = {"chime", "soft chime", "come on", "not now", "dog alert"};
+  return s >= 0 && s < 5 ? kNames[s] : "?";
 }
 
 static void play_clip(const Clip &c, uint8_t volume, bool preview) {
@@ -305,6 +305,7 @@ static void audio_task(void *) {
   render(g_clips[1], tc::Sound::SoftChime, 0);
   render(g_clips[2], tc::Sound::ReplyYes, 0);
   render(g_clips[3], tc::Sound::ReplyNo, 0);
+  render(g_clips[4], tc::Sound::DogAlert, 0);
   elog("sounds ready in %lu ms", (unsigned long)(millis() - t0));
   Req r;
   for (;;) {
@@ -335,7 +336,7 @@ static void audio_task(void *) {
     // A doorbell is never silent: with no chime made (no room for a newly chosen ringtone), the
     // soft chime plays instead.
     if (which == 0 && !g_clips[0].frames && !r.preview) which = 1;
-    if (which > 3 || !g_clips[which].frames) continue;  // not made yet, or failed
+    if (which > 4 || !g_clips[which].frames) continue;  // not made yet, or failed
     play_clip(g_clips[which], r.volume, r.preview);
   }
 }

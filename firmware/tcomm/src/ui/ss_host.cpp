@@ -22,6 +22,7 @@
 #include "../core/zambretti.h"
 #include "../gfx/canvas.h"
 #include "art.h"
+#include "ui.h"   // the spare picture's loan (spare_lend, spare_give_back, spare_reclaim)
 #include "../ws/lvgl_port/lvgl_port.h"
 
 namespace ui {
@@ -127,6 +128,7 @@ float g_mood = 3.f;
 // Stage 12: where the sun and the moon really are (sky.h), worked out with the mood. All zero (the
 // scene's old parked sun and moon) with no clock, or while a phase is forced for testing.
 ss::SkyInputs g_sky = {};
+uint8_t g_month = 0;                // the local month 1-12 for the scene's leaves (Inputs::month); 0 with no clock
 bool g_mood_known = false;
 int g_phase_seen = -1;              // the sky phase the mood was last worked out in
 uint32_t g_mood_at = 0, g_inputs_at = 0;
@@ -227,10 +229,58 @@ uint32_t clockUs() { return (uint32_t)esp_timer_get_time(); }
 void *psramAlloc(size_t n) { return heap_caps_aligned_alloc(16, n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT); }
 void psramFree(void *p) { heap_caps_free(p); }
 
+// The scene's layer cache is the interface's spare picture, borrowed for the run (memory audit
+// 2026-11-12, recommendation 1: 768,000 bytes of PSRAM less while it runs). Ownership, in full in
+// core/spare_loan.h:
+// - The core asks for its cache through HostAlloc::alloc_large (Renderer::init, in appStart) and
+//   frees it through free_large (Renderer::shutdown, in appStop). sceneAlloc lends the spare for
+//   that one request (the full-frame size; the fast block and anything else get PSRAM as before)
+//   and sceneFree hands it back. So the one borrow and the one return are the core's own cache
+//   allocation and free, and whatever ends a run ends it through endRun -> appStop: a touch (the
+//   reveal, cut short or not, or no reveal), the screen going dark, a stop from serial (ss, ss
+//   seed N). A failed start returns it inside appStart. The doorbell (a knock) doesn't end a run.
+//   An update restarts the panel, so nothing is left to return.
+// - The spare is lent only while nothing else has it (no art drawing in it, no tile fade showing
+//   it); otherwise, or with the wrong size, the cache is the scene's own PSRAM, as before.
+// - While it is lent, the art (sky, tiles, outside, doorbell) can't claim it, so their change-overs
+//   wait until the stop and are asked for again on the frames after it. Nothing else draws into it:
+//   the reveal's main-screen picture goes into the cache, which is the screensaver's own until
+//   appStop.
+// - After every appStop and every failed appStart, spareHome checks it is back (spare_reclaim).
+// The cache is the frame's size in RGB565; the spare is the sky's size in RGB565: the same, checked
+// here, and spare_lend checks the size asked for again.
+static_assert((size_t)art::kScreenW * art::kScreenH * sizeof(ss::Pixel) == kFrameBytes,
+              "the spare picture is the scene cache's size");
+bool g_cache_spare = false;   // this run's cache is the borrowed spare picture
+
+void *sceneAlloc(size_t n) {
+  if (n == kFrameBytes && !g_cache_spare) {
+    if (void *p = spare_lend(n)) {
+      g_cache_spare = true;
+      return p;
+    }
+  }
+  return psramAlloc(n);
+}
+
+void sceneFree(void *p) {
+  if (g_cache_spare && spare_give_back(p)) {
+    g_cache_spare = false;
+    return;
+  }
+  psramFree(p);
+}
+
+// After appStop, or an appStart that failed: the spare must be home.
+void spareHome(const char *after) {
+  if (spare_reclaim()) board::elog("screensaver: the spare picture was still lent after %s; taken back", after);
+  g_cache_spare = false;
+}
+
 ss::HostAlloc hostAlloc() {
   ss::HostAlloc a;
-  a.alloc_large = psramAlloc;
-  a.free_large = psramFree;
+  a.alloc_large = sceneAlloc;
+  a.free_large = sceneFree;
   a.fast = nullptr;
   g_lent = false;
   // LVGL's draw buffer: internal RAM, idle while LVGL draws into the copy (or nothing). Partial
@@ -295,6 +345,7 @@ ss::Inputs buildInputs(const tc::View &v) {
   memset(&in, 0, sizeof in);   // ss_app.h: zero all of it first
   in.mood = g_mood_override >= 0.f ? g_mood_override : g_mood;
   if (g_mood_override < 0.f) in.sky = g_sky;
+  in.month = g_month;
   ss::OutsideReading r;
   r.valid = v.outside.valid;
   r.forecast = (int)v.outside.code;
@@ -502,8 +553,9 @@ void endRun() {
     g_timer = nullptr;
   }
   const ss::HostAlloc a = hostAlloc();
-  ss::appStop(g_app, a);   // frees the cache (and the fast block when core took it from PSRAM)
+  ss::appStop(g_app, a);   // frees the cache (and the fast block when core took it from PSRAM): the spare goes home
   g_app = nullptr;
+  spareHome("the stop");
   psramFree(g_mem);
   g_mem = nullptr;
   g_rv.on = false;
@@ -700,6 +752,7 @@ bool screensaver_start(uint32_t seed) {
     const ss::HostAlloc a = hostAlloc();
     g_app = ss::appStart(g_mem, a, seed, g_in);
     if (g_app) break;
+    spareHome("a failed start");   // appStart frees what it took; the next try may borrow it again
     if (with_copy) {
       copyOff(d, false);
     } else if (d) {
@@ -713,6 +766,7 @@ bool screensaver_start(uint32_t seed) {
     return false;
   }
   if (!g_copy) board::elog("screensaver: no room for the main screen's copy; a touch draws it first");
+  if (!g_cache_spare) board::elog("screensaver: the spare picture wasn't free (art being drawn, or a fade), so the scene's cache has its own PSRAM");
   ss::appSetClock(g_app, clockUs);
   ss::appSetOverlay(g_app, mailOverlay, nullptr);   // the downstairs mail badge, drawn into each strip
   ss::appSetPaletteSpread(g_app, kPaletteSpread, g_spread_medium);   // palette steps without a full-frame stall
@@ -765,6 +819,7 @@ void screensaver_service(const tc::View &v, const tc::Settings &s, const tc::Wal
   if (!g_mood_known || now - g_mood_at >= kMoodMs) {
     g_mood = phaseMood(v, s, w, utc_offset);
     g_sky = realSky(v, s, w, utc_offset);   // the sun moves about a pixel a minute: this often is plenty
+    g_month = w.valid ? (uint8_t)tc::civil_from_seconds((int64_t)w.utc + utc_offset).month : 0;
     g_mood_at = now;
     g_mood_known = true;
   }
@@ -873,7 +928,8 @@ int screensaver_stats(char *buf, size_t n) {
                   "screensaver: %s; %.1f s: %lu frames (%.1f fps), %lu ticks, %lu dropped; tick %.2f ms, draw %.2f ms, "
                   "worst %.1f ms per frame; %.2f strips a frame, %.0f%% of their width copied; draw split: copy in %.2f, "
                   "layers %.2f, copy out %.2f, cache %.2f ms; %lu palette changes (slowest such frame %.1f ms); "
-                  "main screen copy %s (%lu areas, %lu px, %lu ms redrawn); fast block %s; "
+                  "main screen copy %s (%lu areas, %lu px, %lu ms redrawn); fast block %s; scene cache %s; "
+                  "spare picture %s (%lu art claims refused); "
                   "free heap %u, free PSRAM %u (largest %u)",
                   g_app ? "running" : "stopped", (double)secs, (unsigned long)s.frames,
                   secs > 0.f ? (double)(s.frames / secs) : 0.0, (unsigned long)s.ticks, (unsigned long)s.dropped,
@@ -883,6 +939,8 @@ int screensaver_stats(char *buf, size_t n) {
                   (double)(p.static_us / f / 1000.f), (unsigned long)s.palettes, (double)(s.palette_worst_us / 1000.f),
                   g_copy ? "on" : "off", (unsigned long)copy_refr,
                   (unsigned long)copy_px, (unsigned long)(copy_us / 1000), g_lent ? "LVGL's (internal)" : "PSRAM",
+                  !g_app ? "none" : (g_cache_spare ? "the spare picture" : "its own PSRAM"),
+                  spare_lent() ? "lent" : "home", (unsigned long)spare_refused(),
                   (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
                   (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
 }

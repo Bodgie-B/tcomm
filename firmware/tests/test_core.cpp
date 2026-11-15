@@ -18,6 +18,7 @@
 #include "core/settings_migrate.h"
 #include "core/sht4x.h"
 #include "core/sky.h"
+#include "core/spare_loan.h"
 #include "core/synth.h"
 #include "core/zambretti.h"
 #include <cctype>
@@ -3917,7 +3918,12 @@ static void dog_out_reading(Pair &p, int16_t tenths, uint8_t flags = kOutsideVal
   gw_outside(p, p.pa.w.utc, tenths, 71, 3, flags);
   p.run(100);
 }
-static int chimes(const FakePlatform &f) {
+static int dings(const FakePlatform &f) {  // the dog alert: five dings
+  int n = 0;
+  for (const auto &pl : f.played) n += pl.first == Sound::DogAlert;
+  return n;
+}
+static int soft_chimes(const FakePlatform &f) {
   int n = 0;
   for (const auto &pl : f.played) n += pl.first == Sound::SoftChime;
   return n;
@@ -3935,7 +3941,7 @@ static void dog_limit_case(int16_t tenths, uint8_t flags, const char *want, int 
   if (tenths != -9999) dog_out_reading(p, tenths, flags);
   CHECK_STR(p.a.view().dog.pill, "COPPER OUT");
   CHECK(!p.a.view().dog.alert && !p.b.view().dog.alert);
-  CHECK(chimes(p.pa) == 0 && chimes(p.pb) == 0);
+  CHECK(dings(p.pa) == 0 && dings(p.pb) == 0);
   req_jump(p, 45);
   if (tenths != -9999) dog_out_reading(p, tenths, flags);
   CHECK(p.a.view().dog.alert && p.b.view().dog.alert);
@@ -3959,65 +3965,98 @@ static void test_dog_nudge() {
   dog_limit_case(500, kOutsideValid | kOutsideDangerCold, "COPPER OUT 10 min, 50" DEGF, 10);  // the flag wins
   dog_limit_case(-9999, 0, "COPPER OUT 30 min", 30);  // no outside reading: 30 minutes, no temperature
 
-  // The chime: once per dog per outing, on each panel, at the soft level (75 = 90 less 15, by day).
+  // The sound (Mike, 2026-11-13): five dings, never the soft chime (it was taken for a doorbell),
+  // only on the floor the dog belongs to (Copper: downstairs, panel b), at the doorbell volume
+  // (90 by day), and again every five minutes until the dog is in. The pill pulses on both panels.
   {
     Pair p(1792670400u);
     req_start(p);
+    int soft_a = soft_chimes(p.pa), soft_b = soft_chimes(p.pb);
     CHECK(p.b.tap_dog());
     p.run(200);
     dog_out_reading(p, 480);
     req_jump(p, 31 * 60);
     dog_out_reading(p, 480);
-    CHECK(chimes(p.pa) == 1 && chimes(p.pb) == 1);
-    CHECK(p.pa.played.back().first == Sound::SoftChime && p.pa.played.back().second == 75);
-    req_jump(p, 20 * 60);
+    CHECK(dings(p.pa) == 0 && dings(p.pb) == 1);  // upstairs stays silent for Copper
+    CHECK(p.pb.played.back().first == Sound::DogAlert && p.pb.played.back().second == 90);
+    CHECK(p.a.view().dog.alert && p.b.view().dog.alert);  // the warning shows on both
+    req_jump(p, 4 * 60);
+    p.run(300);
+    CHECK(dings(p.pb) == 1);  // 35 minutes: not yet
+    req_jump(p, 60);
+    p.run(300);
+    CHECK(dings(p.pb) == 2);  // 36 minutes: five after the first
     p.run(2000);
-    CHECK(chimes(p.pa) == 1 && chimes(p.pb) == 1);  // not again, however long it stays out
-    CHECK(p.a.view().dog.alert);
-    // In: the pill and the pulse clear. Out again: a new outing, a new chime after its limit.
+    CHECK(dings(p.pb) == 2);
+    req_jump(p, 5 * 60);
+    p.run(300);
+    CHECK(dings(p.pb) == 3);
+    req_jump(p, 11 * 60);  // a long gap is one ring, not a burst
+    p.run(300);
+    CHECK(dings(p.pb) == 4 && dings(p.pa) == 0);
+    CHECK(soft_chimes(p.pa) == soft_a && soft_chimes(p.pb) == soft_b);  // nothing doorbell-like, on either
+    // In: the pill and the pulse clear, and the ringing stops. Out again: a new outing.
     CHECK(p.b.tap_dog());
     p.run(300);
     CHECK(!p.a.view().dog.alert && !p.b.view().dog.alert && p.a.view().dog.pill[0] == 0 && p.b.view().dog.pill[0] == 0);
+    req_jump(p, 20 * 60);
+    p.run(300);
+    CHECK(dings(p.pb) == 4);
     CHECK(p.b.tap_dog());
     p.run(300);
     CHECK_STR(p.a.view().dog.pill, "COPPER OUT");
     req_jump(p, 31 * 60);
     p.run(300);
-    CHECK(chimes(p.pa) == 2 && chimes(p.pb) == 2 && p.a.view().dog.alert);
+    CHECK(dings(p.pb) == 5 && dings(p.pa) == 0 && p.a.view().dog.alert);
+  }
+  // Lucy belongs upstairs (panel a): only upstairs rings.
+  {
+    Pair p(1792670400u);
+    req_start(p);
+    CHECK(p.a.tap_dog());
+    p.run(200);
+    req_jump(p, 31 * 60);
+    p.run(200);
+    CHECK(dings(p.pa) == 1 && dings(p.pb) == 0);
+    CHECK(p.a.view().dog.alert && p.b.view().dog.alert);
+    CHECK_STR(p.b.view().dog.pill, "LUCY OUT 31 min");
+    req_jump(p, 5 * 60);
+    p.run(200);
+    CHECK(dings(p.pa) == 2 && dings(p.pb) == 0);
   }
 
   // Status gates, as for the mail chime: Private (and Sleeping, Away) make no sound; the dog is
-  // still out when the status opens up, so the chime comes then, once.
+  // still out when the status opens up, so the dings come then.
   {
     Pair p(1792670400u);
     req_start(p);
     CHECK(p.b.choose_status(Status::Private));
     p.run(300);
-    CHECK(p.a.tap_dog());
+    CHECK(p.b.tap_dog());  // Copper out, downstairs Private
     p.run(200);
     req_jump(p, 31 * 60);
     p.run(200);
-    CHECK(p.b.view().dog.alert && chimes(p.pb) == 0);  // seen, not heard
-    CHECK(chimes(p.pa) == 1);                          // upstairs is Open
+    CHECK(p.b.view().dog.alert && dings(p.pb) == 0);  // seen, not heard
+    CHECK(dings(p.pa) == 0);                          // not the upstairs dog, whatever its status
     CHECK(p.b.choose_status(Status::Open));
     p.run(300);
-    CHECK(chimes(p.pb) == 1);
+    CHECK(dings(p.pb) == 1);
     p.run(2000);
-    CHECK(chimes(p.pb) == 1);
+    CHECK(dings(p.pb) == 1);
   }
-  // Busy: the soft chime too.
+  // Busy: it rings too, at the doorbell volume.
   {
     Pair p(1792670400u);
     req_start(p);
     CHECK(p.b.choose_status(Status::Busy));
-    CHECK(p.a.tap_dog());
+    CHECK(p.b.tap_dog());
     p.run(200);
     req_jump(p, 31 * 60);
     p.run(200);
-    CHECK(chimes(p.pb) == 1 && p.pb.played.back().second == 75);
+    CHECK(dings(p.pb) == 1 && p.pb.played.back().second == 90);
   }
 
-  // Quiet hours (10 PM to 7 AM): the pill shows and pulses, but no chime until they end.
+  // Quiet hours (10 PM to 7 AM): the pill shows and pulses, but no sound until they end.
   {
     Pair p(1792627200u + 23 * 3600);  // 23:00 (offset 0 after req_start)
     req_start(p);
@@ -4026,13 +4065,14 @@ static void test_dog_nudge() {
     req_jump(p, 31 * 60);
     p.run(200);
     CHECK(p.a.view().dog.alert && p.b.view().dog.alert);
-    CHECK(chimes(p.pa) == 0 && chimes(p.pb) == 0);
+    CHECK(dings(p.pa) == 0 && dings(p.pb) == 0);
     req_jump(p, 7 * 3600 + 30 * 60);  // 07:01 the next morning: the dog is still out
     p.run(200);
-    CHECK(chimes(p.pa) == 1 && chimes(p.pb) == 1);
+    CHECK(dings(p.pa) == 1 && dings(p.pb) == 0);
   }
 
-  // Both dogs: each has its own clock; the pill names the dog(s) past the limit.
+  // Both dogs: each has its own clock; the pill names the dog(s) past the limit, and each floor
+  // rings for its own dog only.
   {
     Pair p(1792670400u);
     req_start(p);
@@ -4047,18 +4087,18 @@ static void test_dog_nudge() {
     dog_out_reading(p, 480);
     CHECK_STR(p.a.view().dog.pill, "LUCY OUT 30 min, 48" DEGF);
     CHECK_STR(p.b.view().dog.pill, "LUCY OUT 30 min, 48" DEGF);
-    CHECK(chimes(p.pa) == 1 && chimes(p.pb) == 1);
+    CHECK(dings(p.pa) == 1 && dings(p.pb) == 0);
     req_jump(p, 10 * 60);  // Lucy 40, Copper 30
     dog_out_reading(p, 480);
     CHECK_STR(p.a.view().dog.pill, "BOTH OUT 40 min, 48" DEGF);
-    CHECK(chimes(p.pa) == 2 && chimes(p.pb) == 2);  // Copper's own chime, once
+    CHECK(dings(p.pa) == 2 && dings(p.pb) == 1);  // a repeat upstairs for Lucy, the first downstairs for Copper
     CHECK(p.a.tap_dog());  // Lucy in: Copper alone
     p.run(300);
     dog_out_reading(p, 480);
     CHECK_STR(p.a.view().dog.pill, "COPPER OUT 30 min, 48" DEGF);
     CHECK(p.a.view().dog.alert);
   }
-  // Both cross together: one chime, not two on top of each other.
+  // Both cross together: each floor rings once, for its own dog.
   {
     Pair p(1792670400u);
     req_start(p);
@@ -4068,7 +4108,7 @@ static void test_dog_nudge() {
     req_jump(p, 31 * 60);
     p.run(200);
     CHECK_STR(p.a.view().dog.pill, "BOTH OUT 31 min");
-    CHECK(chimes(p.pa) == 1 && chimes(p.pb) == 1);
+    CHECK(dings(p.pa) == 1 && dings(p.pb) == 1);
   }
 
   // No clock: 30 minutes of elapsed time and no temperature, even with a reading.
@@ -4087,7 +4127,9 @@ static void test_dog_nudge() {
     p.run(300);
     CHECK(p.a.view().dog.alert && p.b.view().dog.alert);
     CHECK_STR(p.b.view().dog.pill, "COPPER OUT 30 min");
-    CHECK(chimes(p.pb) == 1);  // no clock, not known to be quiet: the soft chime at the capped volume
+    CHECK(dings(p.pb) == 1 && dings(p.pa) == 0);  // no clock, not known to be quiet: the dings at the capped volume
+    p.run(5 * 60 * 1000 + 2000);                  // and again five minutes on, by elapsed time alone
+    CHECK(dings(p.pb) == 2 && dings(p.pa) == 0);
   }
 }
 
@@ -4962,6 +5004,204 @@ static void test_presence() {
   }
 }
 
+// ---------------------------------------------------------------------------------------------
+// The spare picture lent to the screensaver (core/spare_loan.h; memory audit 2026-11-12, rec. 1)
+
+// A stand-in for the panel's screensaver host (ss_host.cpp sceneAlloc, sceneFree, spareHome) and
+// for the core's use of HostAlloc (appStart takes the fast block, then the frame-sized cache, and
+// frees what it took if it fails; appStop frees both). Sizes are small; the rules don't care.
+struct LoanHost {
+  static constexpr size_t kFrame = 64, kFast = 16;
+  SpareLoan loan;
+  alignas(16) uint8_t block[kFrame] = {};
+  bool cache_spare = false;
+  int own_allocs = 0, own_frees = 0;
+  bool psram_full = false;  // the scene's own allocations fail
+  void *cache = nullptr, *fast = nullptr;
+  bool running = false;
+
+  void *scene_alloc(size_t n) {
+    if (n == kFrame && !cache_spare) {
+      if (void *p = loan.lend(block, sizeof block, n)) {
+        cache_spare = true;
+        return p;
+      }
+    }
+    if (psram_full) return nullptr;
+    own_allocs++;
+    return std::malloc(n);
+  }
+  void scene_free(void *p) {
+    if (cache_spare && loan.give_back(p)) {
+      cache_spare = false;
+      return;
+    }
+    own_frees++;
+    std::free(p);
+  }
+  bool spare_home() {  // spareHome: true if it had to take it back
+    bool was_out = loan.reclaim();
+    cache_spare = false;
+    return was_out;
+  }
+  // appStart: fail_after_cache is a core that fails after taking its cache (it must give it back).
+  bool app_start(bool fail_after_cache = false) {
+    fast = scene_alloc(kFast);
+    if (!fast) return false;
+    cache = scene_alloc(kFrame);
+    if (!cache || fail_after_cache) {
+      if (cache) scene_free(cache);
+      scene_free(fast);
+      cache = fast = nullptr;
+      return false;
+    }
+    return true;
+  }
+  void app_stop() {
+    scene_free(cache);
+    scene_free(fast);
+    cache = fast = nullptr;
+  }
+  // screensaver_start: with the main screen's copy, then without (the fallback), as the host does.
+  bool start(bool first_try_fails = false) {
+    for (int with_copy = 1; with_copy >= 0 && !running; --with_copy) {
+      running = app_start(with_copy && first_try_fails);
+      if (!running) spare_home();
+    }
+    return running;
+  }
+  // endRun: every way a run ends (a touch with or without the reveal, the screen going dark, a stop
+  // from serial) comes through here.
+  bool stop() {
+    if (!running) return false;
+    app_stop();
+    running = false;
+    return spare_home();
+  }
+};
+
+static void test_spare_loan() {
+  // The art's own use: one slot at a time.
+  {
+    SpareLoan l;
+    CHECK(l.owner() == SpareLoan::kFree);
+    CHECK(l.claim(2));
+    CHECK(!l.claim(3));
+    CHECK(l.owner() == 2);
+    CHECK(l.release());
+    CHECK(!l.release());
+    CHECK(!l.claim(-1));
+    CHECK(l.refused() == 0);  // an art slot holding it isn't a loan
+  }
+  // Lending: only while free, only the block's exact size, aligned, and once.
+  {
+    SpareLoan l;
+    alignas(16) uint8_t b[64];
+    CHECK(l.claim(0));
+    CHECK(l.lend(b, sizeof b, sizeof b) == nullptr);  // an art slot has it: the screensaver allocates its own
+    CHECK(l.owner() == 0);
+    l.release();
+    CHECK(l.lend(b, sizeof b, 32) == nullptr);        // the wrong size
+    CHECK(l.lend(nullptr, sizeof b, sizeof b) == nullptr);
+    CHECK(l.lend(b + 1, sizeof b - 1, sizeof b - 1) == nullptr);  // not 4-byte aligned
+    CHECK(!l.lent());
+    CHECK(l.lend(b, sizeof b, sizeof b) == b);
+    CHECK(l.lent() && l.lends() == 1);
+    CHECK(l.lend(b, sizeof b, sizeof b) == nullptr);  // a double borrow is refused
+    CHECK(l.lends() == 1);
+    // While lent: art claims are refused and counted, a release doesn't take it from the screensaver.
+    CHECK(!l.claim(0));
+    CHECK(!l.claim(2));
+    CHECK(l.refused() == 2);
+    CHECK(!l.release());
+    CHECK(l.lent());
+    // Only the lent pointer brings it home, and only once.
+    uint8_t other[64];
+    CHECK(!l.give_back(other));
+    CHECK(!l.give_back(nullptr));
+    CHECK(l.lent());
+    CHECK(l.give_back(b));
+    CHECK(!l.lent() && l.returns() == 1);
+    CHECK(!l.give_back(b));
+    CHECK(!l.reclaim());   // home already: nothing to take back
+    // The deferred art is served now.
+    CHECK(l.claim(0));
+    CHECK(l.owner() == 0);
+    l.release();
+    // reclaim: a block still out after a stop (a bug) comes home and is counted.
+    CHECK(l.lend(b, sizeof b, sizeof b) == b);
+    CHECK(l.reclaim());
+    CHECK(!l.lent() && l.reclaims() == 1);
+    CHECK(!l.give_back(b));  // it was taken back: a late free isn't ours
+    // A new loan starts its refusal count again.
+    CHECK(l.lend(b, sizeof b, sizeof b) == b);
+    CHECK(l.refused() == 0);
+    CHECK(l.give_back(b));
+  }
+  // Every way a run ends gives it back, through the core's own free, never through reclaim.
+  {
+    const char *const kEnds[] = {"touch, reveal", "touch, reveal cut short", "touch, no reveal", "screen dark",
+                                 "serial ss", "serial ss seed N"};
+    for (const char *end : kEnds) {
+      (void)end;
+      LoanHost h;
+      CHECK(h.start());
+      CHECK(h.cache_spare && h.loan.lent() && h.cache == h.block);
+      CHECK(h.own_allocs == 1);  // only the fast block came from "PSRAM"
+      CHECK(!h.loan.claim(0));  // a tile change-over waits
+      CHECK(!h.stop());          // false: it came home on its own
+      CHECK(!h.loan.lent() && h.loan.returns() == 1 && h.loan.reclaims() == 0);
+      CHECK(h.own_allocs == h.own_frees);
+      CHECK(h.loan.claim(0));   // and is served after the stop
+    }
+  }
+  // The doorbell doesn't end a run: the loan stays out until the stop.
+  {
+    LoanHost h;
+    CHECK(h.start());
+    CHECK(h.loan.lent());  // (a knock posts an event to the scene; nothing here changes)
+    CHECK(!h.stop() && !h.loan.lent());
+  }
+  // The spare busy (a tile drawing or fading) at the start: the old way, its own cache.
+  {
+    LoanHost h;
+    CHECK(h.loan.claim(1));
+    CHECK(h.start());
+    CHECK(!h.cache_spare && h.cache != nullptr && h.cache != h.block);
+    CHECK(h.own_allocs == 2);
+    CHECK(h.loan.owner() == 1);   // the tile keeps it
+    CHECK(!h.stop());
+    CHECK(h.own_allocs == h.own_frees && h.loan.owner() == 1);
+    h.loan.release();
+  }
+  // A start that fails after taking the cache gives it back, and the fallback (without the main
+  // screen's copy) borrows it again.
+  {
+    LoanHost h;
+    CHECK(h.start(true));
+    CHECK(h.cache_spare && h.loan.lent() && h.cache == h.block);
+    CHECK(h.loan.lends() == 2 && h.loan.returns() == 1);
+    CHECK(!h.stop());
+    CHECK(!h.loan.lent() && h.loan.returns() == 2 && h.own_allocs == h.own_frees);
+  }
+  // A start that can't happen at all (no memory for the fast block): nothing borrowed, nothing kept.
+  {
+    LoanHost h;
+    h.psram_full = true;
+    CHECK(!h.start());
+    CHECK(!h.loan.lent() && h.loan.lends() == 0);
+    CHECK(h.loan.claim(0));
+  }
+  // The spare busy and no PSRAM for an own cache: no start, and the tile still has it.
+  {
+    LoanHost h;
+    CHECK(h.loan.claim(4));
+    h.psram_full = true;
+    CHECK(!h.start());
+    CHECK(h.loan.owner() == 4);
+  }
+}
+
 int main(int argc, char **argv) {
   const char *wav_dir = argc > 1 ? argv[1] : nullptr;
   test_sht4x();
@@ -5020,6 +5260,7 @@ int main(int argc, char **argv) {
   test_presence_notice_mask_saved();
   test_presence_wire();
   test_presence();
+  test_spare_loan();
   std::printf("%d passed, %d failed\n", g_pass, g_fail);
   return g_fail ? 1 : 0;
 }

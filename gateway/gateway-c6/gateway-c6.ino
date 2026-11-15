@@ -182,6 +182,17 @@ struct Shown {
 };
 Shown g_shown;
 
+// The screen starts OFF at every power-up and reset (Mike, 2026-11-15): the gateway hangs facing
+// the floor on the Pi, nothing reads it, and the Pi's 5 V supply is marginal, so the backlight and
+// the redraws were wasted current. Everything it shows is in the serial hello and status lines too.
+// The button on the board's side (BOOT, GPIO 9, low when pressed) turns the screen on, and off
+// again; left on, it goes off by itself after kLcdOnMs. Nothing is saved: a restart is always dark.
+// (Holding that button while plugging the board in still puts the chip in its loader, as before.)
+constexpr int kButton = 9;
+constexpr uint32_t kLcdOnMs = 10u * 60u * 1000u;
+bool g_lcd_on = false;
+uint32_t g_lcd_since = 0;
+
 void lcd_row(int y, const char *s, int scale, uint16_t fg) {
   char padded[41];
   int cols = lcd::kW / (6 * scale);
@@ -278,6 +289,8 @@ void finish_usb_tx() {
 }  // namespace
 
 void setup() {
+  lcd::off();  // before anything else: the backlight is dark from the first moment
+  pinMode(kButton, INPUT_PULLUP);
   // Quiet: only errors from the system's own logs (they start "E (", never "{").
   esp_log_level_set("*", ESP_LOG_ERROR);
   Serial.setRxBufferSize(1024);
@@ -301,9 +314,34 @@ void setup() {
   if (g_problem[0]) note("%s", g_problem);
   else if (memcmp(g_mac, kGatewayMac, 6)) note("this board's MAC isn't TCOMM_MAC_GATEWAY in secrets.h; the panels will ignore it");
 
-  lcd::begin();
-  lcd_static();
-  lcd_update();
+}
+
+// The side button: each press (30 ms steady, then released state ignored until it is let go)
+// turns the screen on or off.
+void lcd_button() {
+  static bool down = false;
+  static uint32_t changed = 0;
+  bool now_down = digitalRead(kButton) == LOW;
+  if (now_down != down && millis() - changed >= 30) {
+    down = now_down;
+    changed = millis();
+    if (down) {
+      g_lcd_on = !g_lcd_on;
+      if (g_lcd_on) {
+        g_lcd_since = millis();
+        lcd::begin();
+        g_shown = Shown();  // draw every row afresh
+        lcd_static();
+        lcd_update();
+      } else {
+        lcd::off();
+      }
+    }
+  }
+  if (g_lcd_on && millis() - g_lcd_since >= kLcdOnMs) {
+    g_lcd_on = false;
+    lcd::off();
+  }
 }
 
 void loop() {
@@ -313,7 +351,8 @@ void loop() {
   g_gw->tick();
   finish_usb_tx();
   static uint32_t drawn = 0;
-  if (millis() - drawn >= 200) {
+  lcd_button();
+  if (g_lcd_on && millis() - drawn >= 200) {
     drawn = millis();
     lcd_update();
   }

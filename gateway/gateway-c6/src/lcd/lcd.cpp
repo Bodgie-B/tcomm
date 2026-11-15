@@ -49,6 +49,15 @@ void pixels_end() {
 
 }  // namespace
 
+void off() {
+  pinMode(kBacklight, OUTPUT);
+  digitalWrite(kBacklight, LOW);
+  pinMode(kRst, OUTPUT);
+  digitalWrite(kRst, LOW);  // held in reset: no oscillator, no charge pump, no SPI started
+  pinMode(kCs, OUTPUT);
+  digitalWrite(kCs, HIGH);
+}
+
 void begin() {
   pinMode(kCs, OUTPUT);
   pinMode(kDc, OUTPUT);

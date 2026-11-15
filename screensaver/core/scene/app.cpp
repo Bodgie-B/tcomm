@@ -208,6 +208,7 @@ void beginLoop(App* a) {
   {   // the new loop's sky, before its cache is built (every caller rebuilds it next)
     float flash = 0.f;
     a->sky = skyNow(a, sceneWeather(a, &flash).overcast);
+    a->world.sky_cover = a->sky.cover;   // the world's high clouds (cover 2-3) follow the cache's cover
   }
   a->pal_rebuilds = 0;
   a->timeline.reset();
@@ -277,6 +278,15 @@ bool appTick(App* a) {
   fireIceSetInputs(a->world, a->in.temp_ask);
   mailSetInputs(a->world, a->in.mail);
   visitorsSetInputs(a->world, a->in.visitors, dogsNight(a), a->sky);
+  if (!spineSetPiece(a->world.plan.family)) {   // the stream (stream.h; camp loops only: it shares the Lookout's bytes)
+    float m = sceneMood(a);
+    m -= 6.f * floorf(m / 6.f);
+    const bool twilight = (m > 0.6f && m < 1.6f) || (m > 4.4f && m < 5.6f);
+    const bool night = m < 0.5f || m > 5.5f;
+    // The old sky parks the moon high by mood; the real one has it up or not. A cloud deck hides it.
+    const bool moon = night && a->sky.cover < 4 && (!a->sky.real || (a->sky.moon && a->sky.moon_y < LS_HORIZON));
+    streamSetInputs(a->world, moon, twilight, night || a->in.night_mode, a->in.month);
+  }
   // A passer-by at the upstairs panel: he waves, once, if he can while they are there.
   if (!a->in.passer_by) {
     a->passer_waved = false;
@@ -344,6 +354,7 @@ bool appTick(App* a) {
       }
       a->sky = sk;
     }
+    a->world.sky_cover = a->sky.cover;   // before any worldTick below: the high clouds go with the cache's cover
   }
 
   // The doorbell reaction holds the story still (react.h): no beat or minor
@@ -352,7 +363,8 @@ bool appTick(App* a) {
     worldTick(a->world, a->rng, a->renderer);
     return false;
   }
-  // Fire and ice takes his story over the same way (fireice.h), from a calm moment until it is done.
+  // Fire and ice takes his story over the same way (fireice.h), an episode of about two minutes a
+  // loop from a calm moment until it is done.
   if (fireIceCanStart(a->world)) fireIceBegin(a->world, a->loop_seed ^ ((uint64_t)a->world.tick * 0x9E3779B97F4A7C15ull));
   if (fireIceHolds(a->world)) {
     worldTick(a->world, a->rng, a->renderer);

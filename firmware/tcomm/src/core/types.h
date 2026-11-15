@@ -38,7 +38,8 @@ inline Mode mode_for(Phase p) {
 }
 
 // Sounds the panel plays. Synthesized at boot (core/synth.h).
-enum class Sound : uint8_t { Chime = 0, SoftChime = 1, ReplyYes = 2, ReplyNo = 3, Count = 4 };
+// DogAlert: five quick dings, for a dog out too long (Mike, 2026-11-13: not to be taken for a doorbell).
+enum class Sound : uint8_t { Chime = 0, SoftChime = 1, ReplyYes = 2, ReplyNo = 3, DogAlert = 4, Count = 5 };
 
 // Wall clock as the platform reports it. quality ranks where the time came from, so units
 // copy the clock only from a better source and never ping-pong.

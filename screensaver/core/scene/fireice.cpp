@@ -21,6 +21,15 @@ inline float minf(float a, float b) { return a < b ? a : b; }
 inline float maxf(float a, float b) { return a > b ? a : b; }
 inline float absf(float a) { return a < 0.f ? -a : a; }
 
+// ---- the episode (Mike, 2026-11-15: "about two minutes per loop"; TUNABLE) -----------------------
+//
+// Seconds a mode plays before it winds down on its own (fireice.h, the rule at the top). The wind-
+// down (the fires die and he douses the last and puts the bucket away; or the ice melts back and the
+// fire settles) and the walk home come on top: measured, a whole episode with the arrows left as they
+// are lasts about 110-130 s mild and 160-180 s urgent (tests/test_fireice.cpp [11] holds it there):
+// the wind-down takes 10-15 s mild, 17-20 s urgent cold and 26-35 s urgent hot (more fires to douse).
+constexpr float kEpisodeMild = 108.f, kEpisodeUrgent = 143.f;
+
 // ---- tuning (PROPOSED) ---------------------------------------------------------------------------
 
 // Too hot. Seconds between new fires: mild about one per bucket run (he keeps even), urgent several.
@@ -345,10 +354,32 @@ void pitBack(World& w) {
   w.amb.smoke_k_to = f.pit_smoke;
 }
 
+// ---- the episode rule ----------------------------------------------------------------------------------
+
+// The arrows in one byte: bits 0-1 the kind (FireIceMode), bit 2 urgent, bits 3-5 the level (0..6).
+inline uint8_t sigOf(uint8_t want, uint8_t level, bool urgent) {
+  return (uint8_t)((want & 3u) | (urgent ? 4u : 0u) | ((unsigned)(level > 7 ? 7 : level) << 3));
+}
+inline uint8_t sigWant(uint8_t s) { return (uint8_t)(s & 3u); }
+inline bool sigUrgent(uint8_t s) { return (s & 4u) != 0; }
+inline uint8_t sigLevel(uint8_t s) { return (uint8_t)(s >> 3); }
+
+// A new request since the arrows the episode played: another kind, more arrows, or urgent now.
+bool newRequest(const FireIce& f) {
+  if (f.want == FI_NONE) return false;
+  return f.want != sigWant(f.seen) || f.level > sigLevel(f.seen) || (f.urgent && !sigUrgent(f.seen));
+}
+
+bool owed(const FireIce& f) { return f.want != FI_NONE && (!f.had || newRequest(f)); }
+
+float episodeLen(const FireIce& f) { return f.urgent ? kEpisodeUrgent : kEpisodeMild; }
+
 // ---- modes -------------------------------------------------------------------------------------------
 
 void beginMode(World& w, uint8_t mode) {
   FireIce& f = w.fi;
+  f.had = true;
+  f.seen = sigOf(f.want, f.level, f.urgent);   // what this episode plays
   f.mode = mode;
   f.ending = false;
   f.t = 0.f;
@@ -361,13 +392,13 @@ void beginMode(World& w, uint8_t mode) {
   else hikerSetPose(w.hiker, POSE_HUG, 0.45f);
 }
 
-// Wound down: the next mode, or home.
+// Wound down: the next mode (a new request came meanwhile: the other kind, say), or home.
 void modeDone(World& w) {
   FireIce& f = w.fi;
   f.mode = FI_NONE;
   f.ending = false;
   fxRest(w);
-  if (f.want != FI_NONE) {
+  if (owed(f)) {
     beginMode(w, f.want);
     return;
   }
@@ -702,6 +733,18 @@ void fireIceSetInputs(World& w, const uint8_t ask[3]) {
   f.level = level;
   f.urgent = urgent;
   if (f.on && f.mode != FI_NONE && f.want != f.mode) f.ending = true;
+  // What the loop's episode has played (fireice.h, the rule at the top). An episode under way, not
+  // yet winding down, shows the arrows as they are (mild to urgent: it runs to the urgent length).
+  // Otherwise it only ever comes down to what is showing, so whatever rises above it later is a new
+  // request: all clear, and any arrow after it is new; one of two gone, and its coming back is new.
+  if (f.on && f.mode != FI_NONE && f.mode == want && !f.ending) {
+    f.seen = sigOf(want, level, urgent);
+  } else if (want == FI_NONE) {
+    f.seen = 0;
+  } else if (want == sigWant(f.seen)) {
+    const uint8_t lv = level < sigLevel(f.seen) ? level : sigLevel(f.seen);
+    f.seen = sigOf(want, lv, urgent && sigUrgent(f.seen));
+  }
 }
 
 bool fireIceHolds(const World& w) { return w.fi.on; }
@@ -719,7 +762,7 @@ const char* fireIceStageName(const World& w) {
 
 bool fireIceCanStart(const World& w) {
   const FireIce& f = w.fi;
-  if (f.on || f.want == FI_NONE || visitorsHolds(w)) return false;
+  if (f.on || !owed(f) || visitorsHolds(w)) return false;
   return fireIceCalm(w);
 }
 
@@ -803,6 +846,8 @@ void fireIceStep(World& w) {
     f.splash_t += kDt;
     if (f.splash_t > 0.6f) f.splash_t = -1.f;
   }
+  // The episode's time is up: wind down as when the arrows clear (fireice.h).
+  if (f.mode != FI_NONE && !f.ending && f.t >= episodeLen(f)) f.ending = true;
   stepFires(w);
   stepIce(w);
   // Urgent heat warms the light a step at a time.
@@ -814,7 +859,7 @@ void fireIceStep(World& w) {
   if (f.mode == FI_HOT) stepHot(w);
   else if (f.mode == FI_COLD) stepCold(w);
   else if (f.stage == S_HOME) {
-    if (f.want != FI_NONE) {   // the arrows are back before he got home
+    if (owed(f)) {   // a new request (or the arrows back) before he got home
       beginMode(w, f.want);
     } else if (walked(w)) {
       w.hiker.facing = f.home_face;
@@ -822,7 +867,7 @@ void fireIceStep(World& w) {
       stage(f, S_SETTLE);
     }
   } else if (f.stage == S_SETTLE) {
-    if (f.want != FI_NONE) beginMode(w, f.want);
+    if (owed(f)) beginMode(w, f.want);
     else if (f.st >= 0.6f && !w.hiker.blending && f.warm_q == 0 && f.ice_q == kIceNoneQ && f.pine_q == 0 && f.tent_q == 0 &&
              f.steam.t < 0.f && f.splash_t < 0.f && f.breath_t < 0.f)
       finish(w);

@@ -6,6 +6,7 @@
 #include <math.h>
 #include <stdio.h>
 #include "../core/brightness.h"
+#include "../core/spare_loan.h"
 #include "board_art.h"
 #include "ui_internal.h"
 
@@ -60,33 +61,42 @@ Art g_sky, g_bell_art[2], g_outside_art;
 // into the spare; then the sky trades memory with it and the others are copied in (a tile's fade
 // shows the spare itself until it's over). Each used to keep a second copy of its own for this:
 // 1.8 MB of PSRAM, against 0.77 MB for the spare.
+//
+// While the screensaver runs, the spare is lent to it as the scene's layer cache (memory audit
+// 2026-11-12, recommendation 1; spare_lend below, ss_host.cpp sceneAlloc). The rules, in full in
+// core/spare_loan.h: one owner at a time (free, one art slot, or the screensaver); the screensaver
+// borrows it only while it is free, for exactly its size, and gives it back when its core frees the
+// cache, at whatever stop; while it is lent every spare_claim says no, so the art change-overs wait
+// and are asked for again on the frames after it stops; spare_release never takes it from the
+// screensaver. The sky trades memory with the spare only when its finished drawing is taken, which
+// needs the sky to hold the spare, so the block lent out can't change while it is out.
+constexpr size_t kSpareBytes = (size_t)art::kScreenW * art::kScreenH * 2;
 struct Spare {
-  uint8_t *mem = nullptr;  // the sky's size, enough for any of the others
+  uint8_t *mem = nullptr;  // the sky's size (kSpareBytes), enough for any of the others
   float *row[2] = {};      // scanline buffers, one per view
   gfx::Canvas view[2];     // what's being drawn (the doorbell draws its two pictures at once)
   lv_img_dsc_t dsc = {};   // view[0] as an image, for a tile's fade
-  int owner = -1;          // the ArtSlot using it, or -1
+  tc::SpareLoan loan;      // who has it: the ArtSlot using it, nobody, or the screensaver
 };
 Spare g_spare;
 void (*g_copy_pause)() = nullptr;
 
 bool spare_begin() {
-  g_spare.mem = (uint8_t *)gfx::alloc_bytes((size_t)art::kScreenW * art::kScreenH * 2);
+  g_spare.mem = (uint8_t *)gfx::alloc_bytes(kSpareBytes);
   for (float *&r : g_spare.row) r = (float *)gfx::alloc_bytes(gfx::Canvas::scanline_bytes(art::kScreenW));
   return g_spare.mem && g_spare.row[0] && g_spare.row[1];
 }
 
 // The spare for slot, its view 0 (and for the doorbell view 1, after it) set to w x h and cleared;
-// null while another picture has it.
+// null while another picture has it, or the screensaver.
 gfx::Canvas *spare_claim(int slot, int w, int h, bool alpha) {
-  if (g_spare.owner >= 0 || !g_spare.mem || !g_spare.row[0] || !g_spare.row[1]) return nullptr;
-  g_spare.owner = slot;
+  if (!g_spare.mem || !g_spare.row[0] || !g_spare.row[1] || !g_spare.loan.claim(slot)) return nullptr;
   g_spare.view[0].view(g_spare.mem, g_spare.row[0], w, h, alpha);
   if (slot == kSlotBell) g_spare.view[1].view(g_spare.mem + g_spare.view[0].bytes(), g_spare.row[1], w, h, alpha);
   return &g_spare.view[0];
 }
 
-void spare_release() { g_spare.owner = -1; }
+void spare_release() { g_spare.loan.release(); }  // an art slot's; never the screensaver's loan
 
 // Copies view k into a picture's own memory a few KB at a time, pausing between, so the screen's
 // own reads from PSRAM aren't starved (that shows as streaks); then shows it in img, if given.
@@ -124,8 +134,9 @@ lv_obj_t *g_ice_img;  // WeatherGate's danger cold: icicles over the top of the 
 lv_obj_t *g_cal_chev, *g_cal_chev_img;
 Art g_chev_up;
 int g_cal_chev_state = -1;
-bool g_ice_drawn = false;
-uint32_t g_ice_cold_at = 0;  // when cold was last true
+bool g_ice_drawn = false;      // the icicles' picture exists (only while they show, and 3 frames after)
+bool g_ice_failed = false;     // no memory for it at the last try (while cold)
+uint32_t g_ice_failed_at = 0;  // when that was
 int g_ice_free_frames = 0;
 lv_obj_t *g_bell_cont, *g_bell_img, *g_bell_word, *g_bell_line;
 // The bell itself, over the tile's picture: it shakes for each ring sent or received, and it's red
@@ -358,7 +369,7 @@ void tile_render(FloorTile &t, const FloorView &fv, bool acted = false) {
     else spare_release();                     // a result that's out of date is dropped
   }
   // A fade cut short never calls tile_fade_done: finish its work here, or the spare stays taken.
-  if (g_spare.owner == t.slot && slot.idle() && !lv_anim_get(t.img_top, nullptr)) {
+  if (g_spare.loan.owner() == t.slot && slot.idle() && !lv_anim_get(t.img_top, nullptr)) {
     spare_copy(t.art, 0, t.img_bot);
     show(t.img_top, false);
     lv_obj_set_style_opa(t.img_top, LV_OPA_COVER, 0);
@@ -1200,21 +1211,30 @@ void render_outside(const View &v) {
     set_text(g_out_phrase, fit.text);
     lv_obj_set_y(g_out_phrase, board_y(fit.font, 86 - (fit.px * 1.24f + (fit.lines - 1) * pitch) / 2));
   }
-  // Danger cold: icicles, drawn when first needed. Their picture (240 KB of PSRAM) goes once cold has
-  // been over for a minute, so a flickering flag doesn't thrash the allocator, and not in the frame
-  // the image is hidden: a few frames later, as the comfort arrows do. Cold again, and it's redrawn.
+  // Danger cold: icicles. Their picture (240,000 bytes of PSRAM) exists only while they show (memory
+  // audit 2026-11-12, recommendation 3): drawn when cold comes, freed when it goes, not in the frame
+  // the image is hidden but 3 frames later, as the comfort arrows do. Cold again, and it's redrawn
+  // (art::icicles, on this task). No memory for it: no icicles, and another try every 5 s, not
+  // every frame.
   bool cold = v.outside.valid && v.outside.cold;
   if (cold) {
-    g_ice_cold_at = lv_tick_get();
     g_ice_free_frames = 0;
-    if (!g_ice_drawn && g_ice_art.make(art::kScreenW, art::kIciclesH, true)) {
-      art::icicles(g_ice_art.cv);
-      g_ice_art.show(g_ice_img);
-      g_ice_drawn = true;
+    if (!g_ice_drawn && (!g_ice_failed || lv_tick_elaps(g_ice_failed_at) >= 5000)) {
+      if (g_ice_art.make(art::kScreenW, art::kIciclesH, true)) {
+        art::icicles(g_ice_art.cv);
+        g_ice_art.show(g_ice_img);
+        g_ice_drawn = true;
+        g_ice_failed = false;
+      } else {
+        g_ice_failed = true;
+        g_ice_failed_at = lv_tick_get();
+      }
     }
+  } else {
+    g_ice_failed = false;
   }
   show(g_ice_img, cold && g_ice_drawn);
-  if (!cold && g_ice_drawn && lv_tick_elaps(g_ice_cold_at) >= 60000 && ++g_ice_free_frames >= 3) {
+  if (!cold && g_ice_drawn && ++g_ice_free_frames >= 3) {
     lv_img_cache_invalidate_src(&g_ice_art.dsc);  // the image is hidden and nothing else reads it
     g_ice_art.cv.destroy();
     g_ice_drawn = false;
@@ -1465,6 +1485,14 @@ void render(const Frame &f) {
 void tap_gear() { gear_tapped(); }
 
 void set_copy_pause(void (*pause)()) { g_copy_pause = pause; }
+
+// The spare picture's loan to the screensaver (the rules: core/spare_loan.h, and Spare above).
+void *spare_lend(size_t bytes) { return g_spare.mem ? g_spare.loan.lend(g_spare.mem, kSpareBytes, bytes) : nullptr; }
+bool spare_give_back(void *p) { return g_spare.loan.give_back(p); }
+bool spare_reclaim() { return g_spare.loan.reclaim(); }
+bool spare_lent() { return g_spare.loan.lent(); }
+uint32_t spare_refused() { return g_spare.loan.refused(); }
+bool icicles_held() { return g_ice_drawn; }
 
 void scroll_sheet(int y) {
   if (g_sheet_root && lv_obj_get_child_cnt(g_sheet_root)) lv_obj_scroll_to_y(lv_obj_get_child(g_sheet_root, 0), y, LV_ANIM_OFF);

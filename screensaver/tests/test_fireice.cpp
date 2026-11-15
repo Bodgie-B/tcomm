@@ -15,6 +15,18 @@
 //   [8] the dogs: no fire starts near them; in the cold they lie in the warm circle
 //   [9] the wave: once per passer-by, short, the story waits for it; not in an urgent spell
 //  [10] memory: the scene block within its budget
+//  The episode (Mike, 2026-11-15: "about two minutes per loop"; fireice.h, the rule at the top):
+//  [11] with the arrows left as they are, an episode lasts 110-130 s mild and 160-180 s urgent, hot
+//       and cold, in each camp family; then nothing is left behind, he is back where he was, the
+//       story stood still for it and carries on; incremental frames equal full renders through its
+//       start and its end; mild to urgent under way runs it to the urgent length, no extra one after
+//  [12] exactly one episode a loop over several loops while the arrow stays; never one running as
+//       a loop ends; every planned major still plays
+//  [13] a new request in the loop (mild to urgent, the other kind, one more arrow, an arrow back
+//       after all cleared) earns one more episode in the same loop, and only one; one of two arrows
+//       going does not
+//  [14] two runs through episodes agree frame for frame
+//  [15] majors per hour over many midday hours with no arrow, a mild and an urgent arrow showing
 //
 // Plain executable; non-zero on failure.
 #include "ss_app.h"
@@ -25,6 +37,7 @@
 #include "scene/spine.h"
 #include "scene/world.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -87,6 +100,12 @@ struct Rig {
   }
   void step() {
     appTick(app);
+    appRender(app, surf);
+  }
+  // A tick with no drawing (long runs); true when a loop ended. resync() before drawing again.
+  bool tickOnly() { return appTick(app); }
+  void resync() {
+    appInvalidate(app);
     appRender(app, surf);
   }
   // A full render into the second buffer, compared with the frame built tick by tick.
@@ -254,7 +273,8 @@ static void testSpell(int fam, uint8_t ask, uint64_t seed) {
     }
   }
 
-  // [4] cleared.
+  // [4] cleared, mid-episode (the episode's own time is not up yet).
+  CHECK(r.w().fi.on && !r.w().fi.ending, "the episode was not under way when the arrows cleared");
   r.ask(0);
   int off = -1, diffs2 = 0;
   for (int t = 0; t < 25 * 150 && off < 0; ++t) {
@@ -476,6 +496,317 @@ static void testMemory() {
   CHECK(appAppBytes() <= 29056u + 1200u, "stage 14 over its 1,200-byte budget (%u)", appAppBytes());
 }
 
+// ---- [11] ------------------------------------------------------------------------------------------
+
+// Where the story stood as an episode began, to check it stood still and he is back.
+struct Held {
+  Vec2 home;
+  uint8_t pit;
+  uint32_t story;      // appTickCount
+  const Step* steps;
+  uint8_t i;
+  uint16_t ticks;
+  uint32_t loop;
+};
+static Held heldNow(Rig& r) {
+  const World& w = r.w();
+  return Held{w.fi.home, w.fi.pit_state, appTickCount(r.app), w.spine.run.steps, w.spine.run.i, w.spine.run.ticks, w.memory.loop_count};
+}
+// After an episode let go: nothing left, he is back, the story is where it stood.
+static void checkClean(Rig& r, const Held& h, const char* tag) {
+  const World& w = r.w();
+  int left = 0;
+  for (const FiFlame& q : w.fi.f) left += q.k > 0.f ? 1 : 0;
+  CHECK(left == 0 && w.fi.bucket == 0 && w.fi.ice_q == 0 && w.fi.pine_q == 0 && w.fi.tent_q == 0 && w.fi.warm_q == 0,
+        "%s: left behind: fires %d bucket %d ice %d pine %d tent %d warm %d", tag, left, w.fi.bucket, w.fi.ice_q, w.fi.pine_q,
+        w.fi.tent_q, w.fi.warm_q);
+  CHECK(w.fi.steam.t < 0.f && w.fi.splash_t < 0.f && w.fi.breath_t < 0.f, "%s: a puff left", tag);
+  CHECK(w.tent.snow == 0.f || w.weather.kind == WX_SNOW, "%s: frost left on the tent", tag);
+  CHECK(w.fire.state == h.pit, "%s: the pit is %d, was %d", tag, w.fire.state, h.pit);
+  CHECK(!w.busy, "%s: busy left set", tag);
+  CHECK(w.fx.lean == 0.f && w.fx.reach == 0.f && w.fx.stomp == 0.f && w.fx.arm_w[0] == 0.f && w.fx.arm_w[1] == 0.f,
+        "%s: his offsets left set", tag);
+  CHECK(w.hiker.carry == CARRY_NONE, "%s: something left in his hands", tag);
+  // Put back where he was; a walk he was on sets off again in the same tick (one step's worth).
+  const float tol = w.hiker.walking ? 4.f : 0.f;
+  CHECK(fabsf(w.hiker.feet.x - h.home.x) <= tol && fabsf(w.hiker.feet.y - h.home.y) <= tol, "%s: he is at %.1f,%.1f, was at %.1f,%.1f", tag,
+          (double)w.hiker.feet.x, (double)w.hiker.feet.y, (double)h.home.x, (double)h.home.y);
+  CHECK(appTickCount(r.app) == h.story, "%s: the story moved during the episode (%u to %u)", tag, h.story, appTickCount(r.app));
+  CHECK(w.spine.run.steps == h.steps && w.spine.run.i == h.i && w.spine.run.ticks == h.ticks, "%s: not back in his script where he was", tag);
+  CHECK(w.memory.loop_count == h.loop, "%s: the loop changed under an episode", tag);
+  CHECK(staticDiffFromClean(r) == 0, "%s: the cached background is not a clean one", tag);
+}
+
+static void testEpisodeLength() {
+  printf("[11] an episode's length, and after it\n");
+  for (int fam : {SF_MIDDAY, SF_EVENING, SF_MORNING})
+    for (uint8_t ask : {(uint8_t)3, (uint8_t)4, (uint8_t)2, (uint8_t)1}) {
+      const bool urgent = ask == 1 || ask == 4;
+      Rig r;
+      CHECK(r.start(fam == SF_EVENING ? 2 : 1, makeInputs(fam, fam == SF_MIDDAY ? 3 : 0)), "start");
+      for (int t = 0; t < 25 * 30; ++t) r.step();
+      r.ask(ask);
+      const int on = waitOn(r, 25 * 600);
+      CHECK(on >= 0, "%s ask %d: never started", famName(fam), ask);
+      if (on < 0) {
+        r.stop();
+        continue;
+      }
+      const Held h = heldNow(r);
+      int len = 1, ending_at = -1, diffs = 0, checked = 0;
+      // Every frame through the start (its first 2 s), the start of the wind-down and the end.
+      diffs += r.fullDiff() ? 1 : 0;
+      ++checked;
+      while (r.w().fi.on && len < 25 * 400) {
+        r.step();
+        ++len;
+        if (ending_at < 0 && r.w().fi.ending) ending_at = len;
+        const bool near = len < 50 || (ending_at >= 0 && len - ending_at < 50) || !r.w().fi.on || len % 25 == 0;
+        if (near) {
+          diffs += r.fullDiff() ? 1 : 0;
+          ++checked;
+        }
+      }
+      for (int t = 0; t < 50; ++t) {
+        r.step();
+        diffs += r.fullDiff() ? 1 : 0;
+        ++checked;
+      }
+      const float s = (float)len / 25.f;
+      printf("  %s ask %d: on after %.1f s, winds down from %.1f s, lets go after %.1f s; %d/%d frames differ\n", famName(fam), ask,
+             on / 25.0, ending_at / 25.0, (double)s, diffs, checked);
+      CHECK(urgent ? (s >= 160.f && s <= 180.f) : (s >= 110.f && s <= 130.f), "%s ask %d: an episode of %.1f s", famName(fam), ask,
+            (double)s);
+      CHECK(diffs == 0, "%s ask %d: incremental frames differ from a full render (%d of %d)", famName(fam), ask, diffs, checked);
+      // The 50 ticks above: nothing new started, and the story moved on.
+      CHECK(!r.w().fi.on, "%s ask %d: it started again straight away", famName(fam), ask);
+      CHECK(appTickCount(r.app) == h.story + 50 || r.w().memory.loop_count != h.loop, "%s ask %d: the story did not carry on", famName(fam), ask);
+      r.stop();
+      // The same again, checked at the tick it lets go.
+      Rig q;
+      CHECK(q.start(fam == SF_EVENING ? 2 : 1, makeInputs(fam, fam == SF_MIDDAY ? 3 : 0)), "start");
+      for (int t = 0; t < 25 * 30; ++t) q.tickOnly();
+      q.ask(ask);
+      while (!q.w().fi.on) q.tickOnly();
+      const Held hq = heldNow(q);
+      while (q.w().fi.on) q.tickOnly();
+      q.resync();
+      char tag[48];
+      snprintf(tag, sizeof tag, "%s ask %d", famName(fam), ask);
+      checkClean(q, hq, tag);
+      q.stop();
+    }
+  // Mild to urgent while one is under way: it runs to the urgent length; no extra one after it.
+  Rig r;
+  CHECK(r.start(1, makeInputs(SF_MIDDAY)), "start");
+  for (int t = 0; t < 25 * 30; ++t) r.tickOnly();
+  r.ask(2);
+  while (!r.w().fi.on) r.tickOnly();
+  const uint32_t loop = r.w().memory.loop_count;
+  int len = 0;
+  for (; len < 25 * 60; ++len) r.tickOnly();
+  r.ask(1);
+  while (r.w().fi.on && len < 25 * 400) {
+    r.tickOnly();
+    ++len;
+  }
+  int again = 0;
+  bool prev = false;
+  while (r.w().memory.loop_count == loop) {
+    r.tickOnly();
+    again += r.w().fi.on && !prev ? 1 : 0;
+    prev = r.w().fi.on;
+  }
+  printf("  mild to urgent at 60 s: let go after %.1f s, %d more in the loop\n", len / 25.0, again);
+  CHECK(len >= 25 * 160 && len <= 25 * 180, "mild to urgent: an episode of %.1f s", len / 25.0);
+  CHECK(again == 0, "mild to urgent under way earned another one (%d)", again);
+  r.stop();
+}
+
+// ---- [12] ------------------------------------------------------------------------------------------
+
+static void testOncePerLoop() {
+  printf("[12] one episode a loop\n");
+  struct Case { int fam; uint8_t ask; uint64_t seed; };
+  for (const Case& c : {Case{SF_MIDDAY, 2, 2}, Case{SF_MIDDAY, 4, 2}, Case{SF_EVENING, 1, 3}, Case{SF_MORNING, 3, 5}}) {
+    Inputs in = makeInputs(c.fam);
+    in.temp_ask[0] = c.ask;
+    Rig r;
+    CHECK(r.start(c.seed, in), "start");
+    const int kLoops = 5;
+    int starts[kLoops] = {0}, played[kLoops] = {0}, planned[kLoops] = {0};
+    int loop = 0, last = -1, ended_on = 0;
+    long held = 0, ticks = 0;
+    planned[0] = r.w().plan.n_majors;
+    bool prev = false;
+    while (loop < kLoops && ticks < 25L * 3600 * 2) {
+      const bool before = r.w().fi.on;
+      const bool ended = r.tickOnly();
+      ++ticks;
+      if (ended) {
+        ended_on += before ? 1 : 0;
+        if (++loop >= kLoops) break;
+        planned[loop] = r.w().plan.n_majors;
+        last = -1;
+        prev = false;
+      }
+      const World& w = r.w();
+      held += w.fi.on ? 1 : 0;
+      starts[loop] += w.fi.on && !prev ? 1 : 0;
+      prev = w.fi.on;
+      const int id = w.major.on ? w.major.id : -1;
+      if (id != last && id >= 0) {
+        bool in_plan = false;
+        for (int k = 0; k < w.plan.n_majors; ++k) in_plan = in_plan || w.plan.major[k] == id;
+        played[loop] += in_plan ? 1 : 0;
+      }
+      last = id;
+    }
+    printf("  %s ask %d seed %llu: %d loops, episodes", famName(c.fam), c.ask, (unsigned long long)c.seed, loop);
+    for (int k = 0; k < kLoops; ++k) printf(" %d", starts[k]);
+    printf(", planned majors played");
+    for (int k = 0; k < kLoops; ++k) printf(" %d/%d", played[k], planned[k]);
+    printf(", story held %.0f%% of the time\n", 100.0 * (double)held / (double)ticks);
+    CHECK(loop == kLoops, "only %d loops ran", loop);
+    for (int k = 0; k < kLoops; ++k) {
+      CHECK(starts[k] == 1, "%s ask %d: loop %d had %d episodes", famName(c.fam), c.ask, k, starts[k]);
+      CHECK(played[k] == planned[k], "%s ask %d: loop %d played %d of %d planned majors", famName(c.fam), c.ask, k, played[k], planned[k]);
+    }
+    CHECK(ended_on == 0, "a loop ended with an episode running (%d)", ended_on);
+    r.stop();
+  }
+}
+
+// ---- [13] ------------------------------------------------------------------------------------------
+
+// Runs until the loop's first episode has let go; false if the loop ended first.
+static bool firstEpisode(Rig& r, uint32_t& loop) {
+  while (!r.w().fi.on) r.tickOnly();
+  loop = r.w().memory.loop_count;
+  while (r.w().fi.on) r.tickOnly();
+  return r.w().memory.loop_count == loop;
+}
+// Episodes started in loop `loop` from now to its end (or within `limit` ticks), and the kind of the first.
+static int episodesUntilLoopEnd(Rig& r, uint32_t loop, int limit, uint8_t* first_mode, int* first_at) {
+  int n = 0;
+  bool prev = r.w().fi.on;
+  for (int t = 0; t < limit && r.w().memory.loop_count == loop; ++t) {
+    if (r.tickOnly()) break;
+    if (r.w().fi.on && !prev) {
+      if (n == 0 && first_mode) *first_mode = r.w().fi.mode;
+      if (n == 0 && first_at) *first_at = t;
+      ++n;
+    }
+    prev = r.w().fi.on;
+  }
+  return n;
+}
+
+static void testNewRequest() {
+  printf("[13] a new request in the loop\n");
+  struct Case { const char* name; uint8_t a0, a1; uint8_t b0, b1; bool clear_between; int want; uint8_t mode; };
+  const Case cases[] = {
+      {"mild to urgent", 2, 0, 1, 0, false, 1, FI_COLD},     {"hot to cold", 3, 0, 3, 2, false, 1, FI_COLD},
+      {"one more arrow", 2, 0, 2, 2, false, 1, FI_COLD},     {"back after all cleared", 3, 0, 3, 0, true, 1, FI_HOT},
+      {"one of two gone", 2, 2, 2, 0, false, 0, FI_NONE},    {"cleared", 4, 0, 0, 0, false, 0, FI_NONE},
+      {"mild to urgent, hot", 3, 0, 4, 0, false, 1, FI_HOT},
+  };
+  for (const Case& c : cases) {
+    Inputs in = makeInputs(SF_MIDDAY);
+    in.temp_ask[0] = c.a0;
+    in.temp_ask[1] = c.a1;
+    Rig r;
+    CHECK(r.start(4, in), "start");
+    uint32_t loop = 0;
+    const bool same = firstEpisode(r, loop);
+    CHECK(same, "%s: the loop ended in its first episode", c.name);
+    // No second one while the arrows stay.
+    int quiet = 0;
+    for (int t = 0; t < 25 * 30 && r.w().memory.loop_count == loop; ++t) {
+      r.tickOnly();
+      quiet += r.w().fi.on ? 1 : 0;
+    }
+    CHECK(quiet == 0, "%s: a second episode with the arrows unchanged", c.name);
+    if (c.clear_between) {
+      r.ask(0);
+      for (int t = 0; t < 25 * 20; ++t) r.tickOnly();
+    }
+    r.ask(c.b0, c.b1);
+    uint8_t mode = FI_NONE;
+    int at = -1;
+    const int n = episodesUntilLoopEnd(r, loop, 25 * 3600, &mode, &at);
+    printf("  %s: %d more in the loop%s", c.name, n, n ? "" : "\n");
+    if (n) printf(" (%s, %.1f s after the change)\n", mode == FI_HOT ? "hot" : "cold", at / 25.0);
+    CHECK(n == c.want, "%s: %d more episodes in the loop, wanted %d", c.name, n, c.want);
+    if (c.want) CHECK(mode == c.mode, "%s: the new one is mode %d", c.name, mode);
+    r.stop();
+  }
+}
+
+// ---- [14] ------------------------------------------------------------------------------------------
+
+static void testEpisodeReplay() {
+  printf("[14] replay through episodes\n");
+  uint32_t h[2] = {0, 0};
+  for (int k = 0; k < 2; ++k) {
+    Inputs in = makeInputs(SF_MIDDAY, 2);
+    in.temp_ask[0] = 4;
+    Rig r;
+    CHECK(r.start(6, in), "start");
+    for (int t = 0; t < 25 * 400; ++t) {
+      if (t == 25 * 250) r.ask(4, 1);   // the other kind after the first episode: one more
+      r.step();
+      if (t % 25 == 0) h[k] = (h[k] * 31u) ^ hashFb(r.fb);
+    }
+    r.stop();
+  }
+  CHECK(h[0] == h[1], "two runs differ (%08x %08x)", h[0], h[1]);
+}
+
+// ---- [15] ------------------------------------------------------------------------------------------
+
+static void testMajorsPerHour() {
+  printf("[15] majors per hour, midday\n");
+  double per_hour[3] = {0, 0, 0}, held[3] = {0, 0, 0};
+  const uint8_t asks[3] = {0, 2, 1};
+  const int kSeeds = 12;
+  for (int a = 0; a < 3; ++a) {
+    int plays = 0;
+    long hold = 0, total = 0;
+    for (uint64_t seed = 1; seed <= (uint64_t)kSeeds; ++seed) {
+      Inputs in;
+      memset(&in, 0, sizeof in);
+      in.have_outside = true;
+      in.chip = true;
+      in.mood = 3.f;
+      in.visitors = true;
+      in.temp_ask[0] = asks[a];
+      Rig r;
+      CHECK(r.start(seed, in), "start");
+      int last = -1;
+      for (int t = 0; t < 25 * 3600; ++t) {
+        r.tickOnly();
+        const World& w = r.w();
+        ++total;
+        hold += w.fi.on ? 1 : 0;
+        const int id = w.major.on ? w.major.id : -1;
+        plays += id != last && id >= 0 ? 1 : 0;
+        last = id;
+      }
+      r.stop();
+    }
+    per_hour[a] = (double)plays / kSeeds;
+    held[a] = 100.0 * (double)hold / (double)total;
+  }
+  printf("  no arrow %.1f an hour; mild too-cold %.1f (%.0f%%, story held %.0f%%); urgent too-cold %.1f (%.0f%%, held %.0f%%)\n",
+         per_hour[0], per_hour[1], 100.0 * per_hour[1] / per_hour[0], held[1], per_hour[2], 100.0 * per_hour[2] / per_hour[0], held[2]);
+  CHECK(held[0] == 0.0, "the story held with no arrow");
+  CHECK(held[1] < 22.0 && held[2] < 30.0, "the story held too long (mild %.0f%%, urgent %.0f%%)", held[1], held[2]);
+  // The episode costs only the time it holds the story: the loops are longer, the content the same.
+  CHECK(per_hour[1] >= 0.72 * per_hour[0] && per_hour[2] >= 0.62 * per_hour[0], "majors too rare with an arrow (%.1f, %.1f of %.1f)",
+        per_hour[1], per_hour[2], per_hour[0]);
+}
+
 int main() {
   testIdle();
   testArrows();
@@ -484,6 +815,11 @@ int main() {
   testDeterminism();
   testWave();
   testSpells();
+  testEpisodeLength();
+  testOncePerLoop();
+  testNewRequest();
+  testEpisodeReplay();
+  testMajorsPerHour();
   printf("%d checks, %d failed\n", g_checks, g_fail);
   return g_fail ? 1 : 0;
 }

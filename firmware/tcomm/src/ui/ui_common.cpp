@@ -47,8 +47,13 @@ void Art::show(lv_obj_t *img) {
 }
 
 ArtSlot g_art[kSlotCount];
-static uint8_t *g_scratch = nullptr;
-static size_t g_scratch_bytes = 0;
+// Strip drawing's scratch (set_art_scratch), switched on and off from the interface task while the
+// drawing task may be running a job. The job counts itself in g_scratch_users before it reads the
+// pointer, and the switch-off clears the pointer before it looks at the count (both sequentially
+// consistent), so once art_scratch_busy() is false after a switch-off no job holds the old memory.
+static std::atomic<uint8_t *> g_scratch{nullptr};
+static std::atomic<size_t> g_scratch_bytes{0};
+static std::atomic<int> g_scratch_users{0};
 
 void ArtSlot::submit(const ArtJob &j) {
   job_ = j;
@@ -66,7 +71,10 @@ bool ArtSlot::run() {
   uint8_t waiting = kWaiting;
   if (!state_.compare_exchange_strong(waiting, kRunning, std::memory_order_acq_rel)) return false;
   const ArtJob &j = job_;
-  auto strips = [](gfx::Canvas &c, auto draw) { gfx::draw_in_strips(c, g_scratch, g_scratch_bytes, draw); };
+  g_scratch_users.fetch_add(1);  // before reading the pointer (see g_scratch)
+  uint8_t *const buf = g_scratch.load();
+  const size_t buf_bytes = buf ? g_scratch_bytes.load() : 0;  // null or 0: no strips (draw_in_strips)
+  auto strips = [buf, buf_bytes](gfx::Canvas &c, auto draw) { gfx::draw_in_strips(c, buf, buf_bytes, draw); };
   switch (j.kind) {
     case ArtKind::Sky: strips(*j.cv, [&](gfx::Canvas &c) { art::sky(c, j.phase, j.disc_p, j.moon); }); break;
     case ArtKind::Floor: strips(*j.cv, [&](gfx::Canvas &c) { art::floor_tile(c, j.floor, j.status, j.mode); }); break;
@@ -76,6 +84,7 @@ bool ArtSlot::run() {
       strips(*j.cv2, [&](gfx::Canvas &c) { art::bell_tile(c, j.mode, true); });
       break;
   }
+  g_scratch_users.fetch_sub(1);
   state_.store(kDone, std::memory_order_release);
   return true;
 }
@@ -267,8 +276,12 @@ bool run_art_job() {
 }
 
 void set_art_scratch(uint8_t *buf, size_t bytes) {
-  detail::g_scratch = buf;
-  detail::g_scratch_bytes = bytes;
+  if (!buf) bytes = 0;
+  if (buf) detail::g_scratch_bytes.store(bytes);  // the size before the pointer, and the pointer first when it goes
+  detail::g_scratch.store(buf);
+  if (!buf) detail::g_scratch_bytes.store(0);
 }
+
+bool art_scratch_busy() { return detail::g_scratch_users.load() != 0; }
 
 }  // namespace ui

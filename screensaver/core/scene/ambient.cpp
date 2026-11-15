@@ -9,6 +9,7 @@
 
 #include "../anim/ease.h"
 #include "../gfx/raster.h"
+#include "stream.h"
 #include "world.h"
 
 namespace ss {
@@ -119,7 +120,8 @@ bool glintGeom(const World& w, int i, Vec2& a, Vec2& b) {
   if (tl < 1e-4f) tl = 1.f;
   tx /= tl;
   ty /= tl;
-  const float off = (g.lane + 0.04f * sinT(g.phase * 0.5f)) * q.hw;
+  // Round the boulder in the current the water parts, and its glints with it (stream.h).
+  const float off = streamPartLane(w.land, g.s, g.lane + 0.04f * sinT(g.phase * 0.5f), 1.f) * q.hw;
   const float cx = q.x + q.nx * off, cy = q.y + q.ny * off;
   a = Vec2{cx - tx * len * 0.5f, cy - ty * len * 0.5f};
   b = Vec2{cx + tx * len * 0.5f, cy + ty * len * 0.5f};
@@ -429,7 +431,7 @@ void ambientStep(World& w, Rng& rng) {
     const LsStreamPt& p1 = w.land.stream[k + 1];
     const float seg = sqrtf((p1.x - p0.x) * (p1.x - p0.x) + (p1.y - p0.y) * (p1.y - p0.y));
     const float hw = maxf(10.f, landscapeStreamAt(w.land, g.s).hw);
-    const float px_per_tick = kFlowPxPerSec * (20.f / hw) * dt;
+    const float px_per_tick = kFlowPxPerSec * (20.f / hw) * dt * streamFlowMul(w);   // faster in the rain
     g.s += px_per_tick / maxf(seg, 1.f);
     if (g.s > kGlintWrapAt) g.s -= kGlintWrapBy;
     g.phase += dt * 0.45f;

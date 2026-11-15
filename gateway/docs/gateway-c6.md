@@ -135,6 +135,16 @@ Each run gives a new 16-character key. Don't send them in chat.
 
 ## What the screen shows
 
+**The screen starts off (2026-11-15).** The gateway hangs facing the floor on the Pi and nothing
+reads it, and the Pi's 5 V supply is marginal, so at every power-up and reset the backlight is held
+off, the screen's controller is held in reset and nothing is drawn. The button on the board's side
+(BOOT, GPIO 9) turns the screen on; pressing it again turns it off, and it goes off by itself after
+ten minutes. Nothing is saved, so a restart is always dark. Lighting it takes about 0.4 s, during
+which the gateway reads no serial line (the port's buffer holds what arrives). Everything the
+screen shows is also in the serial lines: the MAC and firmware version in the hello reply, and a
+wrong MAC or a missing secrets file as a note at start-up. Holding the button while plugging the
+board in still starts the chip's loader, as it always did.
+
 Seven lines, all in the same 12 x 14 pixel text (the first build's smaller lines were too small
 to read). From the top: TCOMM GATEWAY; the MAC; the channel and firmware version; PI: WAITING
 until the first line from the Pi, then PI: TALKING; how many requests were ACKed and how many

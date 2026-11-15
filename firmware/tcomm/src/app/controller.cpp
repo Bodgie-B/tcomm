@@ -1602,7 +1602,10 @@ void Controller::update_agenda(const WallTime &w) {
 }
 
 // Mike, 2026-11-11: a dog out longer than its limit makes the pill show the minutes and the outside
-// temperature and pulse, and the panel chimes once for that outing. The limit is 30 minutes,
+// temperature and pulse on both panels. Mike, 2026-11-13: the sound is five dings (Sound::DogAlert,
+// not the soft chime, which was taken for a doorbell), only on the panel of the floor the dog
+// belongs to (Lucy upstairs, Copper downstairs), at the doorbell's volume, and again every
+// kDogRingRepeatMin minutes until the dog is in. The limit is 30 minutes,
 // 15 when the outside is below 32 or above 88 F, 10 when WeatherGate flags danger heat or cold; with
 // no clock or no fresh outside reading, 30 minutes and no temperature. How long it has been out
 // comes from the dog's "since" time; if that or the clock is missing, from when this panel first
@@ -1616,7 +1619,6 @@ void Controller::tick_dog_nudge(uint32_t now, const WallTime &w) {
     if (outside_.flags & (kOutsideDangerHeat | kOutsideDangerCold)) limit = kDogOutMinDanger;
     else if (outside_.temp < kDogColdTenthsF || outside_.temp > kDogHotTenthsF) limit = kDogOutMinExtreme;
   }
-  bool played = false;  // two dogs crossing the line together share one chime
   bool told = false;    // a dog went past the limit this tick: the Pi is told once, after the loop
   for (int i = 0; i < 2; i++) {
     DogNudge &n = nudge_[i];
@@ -1627,7 +1629,7 @@ void Controller::tick_dog_nudge(uint32_t now, const WallTime &w) {
     }
     if (!n.seen_out) {
       n.seen_out = true;
-      n.chimed = false;
+      n.rang = false;
       n.out_mono = now;
     }
     uint32_t secs;
@@ -1639,16 +1641,19 @@ void Controller::tick_dog_nudge(uint32_t now, const WallTime &w) {
       n.noticed = true;
       told = true;
     }
-    if (!n.over_min || n.chimed) continue;
-    // The gate the mail chime uses: the soft chime only where this panel's own status lets a
-    // doorbell make a sound (Open, Busy), at the soft level. Not in quiet hours; the dog is still
-    // out when they end, so it chimes then. Without a clock, the volume's quiet-hours cap applies.
+    if (!n.over_min) continue;
+    // Only the dog's own floor makes the sound; the other panel shows the pill and nothing more.
+    if (settings_.floor != (i == 0 ? Floor::Upstairs : Floor::Downstairs)) continue;
+    if (n.rang && mins < n.rang_min + kDogRingRepeatMin) continue;
+    // The gate the mail chime uses: only where this panel's own status lets a doorbell make a
+    // sound (Open, Busy). Not in quiet hours; the dog is still out when they end, so it rings
+    // then. Without a clock, the volume's quiet-hours cap applies.
     KnockAction a = knock_action(settings_, status_.state().status);
     bool quiet = w.valid && in_quiet_hours(settings_, minutes_of_day((int64_t)w.utc + p_.utc_offset(w.utc)));
     if (a.chime == Chime::None || quiet) continue;
-    n.chimed = true;
-    if (!played) p_.play(Sound::SoftChime, soft_volume());
-    played = true;
+    n.rang = true;
+    n.rang_min = mins;
+    p_.play(Sound::DogAlert, current_volume());
   }
   if (told) {
     // One notice for the dogs past the limit now: LUCY, COPPER or BOTH. The time is when the outing

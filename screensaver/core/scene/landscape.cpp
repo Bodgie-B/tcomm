@@ -8,6 +8,7 @@
 #include <math.h>
 
 #include "../anim/ease.h"
+#include "stream.h"
 
 namespace ss {
 
@@ -421,25 +422,20 @@ void drawSkyReal(const Landscape& ls, Surface& s, const Palette& pal, float mood
   }
 }
 
-// Cloud cover that stays put (it sits in the cache, so it costs nothing per frame): a few high
-// clouds for "some cloud", and from half cover up a deck across the top of the sky with a lumpy
-// underside, deeper the more cover there is. The two drifting clouds go on drifting under it.
-void drawCloudCover(const Landscape& ls, Surface& s, const Palette& pal, int cover, const Rect& clip) {
-  if (cover < 2) return;
-  // Shapes from the place itself, so each loop has its own sky and every repaint of it is the same.
-  Rng rng;
+// The cloud cover's shapes come from the place itself, so each loop has its own sky and every
+// repaint of it is the same: the deck's (drawCloudCover) and the three high clouds' (cloudHigh).
+void cloudCoverRng(const Landscape& ls, Rng& rng) {
   rng.seed(0x434C4F5544ull + (uint64_t)(uint16_t)ls.stars[0].x * 65537u + (uint64_t)(uint16_t)ls.stars[1].y);
-  if (cover < 4) {
-    static const float kAt[3][2] = {{130.f, 64.f}, {410.f, 40.f}, {690.f, 78.f}};
-    for (const float* at : kAt) {
-      Cloud c;
-      const float jx = rng.range(-50.f, 50.f);
-      const float jy = rng.range(-8.f, 8.f);
-      cloudGenerate(c, rng, at[0] + jx, at[1] + jy, 0.f);
-      cloudDraw(c, s, pal, clip);
-    }
-    return;
-  }
+}
+
+// Cloud cover that stays put (it sits in the cache, so it costs nothing per frame): from half cover
+// up a deck across the top of the sky with a lumpy underside, deeper the more cover there is. The
+// two drifting clouds go on drifting under it. (Cover 2-3, three high clouds, is not in the cache:
+// they drift with the others, cloudHigh.)
+void drawCloudCover(const Landscape& ls, Surface& s, const Palette& pal, int cover, const Rect& clip) {
+  if (cover < 4) return;
+  Rng rng;
+  cloudCoverRng(ls, rng);
   const float edge = 30.f + 16.f * fl(cover);   // the deck's underside: y 94 at half cover, 158 at full
   fillRect(s, Rect{0, 0, SS_WIDTH, (int)edge - 12}, pal[CLOUD_SHADE], clip);
   for (float x = -30.f; x < fl(SS_WIDTH) + 60.f;) {
@@ -608,6 +604,25 @@ void landscapeGenerate(Landscape& ls, Rng& rng) {
   generateTufts(ls, rng);
   generateStars(ls, rng);
   generateMushroom(ls, rng);   // last, so earlier draws keep the stage 1 places per seed
+
+}
+
+// The boulder (stage 17): from the stream alone, no rng and nothing stored, so every seed keeps its
+// places and plans.
+Vec2 landscapeBoulder(const Landscape& ls, float* s) {
+  float bs = 1.f;
+  for (int i = 0; i + 1 < LS_STREAM_PTS; ++i) {
+    const LsStreamPt& a = ls.stream[i];
+    const LsStreamPt& b = ls.stream[i + 1];
+    if (fl(LS_BOULDER_X) <= a.x && fl(LS_BOULDER_X) >= b.x) {
+      bs = fl(i) + (a.x - fl(LS_BOULDER_X)) / maxf(a.x - b.x, 1e-3f);
+      break;
+    }
+  }
+  if (s) *s = bs;
+  const LsStreamPt q = landscapeStreamAt(ls, bs);
+  const float off = LS_BOULDER_LANE * q.hw;
+  return Vec2{floorf(q.x + q.nx * off + 0.5f), floorf(q.y + q.ny * off + 0.5f)};
 }
 
 bool landscapeStreamSpan(const Landscape& ls, float x, float& cy, float& half) {
@@ -777,7 +792,7 @@ void drawSky(const Landscape& ls, Surface& frame, const Palette& pal0, float moo
   if (fade < 1.f) {
     static const Slot kFade[6] = {SKY0, SKY1, SKY2, SKY3, SUN, STAR};
     for (Slot k : kFade) pal.c[k] = mixRGB(pal0[SKY4], pal0[k], fade);
-    if (sky && sky->cover >= 2) {   // the still cloud cover fades in with the sky, as the drifting clouds do
+    if (sky && sky->cover >= 4) {   // the still cloud deck fades in with the sky, as the drifting clouds do
       pal.c[CLOUD_LIT] = mixRGB(pal0[SKY4], pal0[CLOUD_LIT], fade);
       pal.c[CLOUD_SHADE] = mixRGB(pal0[SKY4], pal0[CLOUD_SHADE], fade);
     }
@@ -788,7 +803,9 @@ void drawSky(const Landscape& ls, Surface& frame, const Palette& pal0, float moo
   }
   if (sky && sky->real) drawSkyReal(ls, frame, pal, mood, *sky, clip);
   else drawSkyBody(ls, frame, pal, mood, clip);
-  if (sky) drawCloudCover(ls, frame, pal, sky->cover, clip);   // over the sun and moon: they go behind it
+  // Over the sun and moon: they go behind the deck. (The high clouds of cover 2-3 and the two
+  // ordinary ones are drawn after the cache, worldDrawDynamic: in front of them too.)
+  if (sky) drawCloudCover(ls, frame, pal, sky->cover, clip);
 }
 
 // Rock scaled about its base center (build-up pop).
@@ -872,9 +889,15 @@ void drawLayer(const Landscape& ls, int layer, Surface& s, const Palette& pal, f
     case BL_GROUND:
       fillRect(s, Rect{0, LS_GROUND_Y, SS_WIDTH, SS_HEIGHT}, pal[GROUND], clip);
       break;
-    case BL_STREAM:
-      drawStream(ls, s, pal, clip, buildStreamReveal(b));
+    case BL_STREAM: {
+      const float reveal = buildStreamReveal(b);
+      drawStream(ls, s, pal, clip, reveal);
+      // The boulder's marks on the water, once the rolling stream has passed it.
+      float bs;
+      landscapeBoulder(ls, &bs);
+      if (landscapeStreamTip(reveal) - LS_STREAM_TAPER > bs + 0.7f) streamDrawStaticWater(ls, s, pal, clip);
       break;
+    }
     case BL_CAMP_PINE:
       drawCampPine(s, ls, pal, clip, buildNearTreeScale(b, 0));
       break;
@@ -882,6 +905,10 @@ void drawLayer(const Landscape& ls, int layer, Surface& s, const Palette& pal, f
       for (int i = 0; i < ls.n_rocks; ++i) {
         const LsRock& r = ls.rocks[i];
         drawRock(r, s, pal[ROCK], clip, buildPlantScale(b, r.p[0].x, r.p[0].y));
+      }
+      {
+        const Vec2 bo = landscapeBoulder(ls);
+        streamDrawStaticRock(ls, s, pal, clip, buildPlantScale(b, bo.x, bo.y));
       }
       break;
     case BL_FG_PINES:   // the taller one first
@@ -1071,6 +1098,55 @@ void cloudDraw(const Cloud& c, Surface& s, const Palette& pal, const Rect& clip)
     fillPolygon(s, p, 6, pal[CLOUD_LIT], lim);
   }
   fillEllipse(s, Vec2{xq + c.sdx, c.y + c.sdy}, c.srx, c.sry, pal[CLOUD_SHADE], lim);
+}
+
+// ---- the high clouds of cover 2-3 -------------------------------------------
+
+namespace {
+// Where the three sit at tick 0 (before each one's jitter), as they did when they were still.
+const float kHighAt[CLOUD_HIGH_COUNT][2] = {{130.f, 64.f}, {410.f, 40.f}, {690.f, 78.f}};
+
+// The whole pixels a high cloud has drifted left by `tick`, within one trip round the wrap.
+int highShift(uint32_t tick) {
+  const int span = (int)(CLOUD_WRAP_RIGHT - CLOUD_WRAP_LEFT);
+  return (int)(((uint64_t)tick * CLOUD_HIGH_PX_PER_S / SS_TICK_HZ) % (uint64_t)span);
+}
+
+// Each high cloud in turn, as it is at `tick`, into one Cloud on the stack: the shapes from the
+// place's own stream (cloudCoverRng; the same draws in the same order as when they stood still),
+// the x its whole-pixel start less the drift, wrapped as cloudStep wraps.
+template <typename Fn>
+void forEachHigh(const Landscape& ls, uint32_t tick, int upto, Fn fn) {
+  Rng rng;
+  cloudCoverRng(ls, rng);
+  const int span = (int)(CLOUD_WRAP_RIGHT - CLOUD_WRAP_LEFT);
+  const int shift = highShift(tick);
+  for (int i = 0; i <= upto && i < CLOUD_HIGH_COUNT; ++i) {
+    Cloud c;
+    const float jx = rng.range(-50.f, 50.f);
+    const float jy = rng.range(-8.f, 8.f);
+    cloudGenerate(c, rng, kHighAt[i][0] + jx, kHighAt[i][1] + jy, (float)CLOUD_HIGH_PX_PER_S);
+    int x = (int)floorf(c.x) - shift;
+    if (x < (int)CLOUD_WRAP_LEFT) x += span;
+    c.x = (float)x;
+    fn(i, c);
+  }
+}
+}  // namespace
+
+void cloudHigh(const Landscape& ls, int i, uint32_t tick, Cloud& c) {
+  forEachHigh(ls, tick, i, [&](int k, const Cloud& h) {
+    if (k == i) c = h;
+  });
+}
+
+void cloudHighBounds(const Landscape& ls, uint32_t tick, Rect out[CLOUD_HIGH_COUNT]) {
+  forEachHigh(ls, tick, CLOUD_HIGH_COUNT - 1, [&](int k, const Cloud& h) { out[k] = cloudBounds(h); });
+}
+
+void cloudHighDraw(const Landscape& ls, uint32_t tick, Surface& s, const Palette& pal, const Rect& clip) {
+  if (clip.clipped(Rect{0, 0, SS_WIDTH, LS_HORIZON}).empty()) return;   // a strip below the sky: nothing to make
+  forEachHigh(ls, tick, CLOUD_HIGH_COUNT - 1, [&](int, const Cloud& h) { cloudDraw(h, s, pal, clip); });
 }
 
 }  // namespace ss

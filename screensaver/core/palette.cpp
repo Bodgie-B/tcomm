@@ -278,6 +278,9 @@ void computePalette(float mood, const WeatherTint& w, float flash, Palette& out)
     static const Slot kSkySlots[] = {SKY0, SKY1, SKY2, SKY3, SKY4, SUN, STAR, CLOUD_LIT, CLOUD_SHADE};
     static const Slot kFarSlots[] = {RIDGE_FAR, RIDGE_MID, RIDGE_NEAR, TREES_FAR, TREES_MID};
     static const Slot kGlow[] = {FIRE, FIRE_CORE, TENT_LIT, ACTOR_LIGHT};
+    // The stream runs a little browner in the rain, stirred up (stage 17, scene/stream.h).
+    out.c[WATER] = mixRGB(out.c[WATER], out.c[GROUND], 0.30f * gl);
+    out.c[WATER_LIGHT] = mixRGB(out.c[WATER_LIGHT], out.c[GROUND], 0.15f * gl);
     const float k_sky = 1.f - 0.55f * gl, k_land = 1.f - 0.40f * gl, k_camp = 1.f - 0.22f * gl;
     uint32_t done = 0;
     for (Slot s : kSkySlots) {

@@ -802,6 +802,19 @@ void buildQuad(const Critter& c, const Look& L, Prims& ps) {
       cap(ps, root, tip, w);
       const Vec2 nrm{-dir.y, dir.x};
       const float half = 0.5f * w - 1.1f;
+#if SS_XMAS
+      if (c.tone == kToneMasked) {   // a grey tail with three broad pale rings and a dark tip
+        ps.v[ps.n - 1].tint = TINT_FUR;
+        for (int r = 0; r < 3; ++r) {
+          const Vec2 m = add(root, mul(dir, 2.4f + 2.4f * (float)r));
+          cap(ps, add(m, mul(nrm, half + 0.4f)), add(m, mul(nrm, -half - 0.4f)), 1.7f);
+          ps.v[ps.n - 1].tint = TINT_FUR_LIGHT;
+        }
+        ellipse(ps, add(root, mul(dir, 9.6f)), 2.0f, 2.0f);
+        ps.v[ps.n - 1].tint = TINT_FUR_DARK;
+        break;
+      }
+#endif
       for (int r = 0; r < 2; ++r) {
         const Vec2 m = add(root, mul(dir, r == 0 ? 4.6f : 7.6f));
         cap(ps, add(m, mul(nrm, half)), add(m, mul(nrm, -half)), 1.5f, ACTOR_LIGHT);
@@ -841,6 +854,22 @@ void buildQuad(const Critter& c, const Look& L, Prims& ps) {
     }
     polyIn(ps, B, pts, n, true);
     ps.belly = maxX(ps.v[ps.n - 1]);
+#if SS_XMAS
+    if (c.tone == kToneMasked) {   // grey coat, a pale belly; a pale face, the black mask across the eyes, a dark nose
+      ps.v[ps.n - 1].tint = TINT_FUR;
+      static const float belly[5][2] = {{-1.6f, 0.2f}, {1.0f, 1.1f}, {7.4f, 0.4f}, {8.6f, -2.4f}, {1.4f, -1.8f}};
+      polyIn(ps, B, belly, 5, false);
+      ps.v[ps.n - 1].tint = TINT_FUR_LIGHT;
+      static const float face[7][2] = {{0.9f, -4.6f}, {3.4f, -3.9f}, {7.9f, -0.5f}, {5.4f, 1.3f},
+                                       {1.2f, 2.3f},  {-0.2f, 0.4f}, {0.1f, -3.0f}};
+      polyIn(ps, H, face, 7, false);
+      ps.v[ps.n - 1].tint = TINT_WHITE;
+      static const float mask[6][2] = {{-0.2f, -2.9f}, {2.4f, -3.3f}, {5.4f, -1.6f},
+                                       {5.0f, -0.6f},  {2.6f, -0.9f}, {-0.2f, -0.7f}};
+      polyIn(ps, H, mask, 6, false);
+      ellipse(ps, at(H, 7.7f, -0.4f), 1.1f, 1.1f);
+    }
+#endif
   } else {
     polyIn(ps, B, d.body, d.nb, true);
     ps.belly = maxX(ps.v[ps.n - 1]);
@@ -854,7 +883,13 @@ void buildQuad(const Critter& c, const Look& L, Prims& ps) {
   // Legs: near hind and near fore.
   const float hl = d.Lh * fold, fl = d.Lf * fold;
   leg(ps, hip, P.hind[0], hl, d.wh, L.lift_h[0]);
+#if SS_XMAS
+  if (k == CR_RACCOON && c.tone == kToneMasked) ps.v[ps.n - 1].tint = TINT_FUR_DARK;
+#endif
   const Vec2 paw = leg(ps, shoulder, P.fore[0], fl, d.wf, L.lift_f[0]);
+#if SS_XMAS
+  if (k == CR_RACCOON && c.tone == kToneMasked) ps.v[ps.n - 1].tint = TINT_FUR_DARK;
+#endif
   ps.paw = paw;
   ps.has_paw = true;
 
@@ -1092,18 +1127,37 @@ void buildBird(const Critter& c, const Look& L, Prims& ps) {
   const bool flying = wing > 0.3f;
   if (!flying || P.lift < 1.f) leg(ps, at(B, 0.2f, 0.f), P.hind[0], 2.6f * fold, 0.9f, 0.f);
   else contact(ps, B.o.y + 0.5f);
+#if SS_XMAS
+  const bool red = c.tone == kToneCardinal;
+#else
+  const bool red = false;
+#endif
   polyIn(ps, B, kBirdBody, 9, true);
+  if (red) ps.v[ps.n - 1].tint = TINT_FUR;
   const Xf H = xf(at(B, 3.4f, -3.2f), P.pitch * -0.5f + P.head);
   const Vec2 hc = at(H, 0.9f, -1.3f);
+  if (red) {   // the crest, swept back off the crown
+    static const float crest[4][2] = {{-1.6f, -2.4f}, {-2.6f, -5.6f}, {0.6f, -3.6f}, {1.4f, -2.6f}};
+    polyIn(ps, H, crest, 4, false);
+    ps.v[ps.n - 1].tint = TINT_FUR;
+  }
   ellipse(ps, hc, 2.3f, 2.3f);
+  if (red) {
+    ps.v[ps.n - 1].tint = TINT_FUR;
+    static const float mask[4][2] = {{1.4f, -2.5f}, {3.3f, -2.3f}, {3.1f, 0.3f}, {1.3f, -0.4f}};
+    polyIn(ps, H, mask, 4, false);   // the black face round the beak
+  }
   const float beak[3][2] = {{2.8f, -1.9f}, {5.6f, -0.9f}, {2.8f, -0.1f}};
   polyIn(ps, H, beak, 3, false);
+  if (red) ps.v[ps.n - 1].tint = TINT_FUR_LIGHT;
   if (wing > 0.05f) {   // the V glyph: near wing up and back, far wing up and forward
     const Vec2 sh = at(B, 0.0f, -3.4f);
     const float e = wing - 0.6f;   // elevation above level, radians
     const float rise = 6.5f * sinR(e);   // the V's depth flaps; its width holds
     cap(ps, sh, add(sh, Vec2{-6.5f, -rise - 1.0f}), 1.6f);
+    if (red) ps.v[ps.n - 1].tint = TINT_FUR_DARK;
     cap(ps, sh, add(sh, Vec2{4.5f, -rise - 0.5f}), 1.5f);
+    if (red) ps.v[ps.n - 1].tint = TINT_FUR_DARK;
   }
   if (c.carry != CC_NONE) carryItem(ps, c.carry == CC_SHOE ? (uint8_t)CC_CRUMB : c.carry, at(H, 4.6f, -0.8f), P.head);
 }
@@ -1738,10 +1792,22 @@ void critterDraw(const Critter& c, Surface& s, const Palette& pal, const Rect& c
   if (!c.visible) return;
   Prims ps;
   build(c, ps);
-  const Pixel fur = c.kind == CR_DOG ? furColor(pal, c.tone, false) : pal[ACTOR];
-  const Pixel fur_dark = c.kind == CR_DOG ? furColor(pal, c.tone, true) : pal[ACTOR];
-  const Pixel white = c.kind == CR_DOG && c.tone == DT_LUCY ? dogWhite(pal) : pal[ACTOR];
-  const Pixel light = c.kind == CR_DOG && c.tone == DT_COPPER ? dogLight(pal, c.tone) : pal[ACTOR];
+  Pixel fur = c.kind == CR_DOG ? furColor(pal, c.tone, false) : pal[ACTOR];
+  Pixel fur_dark = c.kind == CR_DOG ? furColor(pal, c.tone, true) : pal[ACTOR];
+  Pixel white = c.kind == CR_DOG && c.tone == DT_LUCY ? dogWhite(pal) : pal[ACTOR];
+  Pixel light = c.kind == CR_DOG && c.tone == DT_COPPER ? dogLight(pal, c.tone) : pal[ACTOR];
+#if SS_XMAS
+  if (c.kind == CR_RACCOON && c.tone == kToneMasked) {   // the Christmas mockups' raccoon (PROPOSED)
+    fur = mixRGB(pal[ROCK], pal[WATER_LIGHT], 0.38f);    // a light grey coat that holds up at night
+    fur_dark = mixRGB(fur, pal[ACTOR], 0.65f);
+    white = mixRGB(dogWhite(pal), pal[STAR], 0.15f);     // the face, the palest thing on it
+    light = mixRGB(dogWhite(pal), fur, 0.15f);           // the belly and the tail's rings
+  } else if (c.kind == CR_BIRD && c.tone == kToneCardinal) {   // and their cardinals (PROPOSED)
+    fur = critterLitAs(pal, 0xC4222C, MUSHROOM);
+    fur_dark = mixRGB(fur, pal[ACTOR], 0.4f);
+    light = critterLitAs(pal, 0xF07A3A, MUSHROOM);
+  }
+#endif
   for (int k = 0; k < ps.n; ++k) {
     const Prim& p = ps.v[k];
     float x0, y0, x1, y1;
@@ -1766,6 +1832,22 @@ void critterDraw(const Critter& c, Surface& s, const Palette& pal, const Rect& c
     ++g_last_prims;
   }
 }
+
+#if SS_XMAS
+Pixel critterLitAs(const Palette& pal, uint32_t hex, Slot ref) {
+  const Pixel key = moodKey(MOOD_DAY)[ref], now = pal[ref];
+  const float kd = (float)(red8(key) + green8(key) + blue8(key));
+  const float kn = (float)(red8(now) + green8(now) + blue8(now));
+  float k = kd > 0.f ? kn / kd : 1.f;
+  if (k > 1.1f) k = 1.1f;
+  auto ch = [k](uint32_t v) {
+    const float x = (float)(v & 0xFFu) * k + 0.5f;
+    return (uint8_t)(x > 255.f ? 255.f : x);
+  };
+  const Pixel lit = rgb565(ch(hex >> 16), ch(hex >> 8), ch(hex));
+  return mixRGB(lit, now, 0.15f);
+}
+#endif
 
 const CritterPose& critterPoseDef(CritterKind k, CritterAction a) {
   if (k >= CR_COUNT) k = CR_CHIPMUNK;

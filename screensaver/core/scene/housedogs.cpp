@@ -10,6 +10,7 @@
 #include "majors.h"
 #include "minors.h"
 #include "script.h"
+#include "stream.h"
 #include "world.h"
 
 namespace ss {
@@ -38,7 +39,7 @@ const Nature kNature[HD_COUNT] = {
 };
 
 const char* const kActNames[HA_COUNT] = {"none", "roam", "tent", "fire", "drink", "watch",
-                                         "leaf", "pat",  "nap",  "play", "settle"};
+                                         "leaf", "pat",  "nap",  "play", "settle", "chase"};
 
 // ---- small helpers -------------------------------------------------------------------------
 
@@ -346,7 +347,7 @@ float wagFor(const HouseDog& d, int k) {
   const float base = kNature[k].wag;
   switch (d.act) {
     case HA_PAT: return base * 1.9f;
-    case HA_PLAY: case HA_LEAF: return base * 1.5f;
+    case HA_PLAY: case HA_LEAF: case HA_CHASE: return base * 1.5f;
     case HA_WATCH: return base * 1.1f;
     case HA_FIRE: case HA_SETTLE: return base * 0.4f;
     case HA_NAP: return d.step >= 2 ? 0.f : base * 0.3f;
@@ -462,11 +463,96 @@ void runPlay(World& w, int k) {   // Copper; step 2 is the bow (the hold)
   }
 }
 
+// ---- a visitor at the stream ------------------------------------------------------------------
+//
+// The heron in the shallows or the deer at the bank (stream.h) while the dog is about: it notices it
+// (head up, a beat: kChaseNotice), runs at it (the stream sees the dog charging and the visitor goes at
+// once, stream.cpp threatNear), stops at the camp-side bank short of where it was (the heron is across
+// the water; the deer gets kChaseShort px of start), looks after it, then takes up what it was doing.
+// No random draws but the ones beginAct and endAct make anyway, all from the dog's own stream.
+constexpr float kChaseNotice = 0.7f;   // s: head up, looking, before it runs (PROPOSED)
+constexpr float kChaseShort = 46.f;    // px: where it pulls up short of the deer
+constexpr float kChaseRunMax = 5.f;    // s: never stuck on the way
+
+// The activities it breaks off for a visitor, and takes up again after.
+bool chaseFrom(uint8_t act) {
+  return act == HA_NONE || act == HA_ROAM || act == HA_TENT || act == HA_FIRE || act == HA_DRINK || act == HA_WATCH ||
+         act == HA_NAP;
+}
+
+void maybeChase(World& w, int k) {
+  HouseDogs& H = w.dogs;
+  HouseDog& d = H.d[k];
+  if (!chaseFrom(d.act) || w.busy || w.fi.on || visitorsHolds(w) || w.react.active) return;
+  const HouseDog& o = H.d[1 - k];
+  if (o.act == HA_CHASE && inScene(w, o)) return;   // one dog after it is enough
+  Vec2 at;
+  if (!streamGuestAt(w, at)) return;
+  Critter& c = cr(w, d);
+  if (!c.visible || c.feet.x < 20.f || c.feet.x > (float)SS_WIDTH - 20.f) return;
+  d.resume = d.act;
+  c.head_add = 0.f;
+  d.head = 0.f;
+  d.act = HA_CHASE;
+  d.step = 0;
+  d.t = 0.f;
+  d.to = at;
+  critterSetAction(c, CA_LOOK, 0.25f);
+  faceTo(w, d, dirTo(c.feet.x, at.x));
+}
+
+void runChase(World& w, int k) {
+  HouseDog& d = w.dogs.d[k];
+  Critter& c = cr(w, d);
+  switch (d.step) {
+    case 0:   // it has seen it: head up, still
+      d.head = maxf(-0.14f, d.head - kDt * 0.6f);
+      if (d.t >= kChaseNotice) {
+        float cy, half;
+        float x = d.to.x;
+        const bool deer = !landscapeStreamSpan(w.land, x, cy, half) || d.to.y < cy;   // the deer is on this bank
+        if (deer) x -= (d.to.x >= c.feet.x ? 1.f : -1.f) * kChaseShort;
+        x = clampf(x, 30.f, 640.f);
+        float y = d.to.y;
+        if (landscapeStreamSpan(w.land, x, cy, half)) y = cy - half - 3.f;   // the camp side's water edge
+        d.to = Vec2{x, groundY(w, x, y)};
+        d.head = 0.f;
+        walkTo(w, d, d.to, kNature[k].run, CA_RUN);
+        d.step = 1;
+        d.t = 0.f;
+      }
+      break;
+    case 1:   // running at it
+      if (critterArrived(c) || d.t >= kChaseRunMax) {
+        critterSetAction(c, CA_LOOK, 0.3f);
+        d.left = k == HD_LUCY ? 2.6f : 1.8f;
+        d.step = 2;
+        d.t = 0.f;
+      }
+      break;
+    case 2:   // at the bank, looking after it
+      d.head = maxf(-0.12f, d.head - kDt * 0.5f);
+      d.left -= kDt;
+      if (d.left <= 0.f) {
+        const uint8_t back = d.resume;
+        d.resume = HA_NONE;
+        if (back != HA_NONE && back != HA_CHASE) beginAct(w, k, back);
+        else endAct(w, k);
+      }
+      break;
+    default: endAct(w, k); break;
+  }
+}
+
 void runAct(World& w, int k) {
   HouseDogs& H = w.dogs;
   HouseDog& d = H.d[k];
   Critter& c = cr(w, d);
   d.t += kDt;
+  if (d.act == HA_CHASE && !w.busy) {
+    runChase(w, k);
+    return;
+  }
   if (d.act == HA_NONE) {   // the breath between activities
     d.left -= kDt;
     if (d.left <= 0.f) beginAct(w, k, pickAct(w, k));
@@ -665,7 +751,10 @@ void stepDog(World& w, int k, bool fetch) {
       if (H.lent == k + 1 && (!want || fetch)) H.lent = 0;   // it went in: the game lets it go
       if (!want) goOut(w, k, false);
       else if (fetch) goOut(w, k, true);
-      else if (H.lent != k + 1) runAct(w, k);   // lent: the visitors' game drives it
+      else if (H.lent != k + 1) {   // lent: the visitors' game drives it
+        maybeChase(w, k);
+        runAct(w, k);
+      }
       break;
     case HP_GOING:
       if (want && !fetch) {   // out again before it was gone: it turns back

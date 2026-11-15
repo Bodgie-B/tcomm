@@ -19,6 +19,10 @@
 //   play        Copper only, with Lucy there: a play-bow at her and a dash round her
 //   settle      while a beat needs the camp (a major, dinner, the bear, the close): lies
 //               out of the way beside the tent; sits up and watches a bear
+//   chase       not picked: a visitor at the stream (stream.h, the heron or the deer) while
+//               the dog is about: it notices (head up, a beat), runs at it, the visitor goes
+//               before it gets there, it stops at the bank, looks after it, and goes back to
+//               what it was doing
 // No activity follows itself or the one before it, and each lasts a random
 // while, so nothing repeats in an order you can follow. Lucy is calm (long
 // lies, a slow heavy wag), Copper busy (short holds, a quick wag, more sniffing
@@ -58,7 +62,9 @@ enum HouseDogPhase : uint8_t {
   HP_STEPPED_OUT  // running off while the fetch major has the dogs
 };
 enum HouseDogAct : uint8_t {
-  HA_NONE = 0, HA_ROAM, HA_TENT, HA_FIRE, HA_DRINK, HA_WATCH, HA_LEAF, HA_PAT, HA_NAP, HA_PLAY, HA_SETTLE, HA_COUNT
+  HA_NONE = 0, HA_ROAM, HA_TENT, HA_FIRE, HA_DRINK, HA_WATCH, HA_LEAF, HA_PAT, HA_NAP, HA_PLAY, HA_SETTLE,
+  HA_CHASE,   // never picked (weight 0): started by a visitor at the stream
+  HA_COUNT
 };
 
 struct HouseDog {
@@ -71,6 +77,7 @@ struct HouseDog {
   int8_t face;        // the way to face on arrival: -1, +1, 0 any
   uint8_t hold;       // the CritterAction it holds at the spot
   uint8_t round;      // a second sniff, a second dash
+  uint8_t resume;     // chase: the activity it broke off, taken up again after
   float wait;         // HP_AWAY: seconds before it trots in (counted once the scene is ready); < 0 unset
   float t;            // seconds in the step
   float left;         // seconds left of the hold

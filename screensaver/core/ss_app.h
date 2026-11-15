@@ -54,6 +54,10 @@ struct Inputs {
   // The visiting couple (scene/visitors.h) may drop by now and then. Zeroed (false): they never come,
   // so a host or test that leaves it out plays exactly as before. The panel sets it.
   bool visitors;
+  // The month where the panel is, 1-12 from its clock; 0 when the clock isn't valid. The stream's
+  // leaves follow it (scene/stream.h: green and few in spring and summer, many and coloured in
+  // autumn, a few brown ones in winter); 0 keeps the year-round mix.
+  uint8_t month;
 };
 
 #define SS_REQ_PREDICTED 0x10

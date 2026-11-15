@@ -97,8 +97,23 @@ void render(const Frame &f);
 // It touches no LVGL objects, so it doesn't need the LVGL lock.
 bool run_art_job();
 // Memory the jobs draw in, a strip of rows at a time (the panel gives it fast internal RAM).
-// Without it they draw straight into their PSRAM canvases.
+// Without it they draw straight into their PSRAM canvases. A job reads it once as it starts; after
+// set_art_scratch(nullptr, 0) the old memory may be freed once art_scratch_busy() is false (a
+// job that began before may still be drawing in it until then).
 void set_art_scratch(uint8_t *buf, size_t bytes);
+bool art_scratch_busy();
+// The interface's spare picture (768,000 bytes of PSRAM) lent to the screensaver as its scene cache
+// while it runs (ui.cpp Spare; the ownership rules in core/spare_loan.h). spare_lend: the block if
+// nothing else has it and bytes is exactly its size, else nullptr (then the screensaver allocates
+// its own). spare_give_back: true if p was the lent block, now home again; false if p isn't it.
+// spare_reclaim: after a stop, true if it was still out (a bug) and is now home. spare_refused:
+// art claims refused during the current or last loan.
+void *spare_lend(size_t bytes);
+bool spare_give_back(void *p);
+bool spare_reclaim();
+bool spare_lent();
+uint32_t spare_refused();
+bool icicles_held();  // the danger-cold icicles' picture (240,000 bytes of PSRAM) exists now
 // Called between the few-KB pieces of a finished picture's copy into its place on screen, to give
 // the screen's own PSRAM reads room (the panel waits a few microseconds).
 void set_copy_pause(void (*pause)());

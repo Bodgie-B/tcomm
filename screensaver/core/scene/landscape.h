@@ -50,6 +50,20 @@ namespace ss {
 // many point-index units (about 40 px).
 #define LS_STREAM_TAPER 0.6f
 
+// The boulder in the current (stage 17, stream.h draws it). Placed by the composition, no rng: at
+// x LS_BOULDER_X, a little toward the near bank (lane LS_BOULDER_LANE of the half width). That is
+// upstream (right) of everything the story does in the water: the drink and bucket spot, fishing,
+// the wade, the bathe, the skipped stones (all left of about x 600) and left of the ford (x 665 to 730).
+// Its half width at the waterline and its height above it are LS_BOULDER_R and LS_BOULDER_H. Nothing
+// of the stream's is drawn on the camp-side bank beside it for LS_BOULDER_BANK px (x -20..+20 of the
+// boulder, the far edge of the water up to the grass), kept for a later water wheel. Other scenes
+// still walk that bank (the midday bike's lane, a fetched stick landing, the way to the rock seat).
+#define LS_BOULDER_X 612
+#define LS_BOULDER_LANE (-0.12f)
+#define LS_BOULDER_R 18
+#define LS_BOULDER_H 19
+#define LS_BOULDER_BANK 40
+
 struct LsSpike { int16_t x; uint8_t h; };                   // far tree line tooth
 struct LsPine  { int16_t x, base_y, h; uint8_t tiers; uint8_t width_pct; };
 struct LsStreamPt { float x, y, nx, ny, hw; };              // centerline, up-normal, half width
@@ -99,7 +113,7 @@ struct SkyDraw {
   int16_t sun_x, sun_y, sun_r;
   int16_t moon_x, moon_y;
   uint8_t moon_phase;      // 64ths of the moon's month: 0 new, 16 first quarter, 32 full, 48 last quarter
-  uint8_t cover;           // cloud cover in eighths: under 2 none, 2-3 a few high clouds, 4 and up a deck
+  uint8_t cover;           // cloud cover in eighths: under 2 none, 2-3 three high clouds (drifting: cloudHigh), 4 and up a deck
 };
 #define LS_MOON_R 16
 #define LS_EXTRA_STARS 16  // the stars a moonless night adds (placed by a hash, not stored)
@@ -132,6 +146,10 @@ void landscapeDrawLayers(const Landscape& ls, Surface& s, const Rect& clip, cons
 LsStreamPt landscapeStreamAt(const Landscape& ls, float s);
 // Point index of the stream's tip for a reveal fraction 0..1.
 float landscapeStreamTip(float reveal);
+
+// The boulder in the current: the middle of its foot at the waterline (frame px), and if asked its
+// place along the stream in point-index units. Its half width is LS_BOULDER_R, its height LS_BOULDER_H.
+Vec2 landscapeBoulder(const Landscape& ls, float* s = nullptr);
 
 // Stream centerline y and drawn half width at frame x (the water polygon is
 // 1.06 x hw wide). False outside the stream's x range.
@@ -182,5 +200,23 @@ void cloudStep(Cloud& c);                       // one tick of drift and wrap
 // so a 6 px/s cloud dirties its strips about every 4th tick, not every tick.
 Rect cloudBounds(const Cloud& c);               // integer frame-space bounds, clipped to the sky
 void cloudDraw(const Cloud& c, Surface& s, const Palette& pal, const Rect& clip);
+
+// ---- The high clouds of "some cloud" (dynamic) ------------------------------
+// Cloud cover of 2 or 3 eighths (SkyDraw::cover) brings three high clouds. Their shapes come from the
+// landscape (the same every call, so nothing is stored); they drift left with the two ordinary clouds
+// (6 and 4 px/s) at CLOUD_HIGH_PX_PER_S, all three at that speed so they keep their spacing, and wrap
+// round the screen as cloudStep does. Their whole-pixel x is a pure function of the tick count since
+// loop start (World::tick: it runs on through the doorbell, as the ordinary clouds do, and starts
+// again at 0 with each loop, when they are made anew), so they move one pixel every
+// SS_TICK_HZ / CLOUD_HIGH_PX_PER_S ticks. Cover 4 and up is the deck, which stays in the cache.
+#define CLOUD_HIGH_COUNT 3
+#define CLOUD_HIGH_PX_PER_S 5
+inline bool cloudHighShown(int cover) { return cover >= 2 && cover < 4; }
+// High cloud `i` (0..CLOUD_HIGH_COUNT-1) as it is `tick` ticks into the loop.
+void cloudHigh(const Landscape& ls, int i, uint32_t tick, Cloud& c);
+// All three high clouds' bounds (cloudBounds: integer, clipped to the sky) at `tick`.
+void cloudHighBounds(const Landscape& ls, uint32_t tick, Rect out[CLOUD_HIGH_COUNT]);
+// Draw all three at `tick`, clipped to `clip` (and, as every cloud, to the sky above the horizon).
+void cloudHighDraw(const Landscape& ls, uint32_t tick, Surface& s, const Palette& pal, const Rect& clip);
 
 }  // namespace ss

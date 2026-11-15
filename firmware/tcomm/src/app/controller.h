@@ -404,7 +404,7 @@ class Controller : public CalendarSource {
   // priority, dropped quietly if it doesn't ACK. time 0 = use the clock now (0 if it isn't set).
   void raise_notice(NoticeKind k, Floor floor, int16_t value, uint32_t time, const char *text = "");
   void tick_notices();  // the doorbell's unanswered rings, from the state held (edges between ticks)
-  void tick_dog_nudge(uint32_t now, const WallTime &w);  // dog out too long: pill text, pulse, one chime
+  void tick_dog_nudge(uint32_t now, const WallTime &w);  // dog out too long: pill text, pulse, five dings on its own floor
   // The presence sensor (presence.h, Mike 2026-11-11), upstairs and only when Settings says it is fitted.
   void tick_presence(uint32_t now);
   bool away_now() const { return away_ && status_.state().status == Status::Busy; }
@@ -518,7 +518,8 @@ class Controller : public CalendarSource {
   // from the same data, so no message is needed.
   struct DogNudge {
     bool seen_out = false;
-    bool chimed = false;
+    bool rang = false;      // the five dings have sounded at least once this outing (on the dog's own floor)
+    uint32_t rang_min = 0;  // minutes out when they last did: again every kDogRingRepeatMin until the dog is in
     bool noticed = false;  // the Pi has been told about this outing
     uint32_t out_mono = 0;
     uint16_t over_min = 0;  // minutes out, only while past the limit; else 0
@@ -569,6 +570,7 @@ const char *dog_name(Dog d);         // "LUCY", "BOTH DOGS"
 // the outside temperature, pulses, and the panel chimes once. Shorter when it's harsh outside.
 constexpr int kDogOutMinNormal = 30;   // no valid outside reading or no clock: elapsed time alone
 constexpr int kDogOutMinExtreme = 15;  // outside below kDogColdTenthsF or above kDogHotTenthsF
+constexpr uint32_t kDogRingRepeatMin = 5;  // the five dings again this many minutes later, until the dog is in
 constexpr int kDogOutMinDanger = 10;   // WeatherGate's danger heat or danger cold
 constexpr int kDogColdTenthsF = 320;   // 32.0 F: colder than this is "extreme"
 constexpr int kDogHotTenthsF = 880;    // 88.0 F: hotter than this is "extreme"

@@ -23,11 +23,26 @@
 //             it was. Then he goes back to where he was and the story carries on. Nothing is left
 //             behind: no scorch, no ice, no bucket.
 //
-// It takes over his story like the doorbell does (react.h): the story holds still while it runs (no
-// beat, script, minor or story critter advances; the loop's clock waits), so it all resumes exactly
-// where it stopped. It begins only at a calm moment: he is in frame, standing, sitting or walking in
-// his script (a walk carries on afterwards), hands empty, no major, minor, story critter, weather gag
-// or doorbell going. The ground, the ice
+// An episode, not a state (Mike, 2026-11-15: "about two minutes per loop"). An arrow can show for
+// hours, and the story holds still while fire and ice runs, so it plays as an episode of about two
+// minutes in each loop (kEpisode* in fireice.cpp, longer for urgent arrows, build-up and wind-down
+// included). When its time is up it winds down exactly as when the arrows clear (above), he goes
+// back to where he was and the story carries on, majors and all. The rule:
+//   - the first calm moment of a loop with an arrow showing starts the loop's episode (early in the
+//     loop, so a request is seen soon after the screensaver starts);
+//   - once it has played, no more this loop while the arrows stay as they were (the next loop has
+//     its own: the flag lives in the World, which each loop start zeroes);
+//   - a new request during the loop (a new arrow, mild becoming urgent, the other kind, or an arrow
+//     back after they all cleared) earns one more at the next calm moment; one that comes while an
+//     episode is under way is played in it (the other kind: a fresh episode straight after the wind-
+//     down; mild to urgent: the episode runs to the urgent length);
+//   - the arrows clearing winds it down at once, as before.
+// It takes over his story like the doorbell does (react.h): the story holds still while an episode
+// runs (no beat, script, minor or story critter advances; the loop's clock waits), so it all resumes
+// exactly where it stopped and the story's own content is not cut. An episode never spans a loop's
+// end: the loop's clock cannot reach its end while one holds it. It begins only at a calm moment:
+// he is in frame, standing, sitting or walking in his script (a walk carries on afterwards), hands
+// empty, no major, minor, story critter, weather gag or doorbell going. The ground, the ice
 // and the fires only start when he does. While it runs the house dogs lie out of the way (by the
 // tent's back corner, which the fires keep clear of; by the fire in the cold, inside the warm
 // circle) and the mail bird stays where it is.
@@ -78,9 +93,10 @@ struct FireIce {
   bool on;           // he is ours: the story holds still
   uint8_t mode;      // what the scene shows now (FireIceMode)
   uint8_t stage;     // his step (fireice.cpp Stage)
-  bool ending;       // the arrows went (or changed kind): wind this mode down
+  bool ending;       // the arrows went (or changed kind), or the episode's time is up: wind this mode down
+  bool had;          // an episode began this loop (zeroed with the World at each loop start)
   float st;          // seconds in the stage
-  float t;           // seconds this mode has run
+  float t;           // seconds this mode has run (the episode's clock: kEpisode* in fireice.cpp)
   float spawn;       // too hot: seconds to the next fire
   float feed_t;      // too cold: seconds since the last armload went on (the flare)
   uint32_t rng;      // its own stream (from the loop seed and the tick it began)
@@ -90,6 +106,7 @@ struct FireIce {
   int8_t home_face;
   uint8_t home_pose;
   bool home_path;
+  uint8_t seen;      // the arrows the episode has played (fireice.cpp sigOf); any rise above it is a new request
   float home_path_v[4];
   float home_reach_to;
   bool home_walk;    // he was on his way somewhere: he sets off again at the end
@@ -135,14 +152,15 @@ struct FireIce {
 void fireIceSetInputs(World& w, const uint8_t ask[3]);
 // His step now, by name ("douse", "fill", "warm", ...; "" when idle), for tests, stills and logs.
 const char* fireIceStageName(const World& w);
-// It should start now: arrows showing, not running yet, a camp loop, and a calm moment (see the top).
+// It should start now: an episode is owed (arrows showing and none played this loop, or a new
+// request since), not running yet, a camp loop, and a calm moment (see the top).
 bool fireIceCanStart(const World& w);
 // The calm moment itself (the visitors start at one too): a camp loop, the camp built, him in frame,
 // standing, sitting or walking in his script with empty hands, nothing else going on.
 bool fireIceCalm(const World& w);
 // Takes him over; `seed` starts its own random stream.
 void fireIceBegin(World& w, uint64_t seed);
-// The story holds still while this is true (app.cpp).
+// The story holds still while this is true (app.cpp): only while an episode runs.
 bool fireIceHolds(const World& w);
 // How much farther back (px) than by a good fire he and the dogs keep from the campfire now: the
 // cold's big blaze, 0 otherwise.

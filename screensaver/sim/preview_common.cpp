@@ -47,6 +47,7 @@ Inputs previewInputsFromOptions(const PreviewOptions& o) {
   in.lookout_window = o.lookout;
   in.sunrise_window = o.sunrise;
   in.visitors = o.visitors;
+  in.month = (uint8_t)(o.month >= 1 && o.month <= 12 ? o.month : 0);
   in.spine_force = (uint8_t)o.spine;
   for (int i = 0; i < 3; i++) in.req[i] = o.req[i];
   return in;
@@ -275,6 +276,7 @@ void previewUsage(const char* prog, FILE* to) {
           "  --lookout           inside the sunset window (Lookout spine)\n"
           "  --sunrise           inside the sunrise window (the sunrise overlook)\n"
           "  --visitors          the visiting couple may drop by (about one camp loop in seven)\n"
+         "  --month N           the month, 1-12, for the stream's leaves (default 0: unknown)\n"
           "  --spine NAME        evening morning midday lookout sunrise: play that spine family whatever the\n"
           "                      inputs say (--spine lookout --mood 4 is the Lookout's reference run)\n"
           "  --status N          other floor status 0..5\n"
@@ -373,6 +375,9 @@ void previewParseArgs(int argc, char** argv, PreviewOptions& o) {
       o.sunrise = true;
     } else if (!strcmp(a, "--visitors")) {
       o.visitors = true;
+    } else if (!strcmp(a, "--month")) {
+      need(1);
+      o.month = atoi(argv[++i]);
     } else if (!strcmp(a, "--spine")) {
       need(1);
       static const char* const kFam[5] = {"evening", "morning", "midday", "lookout", "sunrise"};

@@ -112,7 +112,9 @@ props (tent, pack, bag, cairn, `Item[ITEM_COUNT]`, steam, skip, leaf), 8 critter
 foreground pines and non-swaying tufts are drawn once into a full-frame cache and redrawn only on a palette change or a
 build-phase boundary (`worldDrawStatic`, `world.cpp:563`; `Renderer::render`, `render/renderer.cpp:47`). Anything
 that never changes during the loop belongs here (the reading rock is added to `Landscape::rocks` at loop start,
-`spine.cpp:2859-2873`): it costs no strips.
+`spine.cpp:2859-2873`): it costs no strips. The cloud deck of cover 4 and up is cached too (over the sun and moon);
+the three high clouds of cover 2-3 are not: they drift with the two ordinary clouds (stage 19, `landscape.h` `cloudHigh`,
+tracked in `worldTick` from `World::sky_cover`, which the app copies from the cache's cover).
 
 **Dynamic.** Everything that moves is drawn per dirty strip in one place, `worldDrawDynamic` (`world.cpp:573-660`):
 heat shimmer, sky, clouds and the distant bird, build-up layers, stream glints and the skipped stone's rings, fog
