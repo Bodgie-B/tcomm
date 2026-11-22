@@ -15,6 +15,7 @@
 // as with the switch on and the mock at zero.
 #include "gfx/raster.h"
 #include "ss_app.h"
+#include "scene/stage22_switch.h"
 #include "scene/world.h"
 #include "scene/xmas.h"
 
@@ -65,9 +66,26 @@ static const IdentRun kIdentRuns[] = {
 // visitors, the months), the six camp runs only: every 7th frame of each run was compared in 16 px
 // tiles against the tree before it, and every tile that changed lay inside the stream's fish, floater
 // or visitor bounds in that frame (as either tree drew it); the Lookout and sunrise runs did not change.
+// Re-captured a second time, for the stage 22 reeds (scene/reeds.h; Mike approved their look on
+// 2026-11-18), the six camp runs only. Proof first (2026-11-19), against the tree with the blackbird's
+// weight already at 0.15: a scratch copy of identRun that clears every reed clump's flags and the sedge
+// fringe (Landscape::reed_fringe) after every tick, in build-s22-off and build-s22-on, gave all 8 of
+// the previous pins exactly (camp runs 0xB699863E1B5071C0, 0xD643815CC782C2B3, 0x4C83065EFB673C61,
+// 0x13951B569334E122, 0x98F2D6B78846A48B, 0x54C198CE0244F0FC), so the reeds' own pixels (the plants,
+// the fringe, the small life, and with SS_S22 on the pick, the stem and the blackbird) are the only
+// change. The Lookout and sunrise runs did not change. With SS_S22 on the pick and the blackbird play,
+// so the midday and morning runs have their own pins there (kIdentPinsS22); the evening, night, snow
+// and dusk runs are the same with the switch on or off.
 static const uint64_t kIdentPins[] = {
-    0xB699863E1B5071C0ull, 0xD643815CC782C2B3ull, 0x4C83065EFB673C61ull, 0x13951B569334E122ull,
-    0x98F2D6B78846A48Bull, 0xC2D74FD9EC26A374ull, 0xE5E267DCA1E35EE2ull, 0x54C198CE0244F0FCull,
+    0x89CFD02E07342DA1ull, 0x7FD19CEDC9F3103Full, 0x7F041DA98255AB89ull, 0x71D5598DD910CFE8ull,
+    0x3F01A294CD74BCC4ull, 0xC2D74FD9EC26A374ull, 0xE5E267DCA1E35EE2ull, 0xEB9B09CB3FE81A1Cull,
+};
+// Step C2 (2026-11-19): with SS_S22 on, tai chi is forced into the day's first morning loop, so morning_s5's
+// plan opens with it and its frames differ: re-captured (was 742E339918DF65A4). With the switch off
+// kIdentPins holds unchanged, which is the proof that nothing else moved.
+static const uint64_t kIdentPinsS22[] = {
+    0x89CFD02E07342DA1ull, 0x7FD19CEDC9F3103Full, 0x5709F5F45A28F52Eull, 0xB9C4C17898D2717Cull,
+    0x3F01A294CD74BCC4ull, 0xC2D74FD9EC26A374ull, 0xE5E267DCA1E35EE2ull, 0xEB9B09CB3FE81A1Cull,
 };
 
 static inline uint64_t identHash(uint64_t h, const Pixel* px, size_t n) {
@@ -129,11 +147,13 @@ static uint64_t identRun(const IdentRun& r, bool& ever_on) {
 
 static void testIdentity() {
   static_assert(sizeof(kIdentPins) / sizeof(kIdentPins[0]) == sizeof(kIdentRuns) / sizeof(kIdentRuns[0]), "one pin a run");
+  static_assert(sizeof(kIdentPinsS22) == sizeof(kIdentPins), "one pin a run");
+  const uint64_t* pins = ssS22Switch() ? kIdentPinsS22 : kIdentPins;
   for (size_t i = 0; i < sizeof(kIdentRuns) / sizeof(kIdentRuns[0]); ++i) {
     bool on = false;
     const uint64_t h = identRun(kIdentRuns[i], on);
-    CHECK(h == kIdentPins[i], "%s: frames changed (hash %016llX, pinned %016llX)", kIdentRuns[i].name, (unsigned long long)h,
-          (unsigned long long)kIdentPins[i]);
+    CHECK(h == pins[i], "%s: frames changed (hash %016llX, pinned %016llX)", kIdentRuns[i].name, (unsigned long long)h,
+          (unsigned long long)pins[i]);
     CHECK(!on, "%s: the mock came on by itself in a camp loop", kIdentRuns[i].name);
   }
 }

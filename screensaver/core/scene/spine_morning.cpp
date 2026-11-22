@@ -27,6 +27,7 @@
 #include "../anim/ease.h"
 #include "../ss_app.h"
 #include "director.h"
+#include "day_taichi.h"
 #include "script.h"
 #include "spine_family.h"
 #include "world.h"
@@ -1780,7 +1781,11 @@ void morningTick(World& w) {
   if (t >= p.fog_t1) k = 0.f;
   else if (t > p.fog_t0) k = 1.f - easeInOut((float)(t - p.fog_t0) / (float)(p.fog_t1 - p.fog_t0));
   const float steps = ceilf((float)p.fog_steps * k - 1e-3f);
-  w.fog_extra = 0.05f * maxf(0.f, steps);
+  const float fog = 0.05f * maxf(0.f, steps);
+  // Tai chi (REVIEW_FIXES F8): while he is in the form a step waits for a hold of 2 s or more (wuji, the
+  // crane, the single whip, the rooster, the closing): stillness hides the rebuild's stutter. Several
+  // pending steps then go as one, so the rebuild count can only fall.
+  if (!(fog < w.fog_extra && taichiFogWaits(w))) w.fog_extra = fog;
   critTick(w);
   flyTick(w);
   if (p.stay) stayTick(w);

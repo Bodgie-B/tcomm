@@ -119,6 +119,9 @@ struct LoopPlan {
   uint8_t fsec[8];
   uint8_t fsteps, fbirds;
   // The sunrise (sunrise.cpp) uses fsec, pause_s and fsteps the same way, in its own beat order.
+  // Midday: the deer visit while he is away (day_herd.h): 0 none; otherwise the herd's variant and size
+  // as step C4 packs them (the plan token " herd=N", printed only when not 0). Last, in what was tail padding, so LoopPlan stays 88 bytes (Mike, 2026-11-18).
+  uint8_t herd;
 };
 
 // Variants a beat draws from at random, and a plan's pick. (Dinner also has

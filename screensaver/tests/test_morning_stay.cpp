@@ -12,6 +12,7 @@
 // Plain executable; returns non-zero on failure.
 #include "ss_app.h"
 #include "scene/spine_family.h"
+#include "scene/stage22_switch.h"
 #include "scene/world.h"
 
 #include <math.h>
@@ -76,7 +77,8 @@ static bool isMajor(const char* name) {
   static const char* const kMajor[] = {"squirrel_splash", "deer_stick",    "pinecone",       "map_chase",    "fish_leap",
                                        "raccoon_pack",    "ants_cookie",   "shadow_theater", "ranger_ridge", "echo",
                                        "firefly_jar",     "stargaze",      "fishing_small",  "fishing_log",  "fishing_good",
-                                       "bathe",           "fetch",         "kite",           "boomerang",    "rain_shelter"};
+                                       "bathe",           "fetch",         "kite",           "boomerang",    "rain_shelter",
+                                       "taichi",          "longshot",      "mushroom"};
   for (const char* k : kMajor)
     if (strcmp(name, k) == 0) return true;
   return false;
@@ -131,7 +133,25 @@ static const char* const kMark[8] = {
     "loop=0 seed=14 length=642s plan=family=morning wake=1 coffee=1 bag_down=0 break_camp=1 douse=1 leave=0 fillers=cairn,birds_on_water,stream_listen majors=map_chase,echo,fishing_small fog=15 memory=loop=1 cairn=6 shoe=0 stolen=none hole=0 rod=1 brave=chipmunk,deer,raccoon,owl,bear,dog ring=map_chase,echo,fishing_small",
 };
 
+// The same eight first loops with stage 22 live (SS_S22 on, the default since step C7, 2026-11-19), re-captured once
+// after reading each against the line above: every one is the day's first morning loop, so tai chi is forced after
+// the wake and the other majors are drawn round it (tai chi counts as two), and the length follows; the stay is
+// still not picked in any of them (its own stream), the loop seed is the same. With SS_S22 off the lines above hold.
+static const char* const kMarkS22[8] = {
+    "loop=0 seed=2 length=628s plan=family=morning wake=0 coffee=2 bag_down=0 break_camp=0 douse=1 leave=2 fillers=birds_on_water,cairn majors=taichi,squirrel_splash fog=14 memory=loop=1 cairn=7 shoe=0 stolen=none hole=0 rod=0 brave=raccoon,owl,dog ring=taichi,squirrel_splash",
+    "loop=0 seed=3 length=650s plan=family=morning wake=1 coffee=2 bag_down=0 break_camp=0 douse=1 leave=1 fillers=read,cloud_watch majors=taichi,echo fog=15 memory=loop=1 cairn=0 shoe=0 stolen=none hole=0 rod=0 brave=squirrel,raccoon,owl,dog ring=taichi,echo",
+    "loop=0 seed=4 length=633s plan=family=morning wake=0 coffee=0 bag_down=0 break_camp=0 douse=1 leave=1 fillers=cairn majors=taichi,map_chase,ants_cookie fog=11 memory=loop=1 cairn=5 shoe=0 stolen=none hole=0 rod=0 brave=chipmunk,frog,deer,raccoon,owl,bird,dog ring=taichi,map_chase,ants_cookie",
+    "loop=0 seed=5 length=595s plan=family=morning wake=0 coffee=0 bag_down=0 break_camp=0 douse=0 leave=0 fillers=birds_on_water majors=taichi,ranger_ridge,pinecone fog=15 memory=loop=1 cairn=0 shoe=0 stolen=none hole=0 rod=0 brave=chipmunk,raccoon,bird,bear,dog ring=taichi,ranger_ridge,pinecone",
+    "loop=0 seed=8 length=617s plan=family=morning wake=1 coffee=1 bag_down=0 break_camp=2 douse=0 leave=2 fillers=birds_on_water,stream_listen majors=taichi,ranger_ridge fog=13 memory=loop=1 cairn=1 shoe=0 stolen=none hole=0 rod=0 brave=squirrel,frog,deer,bear,mouse ring=taichi,ranger_ridge",
+    "loop=0 seed=10 length=600s plan=family=morning wake=2 coffee=2 bag_down=1 break_camp=0 douse=0 leave=1 fillers=birds_on_water majors=taichi,ranger_ridge,pinecone fog=11 memory=loop=1 cairn=0 shoe=0 stolen=none hole=0 rod=0 brave=chipmunk,raccoon,owl,bird,bear,dog ring=taichi,ranger_ridge,pinecone",
+    "loop=0 seed=11 length=650s plan=family=morning wake=0 coffee=2 bag_down=1 break_camp=0 douse=0 leave=1 fillers=birds_on_water,cloud_watch majors=taichi,echo fog=11 memory=loop=1 cairn=0 shoe=0 stolen=none hole=0 rod=0 brave=squirrel,raccoon,bear,mouse,dog ring=taichi,echo",
+    "loop=0 seed=14 length=585s plan=family=morning wake=1 coffee=1 bag_down=0 break_camp=1 douse=1 leave=0 fillers=cairn majors=taichi,map_chase fog=15 memory=loop=1 cairn=6 shoe=0 stolen=none hole=0 rod=0 brave=chipmunk,deer,raccoon,owl,bear,dog ring=taichi,map_chase",
+};
+
 static void testMarkUnchanged() {
+  // Stage 22 (INTEGRATION_PLAN 6.1; step C7): tai chi opens these first morning loops with the stage live, so
+  // they have their own pins then (kMarkS22).
+  const char* const* want = ssS22Switch() != 0 ? kMarkS22 : kMark;
   int same = 0;
   for (int i = 0; i < 8; ++i) {
     Rig a;
@@ -150,8 +170,8 @@ static void testMarkUnchanged() {
     }
     char got[800];
     snprintf(got, sizeof got, "loop=0 seed=%llu length=%.0fs plan=%s memory=%s", ls, (double)ticks / SS_TICK_HZ, plan, mem);
-    const bool ok = strcmp(got, kMark[i]) == 0;
-    if (!ok) printf("seed %d\n  want %s\n  got  %s\n", (int)kMarkSeeds[i], kMark[i], got);
+    const bool ok = strcmp(got, want[i]) == 0;
+    if (!ok) printf("seed %d\n  want %s\n  got  %s\n", (int)kMarkSeeds[i], want[i], got);
     CHECK(ok, "Mark's morning --loops line differs (seed %d)", (int)kMarkSeeds[i]);
     same += ok ? 1 : 0;
     a.stop();

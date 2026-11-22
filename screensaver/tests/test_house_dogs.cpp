@@ -318,7 +318,9 @@ static void testVariety() {
       CHECK(r.start(seed + 40, makeInputs(f, 3)), "start");
       uint8_t last[2] = {0, 0}, prev_real[2] = {0, 0};
       for (int t = 0; t < 22000; ++t) {
-        appTick(r.app);
+        // A new loop is a new World: each dog's "nothing straight again" starts over (stage 22's reeds moved
+        // where a loop boundary falls between two of Copper's visits to the tent in seed 41).
+        if (appTick(r.app)) prev_real[0] = prev_real[1] = 0;
         for (int k = 0; k < 2; ++k) {
           const uint8_t a = r.w().dogs.d[k].act;
           if (a != last[k] && a != HA_NONE) {

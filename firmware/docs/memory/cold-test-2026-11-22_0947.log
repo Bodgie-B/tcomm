@@ -1,0 +1,176 @@
+>> radio
+radio: on, channel 1, this board is upstairs; upstairs 02:00:00:00:00:01 downstairs 02:00:00:00:00:02 gateway 02:00:00:00:00:03
+radio: in 15; dropped 0 unknown MAC, 0 wrong sender byte, 0 bad length, 0 queue full
+radio: out 15 (a radio acknowledged 15, none did for 0), 0 refused, 0 for a board not set
+radio: voice (not traced) in 1, 0 dropped queue full; out 0, 0 refused, 0 for a board not set, 0 over the air cap
+radio: voice relayed for downstairs: 0 in, 0 out, 0 dropped queue full, 0 refused
+     26.7 s ago  in from downstairs  MAIL      seq 41402 (14 bytes)
+     26.7 s ago  in from downstairs  NOTE      seq 41403 (23 bytes)
+     26.7 s ago  in from downstairs  NOTE      seq 41404 (23 bytes)
+     26.7 s ago  in from downstairs  REQUESTS  seq 41405 (37 bytes)
+     26.7 s ago  in from downstairs  READING   seq 41406 (10 bytes)
+     26.7 s ago  in from downstairs  OUTSIDE   seq 41407 (36 bytes)
+     26.7 s ago  in from downstairs  EVENT_SUM seq 41408 (12 bytes)
+     26.7 s ago  out to  downstairs  ACK       seq     0 for seq 41400 (8 bytes)
+     26.7 s ago  out to  downstairs  ACK       seq     0 for seq 41401 (8 bytes)
+     26.7 s ago  out to  downstairs  ACK       seq     0 for seq 41402 (8 bytes)
+     26.7 s ago  out to  downstairs  ACK       seq     0 for seq 41403 (8 bytes)
+     26.7 s ago  out to  downstairs  ACK       seq     0 for seq 41404 (8 bytes)
+     26.7 s ago  out to  downstairs  ACK       seq     0 for seq 41405 (8 bytes)
+     26.7 s ago  out to  downstairs  ACK       seq     0 for seq 41406 (8 bytes)
+     26.7 s ago  out to  downstairs  ACK       seq     0 for seq 41407 (8 bytes)
+     26.7 s ago  out to  downstairs  ACK       seq     0 for seq 41408 (8 bytes)
+     26.7 s ago  out to  downstairs  READING   seq 56186 (10 bytes)
+     26.6 s ago  in from downstairs  ACK       seq     0 for seq 56186 (8 bytes)
+     13.7 s ago  out to  downstairs  STATE     seq 56187 (21 bytes)
+     13.7 s ago  in from downstairs  ACK       seq     0 for seq 56187 (8 bytes)
+      6.1 s ago  in from gateway     OUTSIDE   seq 20724 (36 bytes)
+      6.1 s ago  out to  gateway     ACK       seq     0 for seq 20724 (8 bytes)
+      6.1 s ago  out to  downstairs  OUTSIDE   seq 56188 (36 bytes)
+      6.0 s ago  in from downstairs  ACK       seq     0 for seq 56188 (8 bytes)
+outside tile: showing, 53??F, 71%, forecast 4, "Changeable, Some Rain"
+mail: none waiting (change 50)
+nomail: not marked
+dog pill: LUCY OUT; other floor's tile: OPEN
+>> ss auto 0
+screensaver: only starts by hand
+>> ss stats
+screensaver: stopped; 32.9 s: 0 frames (0.0 fps), 0 ticks, 0 dropped; tick 0.00 ms, draw 0.00 ms, worst 0.0 ms per frame; 0.00 strips a frame, 0% of their width copied; draw split: copy in 0.00, layers 0.00, copy out 0.00, cache 0.00 ms; 0 palette changes (slowest such frame 0.0 ms); main screen copy off (0 areas, 0 px, 0 ms redrawn); fast block PSRAM; scene cache none; spare picture home (0 art claims refused); free heap 41596, free PSRAM 1180888 (largest 1146868)
+>> cold test off
+cold test: danger cold back to the gateway's reading (not saved)
+>> info
+floor UPSTAIRS, status OPEN, clock set (quality 3, utc 1795358875), free heap 41596, free PSRAM 1180888
+memory: internal free 41596 (largest block 22516), PSRAM free 1180888 (largest block 1146868); spare picture home; strip drawing scratch not held; icicles not held
+memory: controller 7308 bytes in internal RAM, its state block in PSRAM
+since the last info (47 s): 8 redraws, 1172206 px, 610 ms drawing, slowest 252 ms
+audio: 0 plays (0 cut short, 0 heard, 0 SILENT, 0 silent in a row), last sound -1 at volume 0; 0 codec errors (last 0), 0 amp errors, amp off (hold on); ringtone Wind chimes held, Wind chimes chosen; 0 waiting
+voice: mic stack 2064 of 3072 bytes never used; tap while recording avg 0 max 0 us over 0 blocks, idle avg 58 max 166 us over 4022; 0 recordings (last stop 0, 0 chunks, pre-roll 0 blocks used), 0 send retries, 0 window holds; pre-roll ring held (6 KB)
+calendar: 23 of 240 slots in memory; files on the SD card, 18 of them, 0 of 59685 MB used
+i2c: 0 failed transfers since start-up (expander, sensor, clock)
+sensor SHT40 0966D95B: 69.0 F, 56.6 % (before the offset); 5 reads, 0 failed
+>> info
+floor UPSTAIRS, status OPEN, clock set (quality 3, utc 1795358938), free heap 41144, free PSRAM 1180888
+memory: internal free 41144 (largest block 22516), PSRAM free 1180888 (largest block 1146868); spare picture home; strip drawing scratch not held; icicles not held
+memory: controller 7308 bytes in internal RAM, its state block in PSRAM
+since the last info (63 s): 3 redraws, 20393 px, 20 ms drawing, slowest 10 ms
+audio: 0 plays (0 cut short, 0 heard, 0 SILENT, 0 silent in a row), last sound -1 at volume 0; 0 codec errors (last 0), 0 amp errors, amp off (hold on); ringtone Wind chimes held, Wind chimes chosen; 0 waiting
+voice: mic stack 2064 of 3072 bytes never used; tap while recording avg 0 max 0 us over 0 blocks, idle avg 58 max 170 us over 9465; 0 recordings (last stop 0, 0 chunks, pre-roll 0 blocks used), 0 send retries, 0 window holds; pre-roll ring held (6 KB)
+calendar: 23 of 240 slots in memory; files on the SD card, 18 of them, 0 of 59685 MB used
+i2c: 0 failed transfers since start-up (expander, sensor, clock)
+sensor SHT40 0966D95B: 68.9 F, 56.1 % (before the offset); 11 reads, 0 failed
+>> cold test on
+cold test: danger cold forced on while an outside reading shows (not saved)
+>> info
+floor UPSTAIRS, status OPEN, clock set (quality 3, utc 1795358954), free heap 41144, free PSRAM 1166292
+memory: internal free 41144 (largest block 22516), PSRAM free 1166292 (largest block 1146868); spare picture home; strip drawing scratch not held; icicles held (14360 bytes)
+memory: controller 7308 bytes in internal RAM, its state block in PSRAM
+since the last info (15 s): 2 redraws, 89904 px, 182 ms drawing, slowest 174 ms
+audio: 0 plays (0 cut short, 0 heard, 0 SILENT, 0 silent in a row), last sound -1 at volume 0; 0 codec errors (last 0), 0 amp errors, amp off (hold on); ringtone Wind chimes held, Wind chimes chosen; 0 waiting
+voice: mic stack 2064 of 3072 bytes never used; tap while recording avg 0 max 0 us over 0 blocks, idle avg 57 max 170 us over 10795; 0 recordings (last stop 0, 0 chunks, pre-roll 0 blocks used), 0 send retries, 0 window holds; pre-roll ring held (6 KB)
+calendar: 23 of 240 slots in memory; files on the SD card, 18 of them, 0 of 59685 MB used
+i2c: 0 failed transfers since start-up (expander, sensor, clock)
+sensor SHT40 0966D95B: 68.9 F, 56.2 % (before the offset); 13 reads, 0 failed
+>> info
+floor UPSTAIRS, status OPEN, clock set (quality 3, utc 1795359017), free heap 41144, free PSRAM 1166292
+memory: internal free 41144 (largest block 22516), PSRAM free 1166292 (largest block 1146868); spare picture home; strip drawing scratch not held; icicles held (14360 bytes)
+memory: controller 7308 bytes in internal RAM, its state block in PSRAM
+since the last info (63 s): 4 redraws, 427734 px, 488 ms drawing, slowest 374 ms
+audio: 0 plays (0 cut short, 0 heard, 0 SILENT, 0 silent in a row), last sound -1 at volume 0; 0 codec errors (last 0), 0 amp errors, amp off (hold on); ringtone Wind chimes held, Wind chimes chosen; 0 waiting
+voice: mic stack 2064 of 3072 bytes never used; tap while recording avg 0 max 0 us over 0 blocks, idle avg 57 max 182 us over 16225; 0 recordings (last stop 0, 0 chunks, pre-roll 0 blocks used), 0 send retries, 0 window holds; pre-roll ring held (6 KB)
+calendar: 23 of 240 slots in memory; files on the SD card, 18 of them, 0 of 59685 MB used
+i2c: 0 failed transfers since start-up (expander, sensor, clock)
+sensor SHT40 0966D95B: 68.9 F, 56.6 % (before the offset); 19 reads, 0 failed
+>> ss seed 4242
+screensaver: started, seed 4242 (a touch or ss again stops it)
+>> ss stats
+screensaver: running; 14.1 s: 167 frames (11.9 fps), 342 ticks, 9 dropped; tick 3.91 ms, draw 66.61 ms, worst 241.8 ms per frame; 10.46 strips a frame, 78% of their width copied; draw split: copy in 11.40, layers 39.84, copy out 12.03, cache 3.30 ms; 0 palette changes (slowest such frame 0.0 ms); main screen copy on (0 areas, 0 px, 0 ms redrawn); fast block LVGL's (internal); scene cache the spare picture; spare picture lent (0 art claims refused); free heap 41144, free PSRAM 365444 (largest 352244)
+>> ss stats
+screensaver: running; 62.3 s: 718 frames (11.5 fps), 1558 ticks, 0 dropped; tick 7.06 ms, draw 65.80 ms, worst 113.6 ms per frame; 9.27 strips a frame, 51% of their width copied; draw split: copy in 7.26, layers 51.36, copy out 6.82, cache 0.32 ms; 1 palette changes (slowest such frame 78.9 ms); main screen copy on (5 areas, 1920000 px, 38 ms redrawn); fast block LVGL's (internal); scene cache the spare picture; spare picture lent (0 art claims refused); free heap 41144, free PSRAM 365444 (largest 352244)
+>> info
+floor UPSTAIRS, status OPEN, clock set (quality 3, utc 1795359098), free heap 41144, free PSRAM 365444
+memory: internal free 41144 (largest block 22516), PSRAM free 365444 (largest block 352244); spare picture lent to the screensaver; strip drawing scratch not held; icicles held (14360 bytes)
+memory: controller 7308 bytes in internal RAM, its state block in PSRAM
+since the last info (81 s): 5 redraws, 19551 px, 38 ms drawing, slowest 18 ms
+audio: 0 plays (0 cut short, 0 heard, 0 SILENT, 0 silent in a row), last sound -1 at volume 0; 0 codec errors (last 0), 0 amp errors, amp off (hold on); ringtone Wind chimes held, Wind chimes chosen; 0 waiting
+voice: mic stack 2064 of 3072 bytes never used; tap while recording avg 0 max 0 us over 0 blocks, idle avg 67 max 229 us over 23253; 0 recordings (last stop 0, 0 chunks, pre-roll 0 blocks used), 0 send retries, 0 window holds; pre-roll ring held (6 KB)
+calendar: 23 of 240 slots in memory; files on the SD card, 18 of them, 0 of 59685 MB used
+i2c: 0 failed transfers since start-up (expander, sensor, clock)
+sensor SHT40 0966D95B: 69.0 F, 56.4 % (before the offset); 27 reads, 0 failed
+>> ss
+screensaver: stopped
+>> cold test off
+cold test: danger cold back to the gateway's reading (not saved)
+>> info
+floor UPSTAIRS, status OPEN, clock set (quality 3, utc 1795359128), free heap 41144, free PSRAM 1180888
+memory: internal free 41144 (largest block 22516), PSRAM free 1180888 (largest block 1146868); spare picture home; strip drawing scratch not held; icicles not held
+memory: controller 7308 bytes in internal RAM, its state block in PSRAM
+since the last info (29 s): 4 redraws, 477648 px, 436 ms drawing, slowest 372 ms
+audio: 0 plays (0 cut short, 0 heard, 0 SILENT, 0 silent in a row), last sound -1 at volume 0; 0 codec errors (last 0), 0 amp errors, amp off (hold on); ringtone Wind chimes held, Wind chimes chosen; 0 waiting
+voice: mic stack 2064 of 3072 bytes never used; tap while recording avg 0 max 0 us over 0 blocks, idle avg 66 max 229 us over 25782; 0 recordings (last stop 0, 0 chunks, pre-roll 0 blocks used), 0 send retries, 0 window holds; pre-roll ring held (6 KB)
+calendar: 23 of 240 slots in memory; files on the SD card, 18 of them, 0 of 59685 MB used
+i2c: 0 failed transfers since start-up (expander, sensor, clock)
+sensor SHT40 0966D95B: 69.0 F, 56.5 % (before the offset); 30 reads, 0 failed
+>> ss seed 4242
+screensaver: started, seed 4242 (a touch or ss again stops it)
+>> ss stats
+screensaver: running; 14.2 s: 169 frames (11.9 fps), 343 ticks, 11 dropped; tick 3.86 ms, draw 66.31 ms, worst 240.2 ms per frame; 10.44 strips a frame, 78% of their width copied; draw split: copy in 11.37, layers 39.66, copy out 11.97, cache 3.27 ms; 0 palette changes (slowest such frame 0.0 ms); main screen copy on (0 areas, 0 px, 0 ms redrawn); fast block LVGL's (internal); scene cache the spare picture; spare picture lent (0 art claims refused); free heap 41144, free PSRAM 380040 (largest 352244)
+>> ss stats
+screensaver: running; 62.1 s: 716 frames (11.5 fps), 1553 ticks, 0 dropped; tick 6.91 ms, draw 65.87 ms, worst 111.8 ms per frame; 9.33 strips a frame, 51% of their width copied; draw split: copy in 7.25, layers 51.44, copy out 6.85, cache 0.29 ms; 1 palette changes (slowest such frame 91.0 ms); main screen copy on (4 areas, 1536000 px, 40 ms redrawn); fast block LVGL's (internal); scene cache the spare picture; spare picture lent (0 art claims refused); free heap 41144, free PSRAM 380040 (largest 352244)
+>> info
+floor UPSTAIRS, status OPEN, clock set (quality 3, utc 1795359209), free heap 41144, free PSRAM 380040
+memory: internal free 41144 (largest block 22516), PSRAM free 380040 (largest block 352244); spare picture lent to the screensaver; strip drawing scratch not held; icicles not held
+memory: controller 7308 bytes in internal RAM, its state block in PSRAM
+since the last info (81 s): 5 redraws, 49542 px, 44 ms drawing, slowest 14 ms
+audio: 0 plays (0 cut short, 0 heard, 0 SILENT, 0 silent in a row), last sound -1 at volume 0; 0 codec errors (last 0), 0 amp errors, amp off (hold on); ringtone Wind chimes held, Wind chimes chosen; 0 waiting
+voice: mic stack 2064 of 3072 bytes never used; tap while recording avg 0 max 0 us over 0 blocks, idle avg 71 max 230 us over 32809; 0 recordings (last stop 0, 0 chunks, pre-roll 0 blocks used), 0 send retries, 0 window holds; pre-roll ring held (6 KB)
+calendar: 23 of 240 slots in memory; files on the SD card, 18 of them, 0 of 59685 MB used
+i2c: 0 failed transfers since start-up (expander, sensor, clock)
+sensor SHT40 0966D95B: 69.1 F, 56.4 % (before the offset); 38 reads, 0 failed
+>> ss
+screensaver: stopped
+>> info
+floor UPSTAIRS, status OPEN, clock set (quality 3, utc 1795359227), free heap 41144, free PSRAM 1180888
+memory: internal free 41144 (largest block 22516), PSRAM free 1180888 (largest block 1146868); spare picture home; strip drawing scratch not held; icicles not held
+memory: controller 7308 bytes in internal RAM, its state block in PSRAM
+since the last info (17 s): 1 redraws, 3053 px, 4 ms drawing, slowest 4 ms
+audio: 0 plays (0 cut short, 0 heard, 0 SILENT, 0 silent in a row), last sound -1 at volume 0; 0 codec errors (last 0), 0 amp errors, amp off (hold on); ringtone Wind chimes held, Wind chimes chosen; 0 waiting
+voice: mic stack 2064 of 3072 bytes never used; tap while recording avg 0 max 0 us over 0 blocks, idle avg 71 max 230 us over 34290; 0 recordings (last stop 0, 0 chunks, pre-roll 0 blocks used), 0 send retries, 0 window holds; pre-roll ring held (6 KB)
+calendar: 23 of 240 slots in memory; files on the SD card, 18 of them, 0 of 59685 MB used
+i2c: 0 failed transfers since start-up (expander, sensor, clock)
+sensor SHT40 0966D95B: 69.0 F, 56.4 % (before the offset); 40 reads, 0 failed
+>> cold test on
+cold test: danger cold forced on while an outside reading shows (not saved)
+>> cold test off
+cold test: danger cold back to the gateway's reading (not saved)
+>> cold test on
+cold test: danger cold forced on while an outside reading shows (not saved)
+>> cold test off
+cold test: danger cold back to the gateway's reading (not saved)
+>> cold test on
+cold test: danger cold forced on while an outside reading shows (not saved)
+>> cold test off
+cold test: danger cold back to the gateway's reading (not saved)
+>> cold test on
+cold test: danger cold forced on while an outside reading shows (not saved)
+>> cold test off
+cold test: danger cold back to the gateway's reading (not saved)
+>> cold test on
+cold test: danger cold forced on while an outside reading shows (not saved)
+>> cold test off
+cold test: danger cold back to the gateway's reading (not saved)
+>> info
+floor UPSTAIRS, status OPEN, clock set (quality 3, utc 1795359311), free heap 41144, free PSRAM 1180888
+memory: internal free 41144 (largest block 22516), PSRAM free 1180888 (largest block 1146868); spare picture home; strip drawing scratch not held; icicles not held
+memory: controller 7308 bytes in internal RAM, its state block in PSRAM
+since the last info (84 s): 15 redraws, 1243392 px, 1408 ms drawing, slowest 252 ms
+audio: 0 plays (0 cut short, 0 heard, 0 SILENT, 0 silent in a row), last sound -1 at volume 0; 0 codec errors (last 0), 0 amp errors, amp off (hold on); ringtone Wind chimes held, Wind chimes chosen; 0 waiting
+voice: mic stack 2064 of 3072 bytes never used; tap while recording avg 0 max 0 us over 0 blocks, idle avg 68 max 230 us over 41604; 0 recordings (last stop 0, 0 chunks, pre-roll 0 blocks used), 0 send retries, 0 window holds; pre-roll ring held (6 KB)
+calendar: 23 of 240 slots in memory; files on the SD card, 18 of them, 0 of 59685 MB used
+i2c: 0 failed transfers since start-up (expander, sensor, clock)
+sensor SHT40 0966D95B: 69.1 F, 56.0 % (before the offset); 49 reads, 0 failed
+>> cold test off
+cold test: danger cold back to the gateway's reading (not saved)
+>> ss stats
+screensaver: stopped; 109.4 s: 61 frames (0.6 fps), 130 ticks, 0 dropped; tick 7.95 ms, draw 62.67 ms, worst 86.3 ms per frame; 8.34 strips a frame, 0% of their width copied; draw split: copy in 0.00, layers 0.00, copy out 0.00, cache 0.00 ms; 0 palette changes (slowest such frame 0.0 ms); main screen copy off (0 areas, 0 px, 0 ms redrawn); fast block LVGL's (internal); scene cache none; spare picture home (0 art claims refused); free heap 41144, free PSRAM 1180888 (largest 1146868)
+>> ss auto 1
+screensaver: starts on its own after the idle time

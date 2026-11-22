@@ -13,6 +13,7 @@
 #include "../render/renderer.h"
 #include "../ss_app.h"
 #include "chip.h"
+#include "day_herd.h"
 #include "director.h"
 #include "react.h"
 #include "reveal.h"
@@ -37,7 +38,8 @@ struct App {
   bool pal_night;
   uint8_t pal_moonlight;  // the full moon's light on the stream it was computed with, 0..kMoonlightSteps
   uint8_t pal_warm;       // fire and ice's warm step it was computed with (fireice.h)
-  bool passer_waved;      // the hiker has waved at this passer-by already (Inputs::passer_by)
+  bool passer_prev;       // Inputs::passer_by on the last tick (to see a new arrival)
+  uint8_t passer_wait;    // ticks left to try the wave for this arrival, 0 once he has waved or given up
 
   // The sky as the cache has it: the real sun and moon in whole pixels, the cloud cover
   // (landscape.h). appTick moves it on and repaints only the rows that changed.
@@ -238,6 +240,11 @@ App* appStart(void* storage, const HostAlloc& alloc, uint64_t seed, const Inputs
   a->draw.user = a;
   a->draw.draw_static = drawStatic;
   a->draw.draw_dynamic = drawDynamic;
+  // What the last run left (Inputs::carry; Mike, 2026-11-18): the new App's memory starts at zero, so
+  // without this the mushrooms could never ripen across runs and tai chi would lose its chapter.
+  // worldBeginLoop keeps the memory, so the first loop sees it. Zero carries nothing.
+  a->world.memory.mush = (uint8_t)(in.carry & 0xFFu);
+  a->world.memory.taichi_next = (uint8_t)(in.carry >> 8);
   beginLoop(a);
   computeAppPalette(a, true);
   // The chip's first update sets its look with no fade, so the first frame shows the real status.
@@ -267,6 +274,7 @@ bool appTick(App* a) {
   for (int i = 0; i < n_ev; ++i) {
     if (ev[i].type != EV_DOORBELL) continue;
     if (a->in.chip) chipDoorbell(a->chip);
+    herdBell(a->world);   // deer in camp take it as a hard alarm (day_herd.h); nothing otherwise
     if (reactCanStart(a->world)) reactStart(a->world);
   }
   if (a->in.chip) {
@@ -286,13 +294,19 @@ bool appTick(App* a) {
     // The old sky parks the moon high by mood; the real one has it up or not. A cloud deck hides it.
     const bool moon = night && a->sky.cover < 4 && (!a->sky.real || (a->sky.moon && a->sky.moon_y < LS_HORIZON));
     streamSetInputs(a->world, moon, twilight, night || a->in.night_mode, a->in.month);
+    reedsSetInputs(a->world, m, night || a->in.night_mode, a->in.month);   // the reeds share the same block (reeds.h)
   }
-  // A passer-by at the upstairs panel: he waves, once, if he can while they are there.
-  if (!a->in.passer_by) {
-    a->passer_waved = false;
-  } else if (!a->passer_waved && reactWaveOk(a->world)) {
-    reactStart(a->world, true);
-    a->passer_waved = true;
+  // A passer-by at the upstairs panel: he waves, once per arrival. Mike, 2026-11-16: if his hands are
+  // busy he keeps trying for up to kPasserWaitTicks, even after they have gone, then lets it go.
+  if (a->in.passer_by && !a->passer_prev) a->passer_wait = (uint8_t)kPasserWaitTicks;
+  a->passer_prev = a->in.passer_by;
+  if (a->passer_wait > 0) {
+    if (reactWaveOk(a->world)) {
+      reactStart(a->world, true);
+      a->passer_wait = 0;
+    } else {
+      --a->passer_wait;
+    }
   }
 
   // Palette follows the inputs only when they moved enough to matter.
@@ -337,9 +351,21 @@ bool appTick(App* a) {
         const bool moved[2] = {
             sk.sun != o.sun || sk.sun_x != o.sun_x || sk.sun_y != o.sun_y || sk.sun_r != o.sun_r,
             sk.moon != o.moon || sk.moon_x != o.moon_x || sk.moon_y != o.moon_y || sk.moon_phase != o.moon_phase};
-        // Each body's square before and after: [body][0 was, 1 now].
-        const Rect area[2][2] = {{landscapeSunBounds(o), landscapeSunBounds(sk)},
-                                 {landscapeMoonBounds(o), landscapeMoonBounds(sk)}};
+        // Each body's square before and after: [body][0 was, 1 now]. During the mushroom trip the sun
+        // has a halo that reaches past its own square (skytrip.h; REVIEW_FIXES F1): the square grows
+        // by that much, so the rows repainted and marked hold every pixel the halo can touch.
+        const bool trip = skyTripOn(a->world.land.trip);
+        Rect area[2][2] = {{landscapeSunBounds(o), landscapeSunBounds(sk)},
+                           {landscapeMoonBounds(o), landscapeMoonBounds(sk)}};
+        if (trip) {
+          const SkyDraw* two[2] = {&o, &sk};
+          for (int j = 0; j < 2; ++j) {
+            Rect& q = area[0][j];
+            if (q.empty()) continue;
+            const int more = skyTripHaloReach(two[j]->sun_r) - (two[j]->sun_r + 2);
+            q = Rect{q.x0 - more, q.y0 - more, q.x1 + more, q.y1 + more}.clipped(Rect{0, 0, SS_WIDTH, LS_GROUND_Y});
+          }
+        }
         for (int k = 0; k < 2; ++k) {
           if (!moved[k]) continue;
           int y0 = SS_HEIGHT, y1 = 0;
@@ -348,6 +374,19 @@ bool appTick(App* a) {
             if (q.y0 < y0) y0 = q.y0;
             if (q.y1 > y1) y1 = q.y1;
             a->renderer.markDirtyRect(q);
+          }
+          if (trip && k == 0) {
+            // A wheeling star too near the sun is left out; a sun that moved may change that for a
+            // star outside the rows above. Its circle is repainted with them (rare, and small).
+            const SkyTripSun s0 = skyTripSunOf(o, a->renderer.palette), s1 = skyTripSunOf(sk, a->renderer.palette);
+            for (int i = 0; i < LS_STAR_COUNT; ++i) {
+              if (skyTripStarHidden(a->world.land, s0, i) == skyTripStarHidden(a->world.land, s1, i)) continue;
+              const Rect q = skyTripStarBounds(a->world.land, i);
+              if (q.empty()) continue;
+              if (q.y0 < y0) y0 = q.y0;
+              if (q.y1 > y1) y1 = q.y1;
+              a->renderer.markDirtyRect(q);
+            }
           }
           a->renderer.repaintRows(y0, y1);
         }
@@ -494,6 +533,10 @@ bool appCritterRect(const App* app, int slot, Rect* out, int* kind) {
 
 bool appMemoryShoeTaken(const App* app) { return app->world.memory.shoe_taken; }
 uint32_t appMemoryLoopCount(const App* app) { return app->world.memory.loop_count; }
+uint16_t appCarry(const App* app) {
+  const Memory& m = app->world.memory;
+  return (uint16_t)(((unsigned)m.taichi_next << 8) | (unsigned)m.mush);
+}
 int appMemory(const App* app, char* buf, size_t n) { return memoryFormat(app->world.memory, buf, n); }
 bool appBusy(const App* app) { return app->world.busy; }
 

@@ -457,7 +457,9 @@ static void testWave() {
       r.in.passer_by = false;
       r.set();
       for (int t = 0; t < 25 * 117; ++t) {
+        const bool before = r.w().react.active;
         r.step();
+        if (!before && r.w().react.active && r.w().react.wave) ++started;   // a late wave (he waits up to 8 s)
         run += r.w().react.active && r.w().react.wave ? 1 : 0;
       }
       CHECK(started <= 1, "waved %d times at one passer-by", started);

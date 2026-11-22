@@ -16,6 +16,7 @@ class PanelApp : public ui::Actions {
   void tap_bell() override { c_.tap_bell(); }
   void tap_dog() override { c_.tap_dog(); }
   void tap_mail() override { c_.tap_mail(); }
+  void tap_nomail() override { c_.tap_nomail(); }
   void comfort_answer(Feel f, Ask a, AskSent s) override { c_.comfort_answer(f, a, s); }
   void tap_requests() override { c_.tap_requests(); }
   void tap_acted() override { c_.tap_acted(); }
@@ -42,6 +43,14 @@ class PanelApp : public ui::Actions {
   void start_updater_both() override { c_.update_both(); }
   void set_note(const char *text, uint32_t duration_s) override { c_.set_note(text, duration_s); }
   void clear_note() override { c_.clear_note(); }
+  // Voice notes (docs/voice-notes/DESIGN.md; the Controller's voice_* are piece B's).
+  bool voice_press(VoicePurpose p) override { return c_.voice_press(p); }
+  void voice_stop() override { c_.voice_stop(); }
+  void voice_cancel() override { c_.voice_cancel(); }
+  void voice_done() override { c_.voice_done(); }
+  bool voice_send(const char *text) override { return c_.voice_send(text); }
+  bool voice_dismiss() override { return c_.voice_dismiss(); }
+  void voice_meter() override { c_.voice_meter(); }
 
   void apply_settings(const Settings &in) override {
     Settings s = in;

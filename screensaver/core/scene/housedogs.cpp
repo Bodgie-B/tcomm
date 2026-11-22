@@ -5,7 +5,10 @@
 #include <string.h>
 
 #include "../anim/ease.h"
+#include "day_herd.h"
+#include "day_plink.h"
 #include "director.h"
+#include "day_taichi.h"
 #include "landscape.h"
 #include "majors.h"
 #include "minors.h"
@@ -82,7 +85,8 @@ bool sceneReady(const World& w) {
   const char* b = w.minors.beat;
   return !(b && strcmp(b, "close") == 0);
 }
-bool fetchOn(const World& w) { return w.major.on && w.major.id == MJ_FETCH; }
+// The fetch, or the plinking (Mike, 2026-11-17: no dogs about while he shoots): the dogs keep away.
+bool fetchOn(const World& w) { return (w.major.on && w.major.id == MJ_FETCH) || plinkHoldsDogs(w); }
 
 bool tentUp(const World& w) { return w.tent.state == TENT_UP; }
 bool fireLit(const World& w) { return w.fire.state == FIRE_LIT || w.fire.state == FIRE_EMBERS; }
@@ -105,6 +109,7 @@ bool patOk(const World& w, int k) {
   const HikerFx& fx = w.fx;
   if (fx.reach != 0.f || fx.arm_w[0] != 0.f || fx.arm_w[1] != 0.f || fx.wade || fx.stomp != 0.f) return false;
   if (w.busy || w.react.active || w.minors.cur != MN_NONE || w.minors.fx_arm) return false;
+  if (reedsPickActive(w)) return false;   // his hand is on a reed (reeds.h, stage 22)
   if (worldBeatOwnsCritters(w)) return false;
   if (h.feet.x < 60.f || h.feet.x > 600.f) return false;
   const ScriptRun& r = w.spine.run;
@@ -223,6 +228,11 @@ Vec2 actSpot(World& w, int k, uint8_t act, int& face) {
         const float x = F.x + (lucy ? -30.f - back : 20.f + back);
         face = lucy ? 1 : -1;
         return Vec2{x, groundY(w, x, F.y + 18.f + 0.3f * back)};
+      }
+      Vec2 watch;
+      if (lucy && taichiWatchSpot(w, watch)) {   // tai chi: she lies near him and watches (Mike, 2026-11-18)
+        face = 1;
+        return watch;
       }
       const float x = L.tent.x - (lucy ? 58.f : 40.f) - (float)k * 6.f;
       face = 1;
@@ -487,7 +497,7 @@ void maybeChase(World& w, int k) {
   const HouseDog& o = H.d[1 - k];
   if (o.act == HA_CHASE && inScene(w, o)) return;   // one dog after it is enough
   Vec2 at;
-  if (!streamGuestAt(w, at)) return;
+  if (!streamGuestAt(w, at) && !herdGuestAt(w, at)) return;   // the stream's guest, or the last of the deer herd (day_herd.h)
   Critter& c = cr(w, d);
   if (!c.visible || c.feet.x < 20.f || c.feet.x > (float)SS_WIDTH - 20.f) return;
   d.resume = d.act;
@@ -561,6 +571,14 @@ void runAct(World& w, int k) {
   if (d.act == HA_SETTLE && !w.busy) {   // the beat that needed the camp is over
     endAct(w, k);
     return;
+  }
+  if (d.act == HA_SETTLE && k == HD_LUCY) {   // settled by the tent before the tai chi began: she moves over to watch
+    Vec2 watch;
+    if (taichiWatchSpot(w, watch) && absf(d.to.x - watch.x) > 40.f && !(w.fi.on && w.fi.mode == FI_COLD)) {
+      critterSetAction(c, CA_IDLE, 0.4f);
+      beginAct(w, k, HA_SETTLE);
+      return;
+    }
   }
   if (d.act != HA_SETTLE && w.busy && d.act != HA_LEAF) {   // a beat needs the camp: out of the way
     if (H.pat == k + 1) patEnd(w);
@@ -825,11 +843,12 @@ int houseDogsFetchTone(const World& w, int k) {
 
 const char* houseDogActName(int act) { return act >= 0 && act < HA_COUNT ? kActNames[act] : "?"; }
 
-int houseDogsLend(World& w) {
+int houseDogsLend(World& w, int first) {
   HouseDogs& H = w.dogs;
   if (H.lent) return -1;
-  static const int kOrder[HD_COUNT] = {HD_COPPER, HD_LUCY};
-  for (int k : kOrder) {
+  const int a = first == HD_LUCY ? HD_LUCY : HD_COPPER;   // anything else asks for Copper, as before
+  const int order[HD_COUNT] = {a, a == HD_LUCY ? HD_COPPER : HD_LUCY};
+  for (int k : order) {
     HouseDog& d = H.d[k];
     if (d.phase != HP_HERE || !inScene(w, d) || d.act == HA_LEAF || !((H.want >> k) & 1)) continue;
     if (H.pat == k + 1) patEnd(w);

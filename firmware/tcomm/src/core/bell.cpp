@@ -7,6 +7,7 @@ uint16_t BellSender::tap(uint32_t mono_ms, uint16_t next_id) {
   tapped_ = true;
   last_tap_ = mono_ms;
   id_ = next_id ? next_id : 1;
+  phone_ = false;
   enter(BellOut::Ringing, mono_ms);
   return id_;
 }
@@ -23,16 +24,18 @@ void BellSender::on_failed(uint16_t knock_id, uint32_t mono_ms) {
   if (knock_id == id_ && state_ == BellOut::Ringing) enter(BellOut::CouldntReach, mono_ms);
 }
 
-void BellSender::on_reply(uint16_t knock_id, bool come_on, uint32_t mono_ms) {
+void BellSender::on_reply(uint16_t knock_id, bool come_on, uint32_t mono_ms, bool phone) {
   if (knock_id != id_) return;
   // A reply can beat its ACK if the ACK was lost, and a late reply still beats "No answer yet".
   // It may also come after "Couldn't reach" has cleared (every ACK lost, the knock delivered):
-  // the receiver's banner stays up 60 s, so accept it that long after the tap.
+  // the receiver's banner stays up 2 minutes, so accept it that long after the tap.
   int32_t since_tap = ms_diff(mono_ms, last_tap_);
   bool late = state_ == BellOut::Idle && since_tap >= 0 && since_tap < (int32_t)(BellReceiver::kBannerMs + 5000);
   if (state_ == BellOut::Ringing || state_ == BellOut::Delivered || state_ == BellOut::NoAnswer ||
-      state_ == BellOut::CouldntReach || late)
+      state_ == BellOut::CouldntReach || late) {
     enter(come_on ? BellOut::ComeOn : BellOut::NotNow, mono_ms);
+    phone_ = phone;
+  }
 }
 
 void BellSender::tick(uint32_t mono_ms) {

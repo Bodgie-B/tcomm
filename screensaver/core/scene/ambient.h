@@ -73,6 +73,11 @@ void ambientInit(World& w, Rng& rng);
 void ambientStep(World& w, Rng& rng);
 // True on ticks where grass and smoke moved.
 bool ambientSubTick(const World& w);
+// The one wind (stage 22, INTEGRATION_PLAN 3.1 point 1; Mike, 2026-11-18): px of tip travel on an 18 px
+// blade at x, now, already scaled by the weather (weatherSwayMul). The grass's tufts are this exactly; the
+// reeds read it too (reeds.h reedsWind). During the mushroom trip (DAY_TRIP) it is laid toward the trip's
+// shared slow wave (trip.h tripSway), so grass and reeds lean together.
+float ambientWindAt(const World& w, float x);
 
 // Bounds in frame space; empty when the element is not visible.
 Rect ambientTuftBounds(const World& w, int i);

@@ -109,6 +109,20 @@ void Canvas::view(uint8_t *data, float *row, int w, int h, bool alpha) {
   memset(row_, 0, scanline_bytes(w));
 }
 
+void Canvas::strips_only(float *row, int w, int h, bool alpha) {
+  destroy();
+  owned_ = false;
+  row_ = row;
+  w_ = w;
+  h_ = h;
+  alpha_ = alpha;
+  run_ = row_ + w;
+  ev_ = (uint16_t *)(run_ + w + 1);
+  mark_ = (uint8_t *)(ev_ + w + 1);
+  nev_ = 0;
+  memset(row_, 0, scanline_bytes(w));
+}
+
 void Canvas::destroy() {
   if (owned_ && data_) g_alloc.release(data_);
   if (owned_ && row_) g_alloc.release(row_);
@@ -132,8 +146,24 @@ void Canvas::begin_strip(uint8_t *buf, int y0, int n) {
 
 void Canvas::end_strip() {
   if (!strip_) return;
-  memcpy(data_ + (size_t)sy0_ * row_bytes(), strip_, (size_t)(sy1_ - sy0_) * row_bytes());
+  if (data_) memcpy(data_ + (size_t)sy0_ * row_bytes(), strip_, (size_t)(sy1_ - sy0_) * row_bytes());
   strip_ = nullptr;
+}
+
+void Canvas::clear_cols(int x0, int x1, Color c, uint8_t a) {
+  if (x0 < 0) x0 = 0;
+  if (x1 > w_ - 1) x1 = w_ - 1;
+  if (x0 > x1) return;
+  const uint16_t v = to565(c);
+  const size_t bpp = alpha_ ? 3 : 2;
+  for (int y = y_lo(); y < y_hi(); y++) {
+    uint8_t *p = at(x0, y), *e = at(x1, y);
+    for (; p <= e; p += bpp) {
+      p[0] = v & 0xFF;
+      p[1] = v >> 8;
+      if (alpha_) p[2] = a;
+    }
+  }
 }
 
 void Canvas::clear(Color c, uint8_t a) {
@@ -160,7 +190,7 @@ void Canvas::set_clip(const RRect *r) {
 }
 
 Color Canvas::get(int x, int y, uint8_t *alpha) const {
-  if (x < 0 || y < 0 || x >= w_ || y >= h_) return Color{0, 0, 0};
+  if (x < 0 || y < 0 || x >= w_ || y >= h_ || !data_) return Color{0, 0, 0};
   size_t i = (size_t)y * w_ + x;
   if (alpha_) {
     if (alpha) *alpha = data_[i * 3 + 2];

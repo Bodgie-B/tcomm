@@ -236,6 +236,9 @@ void set_text_color(lv_obj_t *o, Color c) {
 // Sheet plumbing
 
 void close_sheet() {
+  // Voice notes: a recording or a result in this sheet ends with it; a waiting arrival dialog shows
+  // on the next render once no sheet is open (ui_voice.cpp).
+  if (g_sheet != Sheet::None) voice_sheet_closing(g_sheet);
   if (g_sheet_root) {
     // Usually called from a button inside the sheet: hide now, delete after the event finishes.
     lv_obj_add_flag(g_sheet_root, LV_OBJ_FLAG_HIDDEN);

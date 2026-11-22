@@ -19,6 +19,9 @@
 #include "../core/events.h"
 #include "../core/holidays.h"
 #include "../core/presence.h"
+#include "../core/voice_proto.h"
+#include "../core/voice_tx.h"     // piece B: the upload and the SAY / PUSH retries
+#include "../core/voice_inbox.h"  // piece B: the arrival inbox
 #include <stdlib.h>
 
 namespace tc {
@@ -75,6 +78,11 @@ class Platform {
   // Large buffers (the calendar's). The panel gives PSRAM.
   virtual void *alloc_big(size_t n) { return malloc(n); }
   virtual void free_big(void *p) { free(p); }
+  // The controller's own larger state (Controller::Store), taken once when it is made and given back
+  // when it goes. The panel gives PSRAM, so internal RAM keeps room for the Wi-Fi driver's buffers
+  // (field fix 2026-11-20). Kept apart from alloc_big, which the tests count for clips and the calendar.
+  virtual void *alloc_state(size_t n) { return malloc(n); }
+  virtual void free_state(void *p) { free(p); }
   // The calendar's files: "calendar" (the store: upcoming, repeating and recent events) and the
   // archive's months ("2026-10") and "series". read_file returns a file's bytes in a buffer from
   // alloc_big (the caller frees it), or null if there's none. write_file takes buf (from
@@ -105,6 +113,41 @@ class Platform {
   // The presence sensor (presence.h), upstairs only: true while someone is there, debounced by the
   // panel. False on a panel with no sensor. Read once a tick, only when Settings says it is fitted.
   virtual bool presence() { return false; }
+  // ---- Voice notes (docs/voice-notes/DESIGN.md; core/voice_proto.h). Defaults: no voice. ----
+  // One try of a voice frame (types 20-30): true when the radio took it (board::radio_send_voice).
+  virtual bool radio_send_voice(uint8_t to, const uint8_t *data, size_t len) {
+    (void)to;
+    (void)data;
+    (void)len;
+    return false;
+  }
+  // The capture handoff (board::voice_rec_begin, _stop, _release). rec comes from alloc_big and
+  // voice_rec_init; free it only after voice_rec_release returned true. begin false: no microphone
+  // here, or one is already recording (rec stays the caller's).
+  virtual bool voice_rec_begin(VoiceRec *rec) {
+    (void)rec;
+    return false;
+  }
+  virtual void voice_rec_stop(VoiceRec *rec, VoiceStop why) {
+    uint8_t none = 0;
+    if (rec) rec->stop.compare_exchange_strong(none, (uint8_t)why);
+  }
+  virtual bool voice_rec_release(VoiceRec *rec) {
+    (void)rec;
+    return true;
+  }
+  // The always-on microphone task's peak over its last few blocks (about 0.2 s), in dBFS, without
+  // starting a capture (board::audio_mic_recent). False when nothing was heard (no microphone).
+  virtual bool mic_meter(float &peak_db) {
+    (void)peak_db;
+    return false;
+  }
+  // The arrival inbox, saved on every change (board::save_voice_inbox). load: false if none or invalid.
+  virtual void save_voice_inbox(const VoiceInboxData &d) { (void)d; }
+  virtual bool load_voice_inbox(VoiceInboxData &d) {
+    (void)d;
+    return false;
+  }
 };
 
 // ---- What the interface draws. Plain data, rebuilt by Controller::tick(). ----
@@ -179,6 +222,15 @@ struct MailView {
   bool pulse;
 };
 
+// The "no mail" badge, just left of the mail badge on the DOWNSTAIRS line (Mike, 2026-11-18): Mike
+// taps it when he went for the mail and there was none. Upstairs it is always there, a faint outline
+// to tap, red while marked. Downstairs it shows only while marked, red and steady: no pulse, no sound,
+// no screen wake (a quiet notice), until the tenant taps it.
+struct NoMailView {
+  bool show;
+  bool active;  // marked: drawn red
+};
+
 // The heat and cooling arrows at the top right of the UPSTAIRS tile, on both panels (Mike,
 // 2026-11-06, requests.h), and the downstairs panel's "Action taken on temperature" line.
 struct RequestView {
@@ -218,7 +270,9 @@ struct View {
   BellView bell;
   DogView dog;
   MailView mail;
+  NoMailView nomail;
   RequestView req;
+  VoiceView voice;      // voice notes: the recorder, the keyboard strip and the arrival dialog (voice_proto.h)
   BannerView banner;
   // The tenant's toast, while a ring waits, may read "No one is near the panel" (the presence sensor,
   // upstairs: nobody near for 15 minutes; Mike, 2026-11-11). The tile has no room for a second line.
@@ -239,7 +293,7 @@ struct View {
 
 class Controller : public CalendarSource {
  public:
-  explicit Controller(Platform &p) : p_(p) {}
+  explicit Controller(Platform &p) : store_(make_store(p)), p_(p) {}
   ~Controller();  // the demo's simulated panel is rebuilt on each "plug in"
   Controller(const Controller &) = delete;
   Controller &operator=(const Controller &) = delete;
@@ -258,6 +312,9 @@ class Controller : public CalendarSource {
   // The mail badge: upstairs marks mail for downstairs, or takes it back; downstairs acknowledges
   // it. False when there was nothing to do (downstairs, with no mail waiting).
   bool tap_mail();
+  // The no-mail badge (Mike, 2026-11-18): upstairs marks "no mail" or takes it back; downstairs
+  // acknowledges it. False when there was nothing to do (downstairs, with no no-mail showing).
+  bool tap_nomail();
   // The comfort survey (comfort.h), downstairs only: the tenant's answer, saved with the readings
   // and the time, and copied to upstairs. With sent == Send and an arrow, the arrow goes upstairs
   // too (requests.h). False on the upstairs panel.
@@ -291,12 +348,14 @@ class Controller : public CalendarSource {
   // The number of answers this panel has (see Platform::save_comfort_count), restored at start-up.
   void set_comfort_count(uint32_t n) { comfort_count_ = n; }
   uint32_t comfort_count() const { return comfort_count_; }
-  void answer_banner(bool come_on);
+  // phone: the answer came from a phone through the gateway (PHONE_ANSWER), not a tap here, so it
+  // isn't a touch and the REPLY says so (Mike, 2026-11-15).
+  void answer_banner(bool come_on, bool phone = false);
   void dismiss_banner();
   void apply_settings(const Settings &s);
   void set_clock_manual(uint32_t utc);
   // Which house events the upstairs panel reports to the Pi (NoticeKind, one bit each; protocol.h).
-  // Kept in the saved Settings (version 6), so it survives a restart; a Settings page for it is a
+  // Kept in the saved Settings (version 6 on), so it survives a restart; a Settings page for it is a
   // follow-up.
   uint8_t notice_kinds() const { return settings_.notice_mask; }
   void set_notice_kinds(uint8_t mask) {
@@ -329,11 +388,181 @@ class Controller : public CalendarSource {
   const DogState &dog() const { return dog_.state(); }
   const MailState &mail() const { return mail_.state(); }
   bool peer_no_signal() const { return peer_.no_signal; }
+  // ROOMS for Apple Home (Mike, 2026-11-22; protocol.h): what the upstairs panel last queued for the
+  // gateway and whether the gateway ACKed it, for the serial `rooms`. any false: nothing sent yet.
+  struct RoomsInfo {
+    bool any = false;
+    bool acked = false;   // the gateway ACKed the last one
+    bool failed = false;  // the last one ran out of tries with no ACK: again every kRoomsRetryMs until one comes
+    uint8_t flags = 0;    // RoomsFlags
+    int16_t up_t = 0, down_t = 0;
+    uint16_t up_h = 0, down_h = 0;
+    uint32_t time = 0;    // UTC sent, 0 without a clock
+    uint32_t at = 0;      // mono ms queued
+    uint16_t seq = 0;     // 0: the retry queue was full
+  };
+  const RoomsInfo &rooms_info() const { return rooms_; }
+  static constexpr uint32_t kRoomsFirstMs = 20000;      // the first one, this long after start-up
+  static constexpr uint32_t kRoomsMinGapMs = 10000;     // never closer together, except for an occupancy change
+  static constexpr uint32_t kRoomsBeatMs = 300000;      // at least this often, changed or not
+  static constexpr uint32_t kRoomsRetryMs = 60000;      // after one went unACKed (no gateway, or an older C6)
 
   // Testing and demo: force the sky phase instead of the clock's (Phase count = off).
   void force_phase(int phase) { forced_phase_ = phase; }
 
+  // ---- Voice notes (docs/voice-notes/DESIGN.md). Declared by P0, defined in controller.cpp by piece B;
+  // View::voice shows the state. ----
+  // PRESSED on the mic key (Dictation) or the own badge (Message): capture starts and BEGIN goes out at
+  // once. False when it could not start (View::voice.err says why, e.g. NoMemory).
+  bool voice_press(VoicePurpose p);
+  // The release that ends a hold (the interface applies the 0.6 s rule and check fix C2), STOP, or the
+  // red mic key.
+  void voice_stop();
+  // CANCEL, PRESS_LOST before 0.6 s, or the recorder or keyboard closed: ABORT user, clip freed.
+  void voice_cancel();
+  // The keyboard took the result (text_seq), or the recorder closed after it: back to Idle.
+  void voice_done();
+  // SEND on the recorder's result screen: text is the result, possibly changed with EDIT. False if the
+  // other panel cannot take it (offline, no kStateVoice) or the text is empty.
+  bool voice_send(const char *text);
+  // One tap on the arrival dialog (after its 700 ms guard): the shown message leaves the inbox.
+  bool voice_dismiss();
+  // At start-up: the saved inbox (Platform::load_voice_inbox).
+  void restore_voice_inbox(const VoiceInboxData &d);
+
  private:
+  // ---- Voice notes: piece B adds the Controller's private voice state here. ----
+ public:
+  // The downstairs panel's route to the gateway (DESIGN 4.7): auto (pings decide; the default), direct,
+  // or relay (through upstairs). Upstairs is always direct. RAM only: serial `voice route` until restart.
+  enum class VoiceRoute : uint8_t { Auto = 0, Direct = 1, Relay = 2 };
+  static constexpr VoiceRoute kVoiceRouteDefault = VoiceRoute::Auto;
+  VoiceRoute voice_route() const { return vroute_; }
+  void set_voice_route(VoiceRoute r);
+  bool voice_direct_ok() const { return vdirect_ok_; }  // auto: the last pings were answered direct
+  bool voice_gateway_known() const { return voice_gateway_ok(); }  // the gateway said it takes voice
+  // Serial `voice`: the route, the last job's numbers and the inbox count (never any text).
+  void voice_report(char *out, size_t n);
+  // Serial "voice test <text>": shows an arrival from the other floor here (inbox, card, ding, wake), with
+  // no VOICE_GOT to the other panel and no phone push. For looking at the card.
+  void voice_test_arrival(const char *text);
+  // Serial "cold test on/off" (memory test, 2026-11-22): shows danger cold while a fresh outside
+  // reading is showing, whatever the gateway's flags say. Not saved; a restart clears it.
+  void set_cold_test(bool on) { cold_test_ = on; }
+  bool cold_test() const { return cold_test_; }
+  const VoiceInbox &voice_inbox() const { return vinbox_; }
+  // The codec new recordings use (Mike, 2026-11-21): mu-law when the gateway has said it takes it,
+  // otherwise ADPCM (voice_auto_codec). Serial `voice codec 1|2` sets it by hand (RAM only, until
+  // restart; anything but mu-law is ADPCM), `voice codec 0` gives it back to the gateway.
+  VoiceCodec voice_codec() const {
+    return store_->vcodec ? (VoiceCodec)store_->vcodec : voice_auto_codec(voice_gateway_mulaw());
+  }
+  void set_voice_codec(VoiceCodec c) {
+    store_->vcodec = (uint8_t)(c == VoiceCodec::Mulaw ? VoiceCodec::Mulaw : VoiceCodec::Adpcm);
+  }
+  void set_voice_codec_auto() { store_->vcodec = 0; }
+  bool voice_codec_by_hand() const { return store_->vcodec != 0; }
+  // The gateway takes mu-law: its last hello here said so, or the other panel's STATE does (kStateGwMulaw).
+  bool voice_gateway_mulaw() const {
+    return (vgw_heard_ && store_->vgw_mulaw) || (vpeer_gw_voice_ && store_->vpeer_gw_mulaw);
+  }
+  // The badge row is open and ready (before START): View::voice.level shows the live microphone meter
+  // (Platform::mic_meter, read every kVoiceMeterEveryMs) while this keeps being called, at least once
+  // every kVoiceMeterHoldMs. No capture is started.
+  void voice_meter();
+  static constexpr uint32_t kVoiceMeterEveryMs = 200, kVoiceMeterHoldMs = 1000;
+
+ private:
+  // Platform::radio_send_voice as the VoiceLink voice_tx sends through (looked up at call time).
+  class VLink : public VoiceLink {
+   public:
+    explicit VLink(Controller *c) : c_(c) {}
+    bool voice_send(uint8_t to, const uint8_t *d, size_t n) override;
+
+   private:
+    Controller *c_;
+  };
+  // The larger state, about 3.7 KB on the panel: the voice upload, its retries and inbox, the voice
+  // text and the view (field fix 2026-11-20). One block from Platform::alloc_state (PSRAM on the panel),
+  // made here and freed by ~Controller, so the controller in internal RAM is smaller than before the
+  // voice work. The members below that name its parts are references into it; nothing else changes.
+  struct Store {
+    VoiceTx vtx;
+    VoiceOut vout;
+    VoiceInbox vinbox;
+    char vtext[kVoiceTextMax + 1] = {};
+    VoiceTx::Stats vlast_stats = {};
+    View view = {};
+    // Field fix 2026-11-21, here (PSRAM) so the controller in internal RAM does not grow: the codec
+    // setting, and the badge row's live meter (last asked for, last read, its 0-100 level).
+    uint8_t vcodec = 0;            // 0: by the gateway; 1 mu-law or 2 ADPCM by hand (serial `voice codec`)
+    bool vgw_mulaw = false;        // the last voice hello this panel heard was the mu-law one (key 1)
+    bool vpeer_gw_mulaw = false;   // the other panel's STATE carries kStateGwMulaw
+    uint8_t vmeter_level = 0;
+    bool vmeter_on = false;
+    uint32_t vmeter_at = 0, vmeter_read = 0;
+  };
+  static Store *make_store(Platform &p);
+  Store *store_;  // first, so the references below can use it
+  VLink vlink_{this};
+  VoiceTx &vtx_ = store_->vtx;
+  VoiceOut &vout_ = store_->vout;
+  VoiceInbox &vinbox_ = store_->vinbox;
+  VoiceRec *vrec_ = nullptr;      // the clip (alloc_big); freed once Platform::voice_rec_release says so
+  bool vjob_ = false;             // a recording job is under way (until its result shows)
+  VoicePurpose vpurpose_ = VoicePurpose::Dictation;
+  VoiceUi vui_ = VoiceUi::Idle;
+  VoiceErr verr_ = VoiceErr::None;
+  uint32_t vui_at_ = 0;           // when Error or Delivered began (4 s and 1.5 s)
+  uint32_t vpress_ms_ = 0;
+  uint16_t vtext_seq_ = 0;
+  uint8_t vtext_flags_ = 0;
+  char (&vtext_)[kVoiceTextMax + 1] = store_->vtext;
+  uint8_t vxfer_ = 0;             // the last xfer used; the next is one more (1-255)
+  uint32_t vsay_id_ = 0;          // the SAY waiting for its VOICE_GOT (Sending)
+  bool vpeer_voice_ = false;      // the other panel's STATE carries kStateVoice
+  VoiceRoute vroute_ = kVoiceRouteDefault;
+  bool vdirect_ok_ = true;        // auto route: direct until 3 pings in a row go unanswered
+  uint8_t vping_miss_ = 0;
+  bool vping_wait_ = false;
+  uint32_t vping_nonce_ = 0, vping_sent_ = 0, vping_next_ = 0;
+  // Field fix 2026-11-20: whether the gateway takes voice. vgw_heard_: a voice frame straight from the
+  // gateway (its hello, or any answer) within kVoiceGwStaleMs; vpeer_gw_voice_: the other panel's STATE
+  // says so (kStateGwVoice). Until one holds, nothing voice-related goes to the gateway.
+  bool vgw_heard_ = false;
+  uint32_t vgw_heard_at_ = 0;
+  bool vpeer_gw_voice_ = false;
+  bool voice_gateway_ok() const { return vgw_heard_ || vpeer_gw_voice_; }
+  // mulaw: 1 or 0 for a voice hello (its key: the gateway takes mu-law or not), -1 for any other frame.
+  void voice_heard_gateway(uint32_t now, int mulaw = -1);
+  bool vding_due_ = false;        // a message came while recording: the ding plays when it ends
+  bool cold_test_ = false;        // serial "cold test on": danger cold shown for the memory test
+  bool voice_wake_ = false;       // a message woke the screen, for touch_wake_ms (BacklightInputs::voice_wake)
+  uint32_t voice_wake_at_ = 0;
+  uint16_t vinbox_seq_ = 0;
+  uint16_t vseq_ = 0;             // header seq of the controller's own voice frames (trace only)
+  uint32_t vbad_n_ = 0, vbad_log_ = 0;  // undecodable voice frames, logged at most once a minute
+  bool vbad_logged_ = false;
+  uint32_t vjobs_ = 0, vjob_fails_ = 0;
+  VoiceTx::Stats &vlast_stats_ = store_->vlast_stats;
+  VoiceErr vlast_err_ = VoiceErr::None;
+  bool vlast_fell_back_ = false;
+
+  void on_voice(const uint8_t *data, size_t len);
+  void tick_voice(uint32_t now, const WallTime &w);
+  void voice_set_ui(VoiceUi u, VoiceErr e = VoiceErr::None);
+  void voice_end_job();                // the job's result is in vui_; the clip is let go
+  void voice_free_clip();              // releases and frees the clip once the mic task lets go
+  bool voice_capturing() const;        // a clip is published and the mic task hasn't finished it
+  uint8_t voice_hop() const;           // this panel's first hop to the gateway now
+  int voice_fallback() const;          // the BEGIN fallback hop, or -1
+  bool voice_from_gateway(const VoiceMsg &m) const;  // for this panel's floor, from the gateway's side
+  void voice_send_got(uint8_t to, uint8_t kind, uint32_t key, VoiceGotResult r);
+  void voice_arrived(const VoiceMsg &m);
+  void voice_push(const VoiceNote &n);
+  void voice_save_inbox();
+  void tick_voice_ping(uint32_t now);
+  void fill_voice_view(VoiceView &vv, const WallTime &w);
   struct Peer {
     bool known = false;
     bool no_signal = false;
@@ -404,9 +633,16 @@ class Controller : public CalendarSource {
   // priority, dropped quietly if it doesn't ACK. time 0 = use the clock now (0 if it isn't set).
   void raise_notice(NoticeKind k, Floor floor, int16_t value, uint32_t time, const char *text = "");
   void tick_notices();  // the doorbell's unanswered rings, from the state held (edges between ticks)
+  // The phones (Mike, 2026-11-15): a floor's phones are pushed only when its status is Open or Busy and
+  // this panel's clock is not in quiet hours (no clock: not quiet).
+  bool phones_ok(Status rung_status);
+  void ring_notice(Floor rung, uint16_t knock_id, uint32_t utc);  // RING, and remembered for ANSWERED
+  void ring_answered_here(Floor rung, uint16_t knock_id);  // ANSWERED, if that ring got a RING in time
+  void on_phone_answer(const Msg &m);  // PHONE_ANSWER from the gateway or (downstairs) relayed by upstairs
   void tick_dog_nudge(uint32_t now, const WallTime &w);  // dog out too long: pill text, pulse, five dings on its own floor
   // The presence sensor (presence.h, Mike 2026-11-11), upstairs and only when Settings says it is fitted.
   void tick_presence(uint32_t now);
+  void tick_rooms(uint32_t now, const WallTime &w);  // ROOMS for the gateway (Mike, 2026-11-22), upstairs only
   bool away_now() const { return away_ && status_.state().status == Status::Busy; }
   uint8_t presence_flags() const;  // STATE's kStateAwayDesk and kStateNobodyNear for now
   uint8_t current_volume();
@@ -434,7 +670,7 @@ class Controller : public CalendarSource {
   uint32_t back_time_ = 0;  // the last time left alone
   uint32_t back_mono_ = 0;  // and when it came
   int back_n_ = 0;          // how many in a row have agreed
-  View view_ = {};
+  View &view_ = store_->view;  // in the Store (PSRAM on the panel)
 
   bool clock_was_valid_ = false;
   bool want_peer_state_ = true;  // keep asking for the other panel's STATE until one arrives
@@ -541,12 +777,27 @@ class Controller : public CalendarSource {
   uint32_t passer_until_ = 0;
   uint32_t passer_last_ = 0;
   uint8_t sent_pres_flags_ = 0;  // what the last STATE carried
+  // ROOMS (Mike, 2026-11-22). peer_rd_have_: a READING has come from the other panel since start-up
+  // (or the floor swap). rooms_warm_: kRoomsFirstMs have passed since begin().
+  bool peer_rd_have_ = false;
+  bool rooms_warm_ = false;
+  bool rooms_fail_logged_ = false;  // one log line per run of unACKed ones
+  RoomsInfo rooms_;
   // Downstairs: the last ring was sent while upstairs said nobody was near its panel, and when.
   bool knock_near_note_ = false;
   uint32_t knock_near_at_ = 0;
   BellOut notice_bell_out_ = BellOut::Idle;  // the doorbell's state at the last tick
   BannerKind notice_banner_ = BannerKind::None;
   bool ring_resolved_ = false;  // the banner was answered or dismissed (not left to run out)
+  // The last ring that pushed the phones (a RING notice), so a panel answer can tell them (ANSWERED).
+  bool ring_pushed_ = false;
+  Floor ring_pushed_floor_ = Floor::Upstairs;
+  uint16_t ring_pushed_id_ = 0;
+  uint32_t ring_pushed_utc_ = 0;
+  uint32_t ring_pushed_mono_ = 0;
+  // The knock id of our last ring that the other panel dismissed (a REPLY with the dismissed bit):
+  // phone answers to it are not passed on. 0 = none.
+  uint16_t ring_dismissed_id_ = 0;
   bool nudge_temp_ = false;  // the pill shows the outside temperature
   int16_t nudge_tenths_ = 0;
 
@@ -567,12 +818,9 @@ const char *floor_lower(Floor f);    // "upstairs"
 const char *dog_name(Dog d);         // "LUCY", "BOTH DOGS"
 
 // Dog out too long (Mike, 2026-11-11): minutes a dog may be out before the pill shows the time and
-// the outside temperature, pulses, and the panel chimes once. Shorter when it's harsh outside.
+// the outside temperature, pulses, and the panel chimes. With an outside reading the limit is each
+// dog's own, from the feels-like temperature (Mike, 2026-11-22: dog_limit_min in core/dog.h).
 constexpr int kDogOutMinNormal = 30;   // no valid outside reading or no clock: elapsed time alone
-constexpr int kDogOutMinExtreme = 15;  // outside below kDogColdTenthsF or above kDogHotTenthsF
 constexpr uint32_t kDogRingRepeatMin = 5;  // the five dings again this many minutes later, until the dog is in
-constexpr int kDogOutMinDanger = 10;   // WeatherGate's danger heat or danger cold
-constexpr int kDogColdTenthsF = 320;   // 32.0 F: colder than this is "extreme"
-constexpr int kDogHotTenthsF = 880;    // 88.0 F: hotter than this is "extreme"
 
 }  // namespace tc

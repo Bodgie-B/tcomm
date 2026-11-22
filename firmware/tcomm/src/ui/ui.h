@@ -36,6 +36,7 @@ class Actions {
   virtual void tap_bell() = 0;
   virtual void tap_dog() = 0;
   virtual void tap_mail() = 0;
+  virtual void tap_nomail() = 0;  // the no-mail badge, left of the mail badge (Mike, 2026-11-18)
   // The comfort survey (downstairs): the answer, the arrow picked and whether it was sent.
   virtual void comfort_answer(tc::Feel f, tc::Ask ask, tc::AskSent sent) = 0;
   virtual void tap_requests() = 0;  // the heat and cooling arrows on the UPSTAIRS tile
@@ -65,6 +66,24 @@ class Actions {
     (void)duration_s;
   }
   virtual void clear_note() {}
+  // Voice notes (docs/voice-notes/DESIGN.md; the Controller's voice_* do the work, View::voice shows
+  // it). Default bodies, so a build or a test without voice still links.
+  // PRESSED on the mic key (Dictation) or the own floor's badge (Message). False: not started.
+  virtual bool voice_press(tc::VoicePurpose p) {
+    (void)p;
+    return false;
+  }
+  virtual void voice_stop() {}    // a hold released (the 0.6 s rule, check fix C2), STOP, the red mic key
+  virtual void voice_cancel() {}  // CANCEL, PRESS_LOST before 0.6 s, the recorder or keyboard closed
+  virtual void voice_done() {}    // the result was inserted, or the recorder closed after it
+  virtual bool voice_send(const char *text) {  // SEND on the result screen (text possibly edited)
+    (void)text;
+    return false;
+  }
+  virtual bool voice_dismiss() { return false; }  // one tap on the arrival dialog, after its 700 ms guard
+  // The badge row is open and ready (before START): called every render while it is, so View::voice.level
+  // carries the live microphone meter. Stops by itself a second after the calls stop.
+  virtual void voice_meter() {}
   virtual DemoInfo demo_info() = 0;
   virtual void demo(DemoAction a) = 0;
   // The calendar. save_event returns the event's id, or 0 if it couldn't be kept (the calendar is
@@ -113,13 +132,17 @@ bool spare_give_back(void *p);
 bool spare_reclaim();
 bool spare_lent();
 uint32_t spare_refused();
-bool icicles_held();  // the danger-cold icicles' picture (240,000 bytes of PSRAM) exists now
+// The danger-cold icicles' block of PSRAM (their shapes and drawing scratch, about 14 KB; it was an
+// 800 x 100 picture, 240,000 bytes, until 2026-11-21) exists now, and its size (0 when not).
+bool icicles_held();
+size_t icicles_bytes();
 // Called between the few-KB pieces of a finished picture's copy into its place on screen, to give
 // the screen's own PSRAM reads room (the panel waits a few microseconds).
 void set_copy_pause(void (*pause)());
 
 // For the simulator: open sheets the way a touch would, and scroll the open one's list.
-enum class Sheet { None, Status, Timer, Settings, TimeDate, Test, CleanScreen, Ringtone, Zambretti, Screensaver, Comfort, Chart, Note, Outside, Presence };
+// Voice: the badge recorder (docs/voice-notes/DESIGN.md 2.2), last so no other value moves.
+enum class Sheet { None, Status, Timer, Settings, TimeDate, Test, CleanScreen, Ringtone, Zambretti, Screensaver, Comfort, Chart, Note, Outside, Presence, Voice };
 void open_sheet(Sheet s, tc::Status timed = tc::Status::Private);
 void scroll_sheet(int y);
 void tap_gear();  // as a tap on the gear (Settings rolls down or up), for testing over serial

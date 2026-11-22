@@ -53,6 +53,10 @@ bool g_radio = false;     // ESP-NOW is up and the upstairs panel is a peer
 // panel's hardware acknowledges before it decrypts, so "reached" with no TComm ACK means a panel
 // heard the frame but didn't take it.
 volatile uint32_t g_reached = 0, g_missed = 0;
+// Frames the receive queue had no room for since the reset (voice notes, 0.5): in the hello and on the
+// screen, so a stream that outruns the loop shows up. The Wi-Fi task counts, the loop reads.
+volatile uint32_t g_drops = 0;
+bool g_down_peer = false;  // the downstairs panel was added as an encrypted peer (the hello's down_peer)
 uint8_t g_mac[6];
 char g_mac_text[18];
 // For finish_usb_tx (below): the USB port's send buffer, and its transfers.
@@ -91,7 +95,7 @@ void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
   f.from = (int8_t)role_of(info->src_addr);
   f.len = (uint8_t)len;
   memcpy(f.data, data, len);
-  xQueueSend(g_rx, &f, 0);  // the Wi-Fi task must never wait
+  if (xQueueSend(g_rx, &f, 0) != pdTRUE) g_drops = g_drops + 1;  // the Wi-Fi task must never wait
 }
 
 // After a "failed" reply, one note on what the radio saw, which tells the likely causes apart.
@@ -110,14 +114,19 @@ class BoardIO : public gw::GatewayIO {
  public:
   uint32_t now_ms() override { return millis(); }
 
-  void send_frame(const uint8_t *data, size_t len) override {
-    if (!g_radio) return;  // the request still gets its "failed" reply after 1.5 s
-    esp_err_t e = esp_now_send(kPanels[gw::kUpstairs], data, len);
+  void send_frame(int to, const uint8_t *data, size_t len) override {
+    if (!g_radio || to < 0 || to > 1 || !memcmp(kPanels[to], kNoMac, 6)) return;  // the request still gets its "failed" reply after 1.5 s
+    esp_err_t e = esp_now_send(kPanels[to], data, len);
     if (e != ESP_OK && millis() - last_err_ >= 60000) {  // at most one note a minute
       last_err_ = millis();
       note("send failed: %s", esp_err_to_name(e));
     }
   }
+
+  // The write gate's input (DESIGN 5.1): what the USB port's 4096-byte send buffer can take now.
+  int tx_room() override { return (int)Serial.availableForWrite(); }
+  uint32_t rx_drops() override { return g_drops; }
+  bool down_peer() override { return g_down_peer; }
 
   void reply(const char *line) override {
     // One write per line, so a line never goes out in pieces with something else between.
@@ -145,7 +154,7 @@ bool check(esp_err_t e, const char *what, char *problem, size_t cap) {
 // Station mode on channel 1; never joins Wi-Fi. The upstairs panel (and the downstairs one once
 // its MAC is in secrets.h) are encrypted peers with the gateway's link key.
 bool radio_begin(char *problem, size_t cap) {
-  g_rx = xQueueCreate(16, sizeof(RxFrame));
+  g_rx = xQueueCreate(48, sizeof(RxFrame));  // 0.6: a mu-law upload is 68 frames a second (77 with the relay), 0.5 had 32
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
   esp_wifi_set_ps(WIFI_PS_NONE);  // on USB power: keep the receiver on
@@ -162,7 +171,9 @@ bool radio_begin(char *problem, size_t cap) {
     p.ifidx = WIFI_IF_STA;
     p.encrypt = true;
     memcpy(p.lmk, TCOMM_LMK_GATEWAY, 16);
-    ok &= check(esp_now_add_peer(&p), i == gw::kUpstairs ? "add upstairs" : "add downstairs", problem, cap);
+    bool added = check(esp_now_add_peer(&p), i == gw::kUpstairs ? "add upstairs" : "add downstairs", problem, cap);
+    if (i == gw::kDownstairs) g_down_peer = added;
+    ok &= added;
   }
   if (!memcmp(kPanels[gw::kUpstairs], kNoMac, 6)) {
     if (!problem[0]) snprintf(problem, cap, "upstairs MAC not set");
@@ -177,7 +188,7 @@ char g_problem[48] = "";
 
 struct Shown {
   bool pi = false;
-  uint32_t requests = UINT32_MAX, acked = 0, failed = 0, rejected = 0;
+  uint32_t requests = UINT32_MAX, acked = 0, failed = 0, rejected = 0, drops = 0;
   char last[40] = "";
 };
 Shown g_shown;
@@ -217,8 +228,10 @@ void lcd_static() {
 
 void lcd_update() {
   const gw::GwStatus &st = g_gw->status();
+  const uint32_t drops = g_drops;
   if (st.pi_seen == g_shown.pi && st.requests == g_shown.requests && st.acked == g_shown.acked &&
-      st.failed == g_shown.failed && st.rejected == g_shown.rejected && !strcmp(st.last, g_shown.last))
+      st.failed == g_shown.failed && st.rejected == g_shown.rejected && drops == g_shown.drops &&
+      !strcmp(st.last, g_shown.last))
     return;
   char s[48];
   lcd_row(row_y(3), st.pi_seen ? "PI: TALKING" : "PI: WAITING", 2, st.pi_seen ? lcd::kGreen : lcd::kYellow);
@@ -230,6 +243,17 @@ void lcd_update() {
   uint16_t c = strstr(st.last, "failed") ? lcd::kRed : strstr(st.last, "rejected") ? lcd::kYellow
                : strstr(st.last, "acked")  ? lcd::kGreen : lcd::kWhite;
   lcd_row(row_y(5), st.last, 2, c);
+  // Radio frames dropped by the receive queue (0.5), in the row a start-up problem would use, only when
+  // there is no such problem and there have been drops.
+  if (!g_problem[0] && !memcmp(g_mac, kGatewayMac, 6)) {
+    if (drops) {
+      snprintf(s, sizeof(s), "DROPS %lu", (unsigned long)drops);
+      lcd_row(row_y(6), s, 2, lcd::kYellow);
+    } else {
+      lcd_row(row_y(6), "", 2, lcd::kWhite);
+    }
+  }
+  g_shown.drops = drops;
   g_shown.pi = st.pi_seen;
   g_shown.requests = st.requests;
   g_shown.acked = st.acked;
@@ -294,7 +318,7 @@ void setup() {
   // Quiet: only errors from the system's own logs (they start "E (", never "{").
   esp_log_level_set("*", ESP_LOG_ERROR);
   Serial.setRxBufferSize(1024);
-  Serial.setTxBufferSize(2048);
+  Serial.setTxBufferSize(4096);  // 0.5: room for about 7 voice lines and the control lines behind the write gate
   Serial.begin(115200);       // USB Serial/JTAG; the rate is ignored
   Serial.setTxTimeoutMs(20);  // with nothing reading the port, a write gives up after 20 ms
   g_tx_empty = Serial.availableForWrite();

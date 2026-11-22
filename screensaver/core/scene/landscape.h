@@ -16,8 +16,12 @@
 #include "../gfx/raster.h"
 #include "../palette.h"
 #include "buildup.h"
+#include "skytrip.h"
 
 namespace ss {
+
+// Spike clusters of the sedge fringe the reeds lay along the stream (reeds.h; Landscape::reed_fringe).
+#define LS_REED_FRINGE 16
 
 // Ridge crests are sampled every 16 px over x = -16..816.
 #define LS_CREST_N    52
@@ -99,12 +103,23 @@ struct Landscape {
   LsStar stars[LS_STAR_COUNT];
 
   int16_t mush_x, mush_y;                // the build-up's last plant: base of its stem
+
+  // Stage 22 (INTEGRATION_PLAN 3.1 point 5, REVIEW_FIXES F18; Mike, 2026-11-18). All zero is the
+  // landscape as it was: no patch, the natural sky, no fringe.
+  LsTrip trip;                           // the mushroom trip's sky: each band's latched clock (skytrip.h)
+  uint8_t patch_stage;                   // the mushroom patch's stage this loop (worldBeginLoop, from Memory::mush)
+  uint8_t patch_lifted;                  // bit i: pickable i is the trip major's to draw (patch.h)
+  // The sedge fringe along the waterlines, written by reedsInit and read only by reedsDrawStatic
+  // (reeds.h), so the cache can draw it with no World. One byte a spike cluster; 0 none. The encoding
+  // is the reeds module's (PROPOSED: bits 0-6 x / 8 + 1, bit 7 the near bank).
+  uint8_t reed_fringe[LS_REED_FRINGE];
 };
 
 void landscapeGenerate(Landscape& ls, Rng& rng);
 
 // What the sky layer shows besides its bands, in whole pixels and small steps, so the app can
-// tell when the picture changes (it repaints only the rows a body moved in, app.cpp). Made by
+// tell when the picture changes (it repaints only the rows a body moved in, app.cpp). The sun is on its
+// own higher arc, the moon on the shared low one. Made by
 // landscapeSky from the host's real sun and moon; all zero is the old sky: one body parked by mood.
 struct SkyDraw {
   bool real;               // the host gave real positions (Inputs::sky.have)
@@ -123,6 +138,9 @@ struct SkyDraw {
 // when it rains).
 SkyDraw landscapeSky(const SkyInputs& in, float mood, float cover);
 bool landscapeSkySame(const SkyDraw& a, const SkyDraw& b);
+// The colour the sun is filled with: the palette's SUN slot low down, blending to a warm white from
+// 8 to 55 degrees up (Mike, 2026-11-17). Public so the tests and stills use the same colour.
+Pixel landscapeSunColor(const SkyDraw& s, const Palette& pal);
 // The frame area the sun and the moon cover (empty when not drawn). The moon's includes the ring
 // around it kept clear of stars.
 Rect landscapeSunBounds(const SkyDraw& s);

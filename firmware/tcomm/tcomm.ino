@@ -12,6 +12,7 @@
 #include <Arduino.h>
 #include "esp_heap_caps.h"
 #include "esp_lcd_panel_rgb.h"
+#include "esp_memory_utils.h"
 #include "esp_task_wdt.h"
 #include "src/app/controller.h"
 #include "src/app/demo.h"
@@ -22,6 +23,7 @@
 #include "src/core/brightness.h"
 #include "src/core/civil.h"
 #include "src/core/synth.h"
+#include "src/core/voice_dsp.h"  // kVoiceBoostMaxDb (serial voice boost)
 #include "src/gfx/canvas.h"
 #include "src/ui/art.h"
 #include "src/ui/ss_host.h"
@@ -97,6 +99,12 @@ static void strip_scratch_off() {
   g_scratch = nullptr;
 }
 
+// The reach test (docs/voice-notes/DESIGN.md 13.0, piece R), in board_radio.cpp. Declared here because
+// board.h is frozen for the voice work; to move into board.h when the shared interfaces next open.
+namespace board {
+void radio_reach(int n, int gap_ms, bool ping);
+}
+
 class PanelPlatform : public board::DevicePlatform {
  public:
   void display_test_label(char *out, size_t n) override {
@@ -119,6 +127,18 @@ class PanelPlatform : public board::DevicePlatform {
   bool strip_drawing() override { return g_strips; }
   bool updater_installed() override { return board::updater_installed(); }
   void start_updater() override { board::restart_into_updater(); }
+  // A voice message's ding stops the screensaver first, so the ding's render never competes with the
+  // screensaver's PSRAM (DESIGN 2.3, check fix C3), and counts as activity for the idle time. The
+  // controller plays Ding only when the ding rules allow a wake. The LVGL lock is recursive, so this is
+  // safe from the LVGL task (lock held) and from a serial command (lock not held).
+  void play(tc::Sound s, uint8_t volume) override {
+    if (s == tc::Sound::Ding && lvgl_port_lock(100)) {
+      if (ui::screensaver_running()) ui::screensaver_stop();
+      lv_disp_trig_activity(nullptr);
+      lvgl_port_unlock();
+    }
+    board::DevicePlatform::play(s, volume);
+  }
   void toggle_strip_drawing() override {
     if (g_strips) strip_scratch_off();
     else if (!strip_scratch_on()) return;  // refused (no memory): stays off, nothing saved
@@ -405,6 +425,27 @@ static void presence_report() {
   else Serial.printf("presence: last seen %ld min ago\n", (long)pv.since_min);
 }
 
+// "rooms": the last ROOMS this panel queued for the gateway (Mike, 2026-11-22) and whether it was ACKed.
+static void rooms_report() {
+  const tc::Controller::RoomsInfo &r = g_ctrl.rooms_info();
+  if (g_ctrl.settings().floor != tc::Floor::Upstairs) {
+    Serial.println("rooms: only the upstairs panel sends them");
+    return;
+  }
+  if (!r.any) {
+    Serial.println("rooms: none sent yet (the first goes about 20 s after start-up)");
+    return;
+  }
+  char up[24] = "no reading", down[24] = "no reading";
+  if (r.flags & tc::kRoomsUpValid) snprintf(up, sizeof(up), "%.1f F %.1f %%", r.up_t / 10.0, r.up_h / 10.0);
+  if (r.flags & tc::kRoomsDownValid) snprintf(down, sizeof(down), "%.1f F %.1f %%", r.down_t / 10.0, r.down_h / 10.0);
+  Serial.printf("rooms: upstairs %s, downstairs %s, occupied %s\n", up, down,
+                !(r.flags & tc::kRoomsOccKnown) ? "unknown (no sensor fitted)" : (r.flags & tc::kRoomsOccupied) ? "yes" : "no");
+  Serial.printf("rooms: seq %u, %lu s ago, time %lu; %s\n", (unsigned)r.seq, (unsigned long)((millis() - r.at) / 1000),
+                (unsigned long)r.time,
+                r.acked ? "ACKed by the gateway" : r.failed ? "no ACK (trying again every minute)" : "waiting for the ACK");
+}
+
 // "presence sim 0|1|off": forces the sensor absent or present, or lets the real one back in.
 static void presence_sim(int v) {
   g_platform.set_presence_sim(v < 0 ? -1 : (v ? 1 : 0));
@@ -570,6 +611,29 @@ static void mail_from_other_floor() {
   Serial.printf("mail: %s taps theirs; now %s\n", tc::floor_lower(other), g_ctrl.mail().waiting ? "waiting" : "none waiting");
 }
 
+// "nomail other" (or "nomail ack"): the other floor's panel taps its no-mail badge, as if by radio
+// (Mike, 2026-11-18). Downstairs acknowledges a mark; upstairs marks it or takes it back.
+static void nomail_from_other_floor() {
+  tc::Floor other = tc::other_floor(g_ctrl.settings().floor);
+  const tc::MailState &mine = g_ctrl.mail();
+  if (other == tc::Floor::Downstairs && !mine.none) {
+    Serial.println("nomail: nothing marked for downstairs to acknowledge");
+    return;
+  }
+  tc::WallTime w = g_platform.wall();
+  tc::Msg m;
+  m.type = tc::MsgType::Mail;
+  m.sender = tc::sender_id(other);
+  m.seq = (uint16_t)(esp_random() | 1);
+  m.u.mail.waiting = mine.none ? 0 : 2;  // 2 = no mail on the wire
+  m.u.mail.since = w.valid ? w.utc : 0;
+  m.u.mail.ver = mine.ver + 1;
+  uint8_t buf[tc::kMaxMsg];
+  size_t n = tc::encode(m, buf, sizeof(buf));
+  if (n) g_ctrl.on_radio(buf, n);
+  Serial.printf("nomail: %s taps theirs; now %s\n", tc::floor_lower(other), g_ctrl.mail().none ? "marked" : "not marked");
+}
+
 // Starts the screensaver and says with what seed, so a run can be repeated (ss seed N).
 static void ss_start(uint32_t seed) {
   if (ui::screensaver_start(seed)) Serial.printf("screensaver: started, seed %lu (a touch or ss again stops it)\n", (unsigned long)seed);
@@ -701,6 +765,28 @@ static bool cmd_char(const char *s, const char *word, char &ch) {
   return ch != 0;
 }
 
+// Voice notes (piece A, board_audio.cpp). To move into board.h when the shared interfaces next open.
+namespace board {
+void voice_dump(uint32_t secs, int gain_db);
+}
+
+// "reach N [ms]" and "reach ping N [ms]" (piece R): the count and the spacing (30 ms when not given).
+static bool cmd_reach(const char *s, int &n, int &ms, bool &ping) {
+  if (strncmp(s, "reach ", 6)) return false;
+  const char *p = s + 6;
+  ping = !strncmp(p, "ping ", 5);
+  if (ping) p += 5;
+  char *end = nullptr;
+  long a = strtol(p, &end, 10);
+  if (end == p || a < 1) return false;
+  n = (int)a;
+  ms = 30;
+  p = end;
+  long b = strtol(p, &end, 10);
+  if (end != p) ms = (int)b;
+  return true;
+}
+
 static void command(char *s) {
   int v, t[6] = {0, 0, 0, 0, 0, 0};
   char ch;
@@ -710,12 +796,21 @@ static void command(char *s) {
                   tc::kRingtoneCount - 1);
     Serial.println("sound tests: play N (0 chime, 1 soft, 2 come on, 3 not now) | listen | amp hold 0/1 | codec reopen");
     Serial.println("sound checks: log (the last 64 events) | regs (amp pin and codec registers, into the log)");
+    Serial.println("voice notes: sound ding (the arrival ding, at the soft chime level) | voice dump [seconds 1-3 [gain dB 0-36]] "
+                   "(records through the real capture path, sends nothing, prints the ADPCM chunks as hex)");
+    Serial.println("voice notes sound: mic raw [ms 50-1500, default 1000] (the raw 44.1 kHz stereo microphone blocks as hex, "
+                   "with the I2S and ES7210 settings; tools/mic_raw_wav.py makes a WAV) | voice codec 0|1|2 (0 by the "
+                   "gateway, the default: mu-law when it takes it, else ADPCM; 1 mu-law; 2 ADPCM; until restart) | voice boost N (dB before encoding, 0-30, default 15; until restart) | voice treble N (high shelf at 1500 Hz, 0-20 dB, default 10, 0 = off; until restart)");
     Serial.println("bus test: i2c test (1000 reads each of the codec and touch chip IDs, at 400 and 100 kHz)");
     Serial.println("display tests: display A-D (as Settings > Test) | pattern (toggle) | pclk N (MHz, 8-20, until restart)");
     Serial.println("SD card: sd (what's there) | sd format yes (FAT32, erasing it, only if it won't mount as it is)");
     Serial.println("radio (ESP-NOW counts, the last frames, and what the outside tile and dog pill show)");
+    Serial.println("voice notes link: voice (the route, the last job's numbers, the inbox count) | voice route auto|direct|relay "
+                   "(downstairs, until restart) | reach N [ms] (N frames to the gateway, MAC-level acknowledgements) | "
+                   "reach ping N [ms] (N VOICE_PINGs, answers back end to end; needs the C6 0.5)");
     Serial.println("shot (the screen as raw RGB565, about a second; tools/shot2png.py makes a PNG)");
     Serial.println("mail (tap this panel's mail badge) | mail other (the other floor taps theirs, as if by radio)");
+    Serial.println("nomail (tap this panel's no-mail badge, quiet) | nomail other or nomail ack (the other floor taps theirs, as if by radio)");
     Serial.println("comfort (answers here and the last 5 lines of comfort.csv) | comfort 0-4 (the tenant taps MUCH TOO HOT, TOO WARM, "
                    "JUST RIGHT, TOO COOL, MUCH TOO COLD; downstairs only) | comfort remove N (answer N marked removed, as the chart's REMOVE)");
     Serial.println("req (the arrows held) | req send 0-3 (the tenant sends urgent heat, mild heat, mild cooling, urgent cooling; "
@@ -724,6 +819,7 @@ static void command(char *s) {
     Serial.println("gear (as a tap on the gear: Settings rolls down or up) | knock (the other floor rings, as if by radio)");
     Serial.println("presence (the presence sensor on DI0: raw level, debounced state, minutes since last seen; upstairs, once "
                    "fitted in Settings) | presence sim 0 / 1 / off (force absent or present for tests, or the real sensor again)");
+    Serial.println("rooms (the last ROOMS for Apple Home sent to the gateway, upstairs only, and whether it was ACKed)");
     Serial.println("update both (the other panel and this one restart into the Wi-Fi updater, as Settings > Update over Wi-Fi > BOTH PANELS does)");
     Serial.println("update (restart into the Wi-Fi updater, as Settings > Update over Wi-Fi does)");
     Serial.println("phase N (the sky as if it were 0 night, 1 dawn, 2 morning, 3 midday, 4 golden hour, 5 dusk: the palette, "
@@ -735,7 +831,8 @@ static void command(char *s) {
     Serial.println("  ss weather N (0 clear, 1 rain, 2 snow, 3 wind, 4 heat, 5 fog, 6 chill, 7 storm; -1 the outside reading; "
                    "from the next loop: ss seed N) | ss nightgain N (the night scene's brightness in tenths, 16 = 1.6; "
                    "0 = the PC look; until restart) | ss lookout N (0 round the real sunset, 1 on, 2 off) | "
-                   "ss spread N (bands a frame for a medium palette step; 0 = at once, the default)");
+                   "ss spread N (bands a frame for a medium palette step; 0 = at once, the default) | "
+                   "ss carry [N] (the word the next run starts from: mushrooms, tai chi; until restart)");
     return;
   }
   if (!strcmp(s, "bench")) {
@@ -803,12 +900,61 @@ static void command(char *s) {
     board::audio_reopen_codec();
     return;
   }
+  if (!strcmp(s, "sound ding")) {  // the voice-message arrival ding (G5, one strike) at the soft chime's level
+    const tc::Settings &st = g_ctrl.settings();
+    g_platform.play(tc::Sound::Ding, st.volume > st.soft_chime_drop ? (uint8_t)(st.volume - st.soft_chime_drop) : (uint8_t)0);
+    return;
+  }
+  if (!strncmp(s, "mic raw", 7) && (s[7] == 0 || s[7] == ' ')) {  // takes seconds, outside the LVGL lock
+    int ms = 1000;
+    if (sscanf(s + 7, "%d", &ms) < 1) ms = 1000;
+    board::mic_raw_dump((uint32_t)(ms < 50 ? 50 : ms > 1500 ? 1500 : ms));
+    return;
+  }
+  if (!strncmp(s, "voice boost", 11) && (s[11] == 0 || s[11] == ' ')) {
+    int db = -1;
+    if (sscanf(s + 11, "%d", &db) == 1) {
+      if (db < 0 || db > tc::kVoiceBoostMaxDb) Serial.printf("voice boost: 0 to %d dB\n", tc::kVoiceBoostMaxDb);
+      else board::voice_set_boost(db);
+    }
+    Serial.printf("voice boost: %d dB before encoding, soft limiter above -7 dBFS (from the next recording, until restart)\n",
+                  board::voice_boost());
+    return;
+  }
+  if (!strncmp(s, "voice treble", 12) && (s[12] == 0 || s[12] == ' ')) {
+    int db = -1;
+    if (sscanf(s + 12, "%d", &db) == 1) {
+      if (db < 0 || db > tc::kVoiceTrebleMaxDb) Serial.printf("voice treble: 0 to %d dB\n", tc::kVoiceTrebleMaxDb);
+      else board::voice_set_treble(db);
+    }
+    Serial.printf("voice treble: %d dB high shelf at %d Hz before the boost, 0 = off (from the next recording, until restart)\n",
+                  board::voice_treble(), (int)tc::kVoiceTrebleHz);
+    return;
+  }
+  if (!strncmp(s, "voice dump", 10) && (s[10] == 0 || s[10] == ' ')) {  // takes seconds, outside the LVGL lock
+    int secs = 3, gain = -1;
+    int got = sscanf(s + 10, "%d %d", &secs, &gain);
+    if (got < 1) secs = 3;
+    if (got < 2 || gain < 0 || gain > 36) gain = -1;
+    board::voice_dump((uint32_t)(secs < 1 ? 1 : secs > 3 ? 3 : secs), gain);
+    return;
+  }
+  {
+    int rn = 0, rms = 0;
+    bool rping = false;
+    if (cmd_reach(s, rn, rms, rping)) {  // N x ms, outside the LVGL lock (DESIGN 13.0)
+      board::radio_reach(rn, rms, rping);
+      return;
+    }
+  }
   if (!lvgl_port_lock(1000)) return;
   if (cmd_int(s, "status", v) && tc::status_valid((uint8_t)v)) g_ctrl.choose_status((tc::Status)v);
   else if (!strcmp(s, "bell")) g_ctrl.tap_bell();
   else if (!strcmp(s, "dog")) g_ctrl.tap_dog();
   else if (!strcmp(s, "mail")) Serial.println(g_ctrl.tap_mail() ? "mail: tapped" : "mail: nothing waiting to acknowledge");
   else if (!strcmp(s, "mail other")) mail_from_other_floor();
+  else if (!strcmp(s, "nomail")) Serial.println(g_ctrl.tap_nomail() ? "nomail: tapped" : "nomail: nothing marked to acknowledge");
+  else if (!strcmp(s, "nomail other") || !strcmp(s, "nomail ack")) nomail_from_other_floor();
   else if (!strcmp(s, "comfort")) comfort_report();
   else if (cmd_int(s, "comfort remove", v) && v >= 0) {  // Mike, 2026-11-06: the chart's REMOVE, by number
     Serial.printf("comfort remove %d: %s\n", v, g_ctrl.comfort_remove((uint32_t)v) ? "taken" : "not taken (upstairs, or no such answer)");
@@ -830,6 +976,7 @@ static void command(char *s) {
   else if (!strcmp(s, "note clear")) Serial.println(g_ctrl.clear_note() ? "note: taken away" : "note: nothing showing here to take away");
   else if (!strncmp(s, "note ", 5)) note_send(s + 5);
   else if (!strcmp(s, "presence")) presence_report();
+  else if (!strcmp(s, "rooms")) rooms_report();
   else if (!strcmp(s, "presence sim 0")) presence_sim(0);
   else if (!strcmp(s, "presence sim 1")) presence_sim(1);
   else if (!strcmp(s, "presence sim off")) presence_sim(-1);
@@ -852,6 +999,13 @@ static void command(char *s) {
   } else if (cmd_int(s, "ss nightgain", v)) {
     ui::screensaver_set_night_gain((float)v / 10.f);
     Serial.printf("screensaver: night gain %.1f\n", (double)ui::screensaver_night_gain());
+  } else if (cmd_int(s, "ss carry", v)) {
+    ui::screensaver_set_carry((uint16_t)(v & 0xFFFF));
+    Serial.printf("screensaver: carry word %u from the next start\n", (unsigned)ui::screensaver_carry());
+  } else if (!strcmp(s, "ss carry")) {
+    const unsigned c = ui::screensaver_carry();
+    Serial.printf("screensaver: carry word %u (mushroom patch stage %u%s; tai chi byte %u, done this morning %s)\n", c,
+                  c & 7u, (c & 0x40u) ? ", soaked" : "", c >> 8, (c & 0x400u) ? "yes" : "no");
   } else if (cmd_int(s, "ss weather", v)) {
     ui::screensaver_set_weather(v);
     Serial.printf("screensaver: weather %d%s (from the next loop)\n", v < 0 || v > 7 ? -1 : v, v < 0 || v > 7 ? ", the outside reading's" : "");
@@ -909,6 +1063,40 @@ static void command(char *s) {
     esp_err_t e = esp_lcd_rgb_panel_set_pclk(g_panel, (uint32_t)v * 1000000u);
     Serial.printf("pixel clock %d MHz: %s\n", v, esp_err_to_name(e));
   }
+  else if (!strcmp(s, "cold test on") || !strcmp(s, "cold test off")) {
+    g_ctrl.set_cold_test(s[11] == 'n');
+    Serial.printf("cold test: danger cold %s (not saved)\n", g_ctrl.cold_test() ? "forced on while an outside reading shows" : "back to the gateway's reading");
+  } else if (!strncmp(s, "voice test ", 11)) {
+    g_ctrl.voice_test_arrival(s + 11);
+    Serial.println("voice test: shown as an arrival from the other floor (not sent, no phone push)");
+  } else if (!strcmp(s, "voice")) {
+    char b[448];
+    g_ctrl.voice_report(b, sizeof b);
+    Serial.println(b);
+  } else if (!strncmp(s, "voice codec", 11) && (s[11] == 0 || s[11] == ' ')) {
+    int c = 0;
+    if (sscanf(s + 11, "%d", &c) == 1) {
+      if (c == 0) g_ctrl.set_voice_codec_auto();
+      else if (c == 1) g_ctrl.set_voice_codec(tc::VoiceCodec::Mulaw);
+      else if (c == 2) g_ctrl.set_voice_codec(tc::VoiceCodec::Adpcm);
+      else Serial.println("voice codec: 0 (by the gateway), 1 (mu-law) or 2 (ADPCM)");
+    }
+    const bool mu = g_ctrl.voice_codec() == tc::VoiceCodec::Mulaw;
+    Serial.printf("voice codec: %s, %d chunks a clip (from the next recording), %s\n", mu ? "1 mu-law" : "2 ADPCM",
+                  tc::voice_clip_chunks((uint8_t)g_ctrl.voice_codec()),
+                  g_ctrl.voice_codec_by_hand() ? "set by hand until restart (voice codec 0: by the gateway)"
+                  : g_ctrl.voice_gateway_mulaw() ? "the gateway takes mu-law" : "the gateway takes ADPCM only (or not heard)");
+  } else if (!strncmp(s, "voice route", 11) && (s[11] == 0 || s[11] == ' ')) {
+    const char *r = s + 11;
+    while (*r == ' ') r++;
+    if (!strcmp(r, "auto")) g_ctrl.set_voice_route(tc::Controller::VoiceRoute::Auto);
+    else if (!strcmp(r, "direct")) g_ctrl.set_voice_route(tc::Controller::VoiceRoute::Direct);
+    else if (!strcmp(r, "relay")) g_ctrl.set_voice_route(tc::Controller::VoiceRoute::Relay);
+    else if (*r) Serial.println("voice route: auto, direct or relay");
+    static const char *const kRoute[3] = {"auto", "direct", "relay"};
+    Serial.printf("voice route: %s%s\n", kRoute[(int)g_ctrl.voice_route()],
+                  g_ctrl.settings().floor == tc::Floor::Upstairs ? " (upstairs always talks to the gateway directly)" : "");
+  }
   else if (!strcmp(s, "radio")) {
     board::radio_report();
     // What the panel made of it.
@@ -918,6 +1106,7 @@ static void command(char *s) {
                   vw.outside.cold ? ", danger cold" : "", vw.outside.phrase);
     Serial.printf("mail: %s (change %lu)\n", g_ctrl.mail().waiting ? "waiting for downstairs" : "none waiting",
                   (unsigned long)g_ctrl.mail().ver);
+    Serial.printf("nomail: %s\n", g_ctrl.mail().none ? "marked" : "not marked");
     Serial.printf("dog pill: %s; other floor's tile: %s\n", vw.dog.pill[0] ? vw.dog.pill : "(none)",
                   vw.floor[(int)vw.me == 0 ? 1 : 0].word);
   }
@@ -930,12 +1119,17 @@ static void command(char *s) {
                   w.quality, (unsigned long)w.utc, (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getFreePsram());
     // The memory audit's savings (2026-11-12), to measure on a panel: compare with the screensaver
     // running (ss stats has the same figures) and with danger cold showing.
+    char ice_held[32] = "not held";
+    if (ui::icicles_held()) snprintf(ice_held, sizeof(ice_held), "held (%u bytes)", (unsigned)ui::icicles_bytes());
     Serial.printf("memory: internal free %u (largest block %u), PSRAM free %u (largest block %u); spare picture %s; "
                   "strip drawing scratch %s; icicles %s\n",
                   (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
                   (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM),
                   ui::spare_lent() ? "lent to the screensaver" : "home", g_scratch ? "held (32,768 bytes)" : "not held",
-                  ui::icicles_held() ? "held (240,000 bytes)" : "not held");
+                  ice_held);
+    // Field fix 2026-11-20: the controller's larger state (voice notes and the view) should be in PSRAM.
+    Serial.printf("memory: controller %u bytes in internal RAM, its state block in %s\n", (unsigned)sizeof(g_ctrl),
+                  esp_ptr_external_ram(&g_ctrl.view()) ? "PSRAM" : "INTERNAL RAM (PSRAM had no room)");
     Serial.printf("since the last info (%lu s): %lu redraws, %lu px, %lu ms drawing, slowest %lu ms\n",
                   (unsigned long)((millis() - g_stats_since) / 1000), (unsigned long)g_refr_count,
                   (unsigned long)g_refr_px, (unsigned long)g_refr_ms, (unsigned long)g_refr_max);

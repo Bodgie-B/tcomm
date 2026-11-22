@@ -3,10 +3,17 @@
 
 #include <stdio.h>
 
+#include "../mush_patch.h"
 #include "day_boomerang.h"
 #include "world.h"
 
 namespace ss {
+
+namespace {
+// The mushroom patch grows from the loop's data weather once this is true (INTEGRATION_PLAN step C5a;
+// Mike, 2026-11-18). Until then Memory::mush is carried unchanged, so no patch ever shows.
+constexpr bool kMushLive = true;
+}  // namespace
 
 void memoryBeginLoop(World& w, Rng& rng) {
   Memory& m = w.memory;
@@ -36,6 +43,16 @@ void memoryEndLoop(World& w) {
   m.cairn_n = w.cairn.n;
   if (m.mouse_tent_runs >= 2) m.mouse_hole = true;
   if (m.boom_stuck != 0) --m.boom_stuck;   // stuck 2: this loop and the next; 1: gone after this one
+  // The mushroom patch: rain from the OUTSIDE data starts or soaks it, dry loops grow it (mush_patch.h).
+  if (kMushLive) {
+    const Weather& x = w.weather;
+    const bool wet = x.from_data && (x.kind == WX_RAIN || x.kind == WX_STORM);
+    // The loop he picked in does not count against the picked-over patch: the three that are left
+    // stand six MORE loops (MUSHROOM_PLAN section 4 point 5). The landscape holds the byte the loop
+    // began with (worldBeginLoop), so nothing new is stored to know it.
+    const bool picked_now = mushStage(m.mush) == MUSH_PICKED && mushStage(w.land.patch_stage) != MUSH_PICKED;
+    if (wet || !picked_now) m.mush = mushAfterLoop(m.mush, wet);
+  }
 }
 
 void memoryNoteMouseTent(Memory& m) {
@@ -116,6 +133,11 @@ int memoryFormat(const Memory& m, char* buf, size_t n) {
   if (m.boom_stuck != 0) {   // only while it is up there, so the line is what it was when no boomerang sticks
     char b[24];
     snprintf(b, sizeof b, " boom=%u", (unsigned)m.boom_stuck);
+    put(b);
+  }
+  if (mushStage(m.mush) != 0) {   // only while a patch stands, so every line without one is what it was
+    char b[16];
+    snprintf(b, sizeof b, " mush=%u", (unsigned)mushStage(m.mush));
     put(b);
   }
   return k;

@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "../anim/ease.h"
+#include "../mush_patch.h"
 #include "day_boomerang.h"
 #include "director.h"
 #include "react.h"
@@ -144,6 +145,8 @@ void sortActors(World& w) {
     int16_t y;
     if (streamActorY(w, y)) L.add(ACT_STREAM, 0, y);   // the boulder (stream.h)
     if (streamVisitY(w, y)) L.add(ACT_STREAM, 1, y);   // the heron (stream.h)
+    for (int i = 0; i < REED_CLUMPS; ++i)              // the reeds and cattails (reeds.h)
+      if (reedsActorY(w, i, y)) L.add(ACT_REED, (uint8_t)i, y);
   }
   for (int i = 0; i < WX_BITS; ++i)   // the weather's leaves, drips, rings (weather.h)
     if (w.weather.bit[i].kind != BIT_NONE) L.add(ACT_WXBIT, (uint8_t)i, baseY(w.weather.bit[i].land_y));
@@ -190,6 +193,9 @@ void coverHiker(World& w) {
       if (w.items[i].held && !w.items[i].critter) unite(r, itemBounds((ItemId)i, w.items[i]));
     w.hiker_full = r;
     w.hiker_rect = r.clipped(kFrame);
+    // The stem in his mouth or hand (reeds.h): in the rect the renderer copies and a pine redraws over,
+    // but not in hiker_full, which the in-frame checks read.
+    if (!w.hiker_rect.empty()) unite(w.hiker_rect, reedsMouthBounds(w).clipped(kFrame));
   } else {
     w.hiker_rect = w.hiker_full = kEmpty;
   }
@@ -254,6 +260,7 @@ void stepHiker(World& w, bool frozen = false) {
   }
   // The weather's overlay (a hug, the hat fanned, a shiver), over all of it.
   weatherApplyPose(w, P, h.height);
+  reedsApplyPose(w, P);   // the reed pick, in a pause, beside the weather's overlay (reeds.h)
   mailPose(w, P);    // a glance up at the mail bird (mailbird.h)
   reactPose(w, P);   // and his doorbell wave over that (react.h)
   // The waterline on him: none on the bank; deeper the further in he is.
@@ -330,6 +337,9 @@ void worldBeginLoop(World& w, Rng& rng) {
   ++w.memory.loop_count;
 
   landscapeGenerate(w.land, rng);
+  // The mushroom patch's stage for this loop, from the memory (patch.h lays it out from this wherever it
+  // is needed, pickTufts first). No rng: 0 with no patch, as always until the patch goes live.
+  w.land.patch_stage = w.memory.mush;   // the whole byte: the picked-over patch droops in its last loops (patch.h)
   // One rng call per statement: argument evaluation order differs between
   // compilers, and the PC preview must replay the board bit for bit.
   for (int i = 0; i < 2; ++i) {
@@ -402,6 +412,7 @@ void worldBeginLoop(World& w, Rng& rng) {
   for (Bit& b : w.bits) b = Bit{};
   minorsInit(w, rng);
   streamInit(w, rng);   // from a copy of the loop RNG, as the minors
+  reedsInit(w, rng);    // the same: a copy, never a draw from the loop RNG (reeds.h)
 
   sortActors(w);
 
@@ -543,6 +554,7 @@ void worldTick(World& w, Rng& rng, Renderer& r) {
   for (Cloud& c : w.clouds) cloudStep(c);
   ambientStep(w, rng);
   streamStep(w);   // ambient: the stream's life goes on through the doorbell and fire and ice too
+  reedsStep(w);    // ambient too: the reeds sway and ring on through both (reeds.h)
   if (w.react.active) {
     // The doorbell reaction: he answers the bell while the camp holds still
     // (critters, minors and the director wait with the beats; react.h).
@@ -595,6 +607,7 @@ void worldTick(World& w, Rng& rng, Renderer& r) {
                           ? floorf(0.5f + 2.f * tent.shadow_jitter * sumSines(tk * 0.11f, 2))
                           : 0.f;
   weatherStep(w);
+  reedsStoryStep(w);   // the reed pick and the stem's ending; returns at once while the story is held (reeds.h)
   weatherPlaceHeld(w);
   coverHiker(w);   // after everything that moved him this tick
   sortActors(w);
@@ -697,6 +710,7 @@ void worldTick(World& w, Rng& rng, Renderer& r) {
   fireIceTrack(w, r);
   visitorsTrack(w, r);
   streamTrack(w, r);
+  reedsTrack(w, r);
 #if SS_XMAS
   xmasTrack(w, r);   // the Christmas mockups (xmas.h): nothing unless posed
 #endif
@@ -811,6 +825,7 @@ void worldDrawDynamic(const World& w, Surface& strip, const Rect& clip, const Pa
       case ACT_HIKER:
         hikerDraw(w.hiker, strip, pal, clip);
         armloadDraw(w.hiker, w.fx.armload, strip, clip, pal);
+        reedsDrawMouth(w, strip, clip, pal);    // the stem in his mouth or hand
         fireIceDrawHeld(w, strip, clip, pal);   // the bucket
         if (w.fx.wet_y > 0.f) {   // in the stream: the water over him below his waterline
           const Rect& hr = w.hiker_rect;
@@ -828,6 +843,7 @@ void worldDrawDynamic(const World& w, Surface& strip, const Rect& clip, const Pa
         if (a.idx == 1) streamDrawVisit(w, strip, clip, pal);
         else streamDrawNear(w, strip, clip, pal);
         break;
+      case ACT_REED: reedsDraw(w, a.idx, strip, clip, pal); break;
 #if SS_XMAS
       case ACT_XMAS: xmasDrawActor(w, a.idx, strip, clip, pal); break;
 #endif
@@ -864,6 +880,9 @@ void worldDrawDynamic(const World& w, Surface& strip, const Rect& clip, const Pa
       default: break;
     }
   }
+
+  // 5b. The reeds' small life in the air: the dragonfly, fireflies, seed fluff, a falling stem (reeds.h).
+  reedsDrawAir(w, strip, clip, pal);
 
   // 6. Smoke above the fire, and steam off a pot boiling over.
   ambientDrawSmoke(w, strip, clip, pal);

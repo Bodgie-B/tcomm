@@ -24,6 +24,9 @@
 // | last_stay,     | the last loop was the morning where the camp stays up, and the     |
 // |   last_sfvar   | variants it played (that morning's own quarter-weight rule)        |
 // | loop_count     | loops started, this one included                                    |
+// | taichi_next    | tai chi's next chapter and "done this morning" (day_taichi.h)       |
+// | herd_wait      | midday loops before the deer may visit again (day_herd.h)           |
+// | mush           | the mushroom patch's stage after rain (mush_patch.h)                |
 #pragma once
 
 #include <stddef.h>
@@ -75,7 +78,18 @@ struct Memory {
   // The visiting couple (visitors.h): loops to wait before they may come again (2 when a visit
   // begins: none in the next loop). Counted down at every loop start. Not printed by memoryFormat.
   uint8_t visit_wait;
+  // Stage 22 (INTEGRATION_PLAN 3.1 point 3; Mike, 2026-11-18): four bytes, so the struct is 88 with no
+  // tail padding. Only `mush` is ever printed (" mush=S" when its stage is not 0), so no pinned memory
+  // string moves. taichi_next and mush also travel between screensaver runs in Inputs::carry.
+  uint8_t taichi_next;   // tai chi: bits 0-1 the next chapter; bit 2 done this morning; bit 7 valid
+  uint8_t herd_wait;     // midday loops before a herd may come again (the deer visit)
+  uint8_t mush;          // the mushroom patch, packed as mush_patch.h says (stage, left, soak)
+  // Zero on the panel and in every run (it also keeps the struct at 88 bytes on purpose). Tests only:
+  // bit 7 set plans the stage 22 pieces named in bits 0-3 (stage22_switch.h S22Piece) as if their
+  // steps had landed. Ignored with SS_S22 off. Never carried, never printed.
+  uint8_t s22_preview;
 };
+static_assert(sizeof(Memory) == 88, "Memory: INTEGRATION_PLAN 3.1 point 3 counts on 88 bytes");
 
 // Loop start, after worldBeginLoop (one rng call, every loop): the cairn from
 // last time one stone shorter, the mouse hole in the tent, the brave/shy split

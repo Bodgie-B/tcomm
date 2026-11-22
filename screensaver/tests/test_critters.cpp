@@ -4,6 +4,8 @@
 // inspection sheets to the current directory (build/ under ctest):
 // critters_day.ppm, critters_night.ppm, critters_gaits.ppm.
 //
+// The herd's deer (stage 22): testDeerHerd, section [6].
+//
 // Sheet layout (day and night): one row per kind in enum order (chipmunk,
 // squirrel, frog, deer, raccoon, owl, bird, bear, mouse, dog), one column per
 // action in enum order (idle, move, run, sit, look, sniff, reach, climb,
@@ -12,6 +14,7 @@
 #include "gfx/raster.h"
 #include "scene/critters.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -531,6 +534,311 @@ static void testSizes() {
 }
 
 // ---------------------------------------------------------------------------
+// The herd's deer (stage 22, Mike 2026-11-18): graze, stretch, shake, the white flag, the fawn, the ear
+// states, critterDeerNose and critterDeerCrown. And the proof that nothing earlier moved.
+
+static uint64_t fnv(uint64_t h, const void* p, size_t n) {
+  const uint8_t* b = (const uint8_t*)p;
+  for (size_t i = 0; i < n; ++i) {
+    h ^= b[i];
+    h *= 1099511628211ull;
+  }
+  return h;
+}
+
+// One frame of a deer: how many pixels differ from the backdrop, the lowest and highest inked rows, a hash.
+struct Ink {
+  int px = 0, top = 1 << 20, bottom = -1;
+  uint64_t hash = 0;
+};
+
+static Ink inkOf(const Critter& c, const Palette& pal, Frame& f) {
+  Ink k;
+  critterDraw(c, f.s, pal, f.all());
+  uint64_t h = 1469598103934665603ull;
+  for (int y = 0; y < kH; ++y)
+    for (int x = 0; x < kW; ++x) {
+      const Pixel p = f.at(x, y);
+      h = fnv(h, &p, sizeof p);
+      if (p == pal[GROUND]) continue;
+      ++k.px;
+      if (y < k.top) k.top = y;
+      if (y > k.bottom) k.bottom = y;
+    }
+  k.hash = h;
+  return k;
+}
+
+static Critter deerAt(uint8_t tone, float scale, int facing) {
+  Critter c;
+  critterInit(c, CR_DEER, Vec2{kFeetX, kFeetY}, facing);
+  c.tone = tone;
+  c.scale = scale;
+  return c;
+}
+
+static void testDeerHerd() {
+  printf("[6] the herd's deer: graze, stretch, shake, flag, fawn, ears, nose and crown\n");
+  const Palette& pal = moodKey(MOOD_DAY);
+
+  // (a) Nothing earlier moved. These are the hashes (FNV-1a over every 5th of 60 ticks of a 240 x 160
+  // frame) that stage 22's baseline recorded before the rig changed, for a deer given each action in turn
+  // over 0.5 s (0 to 17), then a walk (18) and a run (19). Actions 6, 8 and 13 (reach, shake, eat) were
+  // not the deer's and drew as idle; they are the new ones and must now differ from idle.
+  {
+    static const uint64_t kBase[CA_COUNT + 2] = {
+        0x995cfdafe95db881ull, 0x1ac214060a584c99ull, 0xd2cf8b8b6eacb271ull, 0x995cfdafe95db881ull,
+        0xc601e3d21f870870ull, 0x15ffb64c8d14dfb1ull, 0x995cfdafe95db881ull, 0x995cfdafe95db881ull,
+        0x995cfdafe95db881ull, 0x995cfdafe95db881ull, 0x995cfdafe95db881ull, 0x3abe0d7b56b3fb3bull,
+        0x72190bcadbd6ef0bull, 0x995cfdafe95db881ull, 0x995cfdafe95db881ull, 0x995cfdafe95db881ull,
+        0x995cfdafe95db881ull, 0x995cfdafe95db881ull, 0x2eca56a02ddd5959ull, 0x51456da677e10748ull};
+    WeatherTint wt;
+    memset(&wt, 0, sizeof wt);
+    Palette day;
+    computePalette(3.f, wt, day);
+    static Pixel px[240 * 160];
+    Surface s{px, 240, 160, 240, 0};
+    const Rect clip{0, 0, 240, 160};
+    int same = 0, changed = 0;
+    for (int act = 0; act <= CA_COUNT + 1; ++act) {
+      Critter c;
+      memset(&c, 0, sizeof c);
+      critterInit(c, CR_DEER, Vec2{120.f, 130.f}, 1);
+      if (act < CA_COUNT) critterSetAction(c, (CritterAction)act, 0.5f);
+      else critterMoveTo(c, act == CA_COUNT ? 170.f : 200.f, act == CA_COUNT ? 20.f : 70.f);
+      uint64_t h = 1469598103934665603ull;
+      for (int t = 0; t < 60; ++t) {
+        critterTick(c, SS_TICK_DT);
+        if (t % 5 != 4) continue;
+        memset(px, 0, sizeof px);
+        critterDraw(c, s, day, clip);
+        h = fnv(h, px, sizeof px);
+      }
+      const bool isNew = act == CA_REACH || act == CA_SHAKE || act == CA_EAT;
+      if (isNew) {
+        CHECK(h != kBase[CA_IDLE], "deer %s still draws as idle", an(act));
+        ++changed;
+      } else {
+        CHECK(h == kBase[act], "deer action %d no longer draws as the baseline (%016llx, was %016llx)", act,
+              (unsigned long long)h, (unsigned long long)kBase[act]);
+        ++same;
+      }
+    }
+    printf("  %d existing deer scenes hash as the baseline, %d new actions differ from idle\n", same, changed);
+  }
+
+  // (b) The flag: nothing at or under 0.08, one primitive above it; the fawn's three spots are three more.
+  {
+    Frame f(kW, kH, pal[GROUND]);
+    int adult_max = 0, fawn_max = 0;
+    for (int fawn = 0; fawn < 2; ++fawn)
+      for (int a = 0; a < CA_COUNT; ++a) {
+        if (!supports(CR_DEER, a)) continue;
+        Critter c = deerAt(fawn ? kDeerFawn : 0, fawn ? 0.62f : 1.f, 1);
+        held(c, a, 0.2f);
+        critterDraw(c, f.s, pal, f.all());
+        const int base = critterLastDrawPrimitives();
+        for (float k : {0.f, 0.05f, 0.08f}) {
+          c.tail_add = k;
+          critterDraw(c, f.s, pal, f.all());
+          CHECK(critterLastDrawPrimitives() == base, "%s %s: a flag at %.2f drew a primitive", fawn ? "fawn" : "deer",
+                an(a), (double)k);
+        }
+        for (float k : {0.1f, 0.5f, 1.f}) {
+          c.tail_add = k;
+          critterDraw(c, f.s, pal, f.all());
+          const int n = critterLastDrawPrimitives();
+          CHECK(n == base + 1, "%s %s: a flag at %.2f drew %d, want %d", fawn ? "fawn" : "deer", an(a), (double)k, n,
+                base + 1);
+          int& mx = fawn ? fawn_max : adult_max;
+          if (n > mx) mx = n;
+        }
+      }
+    printf("  flag: an adult draws %d primitives with it up, a fawn %d (budget %d)\n", adult_max, fawn_max,
+           critterBudget(CR_DEER));
+    CHECK(adult_max == 7, "adult deer draws %d primitives with the flag up, want 7", adult_max);
+    CHECK(fawn_max == 10 && fawn_max <= critterBudget(CR_DEER), "fawn draws %d primitives, want 10", fawn_max);
+    // The flag follows tail_add alone: the canter swings the pose's tail every stride and must show none.
+    Critter c = deerAt(0, 1.f, 1);
+    critterSetAction(c, CA_RUN, 0.f);
+    c.moving = true;
+    c.gait_w = 1.f;
+    c.move_from = c.move_to = c.feet.x;
+    for (int i = 0; i < 12; ++i) {
+      c.phase = (float)i / 12.f;
+      critterTick(c, 0.f);
+      critterDraw(c, f.s, pal, f.all());
+      CHECK(critterLastDrawPrimitives() == 6, "a cantering deer with no flag drew %d primitives",
+            critterLastDrawPrimitives());
+    }
+  }
+
+  // (c) Bounds hold every pixel, and every state fits the budget: every action, adult and fawn, each
+  // ear state, the flag at 0, 0.5 and 1, both facings, and a near fore leg lifted for a stamp.
+  {
+    static const uint8_t kEars[5] = {0, kDeerEarBack, kDeerEarMid, kDeerEarFwd, kDeerEarBack | kDeerEarFwd};
+    int bad = 0, states = 0, worst = 0;
+    for (int fawn = 0; fawn < 2; ++fawn)
+      for (int a = 0; a < CA_COUNT; ++a) {
+        if (!supports(CR_DEER, a)) continue;
+        for (int e = 0; e < 5; ++e)
+          for (int ti = 0; ti < 3; ++ti)
+            for (int facing = -1; facing <= 1; facing += 2)
+              for (int ph = 0; ph < 3; ++ph) {
+                Critter c = deerAt((uint8_t)((fawn ? kDeerFawn : 0) | kEars[e]), fawn ? 0.62f : 1.f, facing);
+                c.tail_add = (float)ti * 0.5f;
+                c.fore_add = ph == 2 ? 0.55f : 0.f;
+                c.head_add = ph == 1 ? -0.1f : 0.f;
+                if (a == CA_MOVE || a == CA_RUN) {
+                  critterSetAction(c, (CritterAction)a, 0.f);
+                  c.moving = true;
+                  c.gait_w = 1.f;
+                  c.move_from = c.move_to = c.feet.x;
+                  c.phase = 0.1f + 0.3f * (float)ph;
+                  critterTick(c, 0.f);
+                } else {
+                  held(c, a, 0.1f + 0.35f * (float)ph);
+                }
+                Frame f(kW, kH, pal[GROUND]);
+                critterDraw(c, f.s, pal, f.all());
+                const int prims = critterLastDrawPrimitives();
+                if (prims > worst) worst = prims;
+                const Rect b = critterBounds(c);
+                int out = 0;
+                for (int y = 0; y < kH; ++y)
+                  for (int x = 0; x < kW; ++x)
+                    if (f.at(x, y) != pal[GROUND] && (x < b.x0 || x >= b.x1 || y < b.y0 || y >= b.y1)) ++out;
+                if (out && !bad)
+                  printf("  first escape: %s %s ears %d flag %d facing %d phase %d (%d px)\n", fawn ? "fawn" : "deer",
+                         an(a), e, ti, facing, ph, out);
+                bad += out;
+                ++states;
+              }
+      }
+    printf("  %d deer states, %d pixels outside the bounds, most primitives %d\n", states, bad, worst);
+    CHECK(bad == 0, "%d deer pixels fell outside critterBounds", bad);
+    CHECK(worst <= critterBudget(CR_DEER), "a deer drew %d primitives", worst);
+  }
+
+  // (d) Grazing puts the nose to the grass with all four feet down; the fawn is a fawn.
+  {
+    int worst_gap = 0;
+    for (float ph : {0.f, 0.25f, 0.5f, 0.75f}) {
+      Critter c = deerAt(0, 1.f, 1);
+      held(c, CA_EAT, ph);
+      const Vec2 nose = critterDeerNose(c);
+      const float gap = c.feet.y - nose.y;
+      if ((int)(gap + 0.5f) > worst_gap) worst_gap = (int)(gap + 0.5f);
+      Frame g(kW, kH, pal[GROUND]);
+      const Ink ink = inkOf(c, pal, g);
+      CHECK(gap >= -2.f && gap <= 4.f, "grazing nose %.1f px above the ground at phase %.2f", (double)gap, (double)ph);
+      CHECK(ink.bottom >= (int)kFeetY - 2 && ink.bottom <= (int)kFeetY + 1, "grazing deer's lowest row %d, feet %d",
+            ink.bottom, (int)kFeetY);
+    }
+    printf("  graze: the nose is at most %d px above the ground\n", worst_gap);
+    Critter big = deerAt(0, 1.f, 1), small = deerAt(kDeerFawn, 0.62f, 1);
+    critterTick(big, 0.f);
+    critterTick(small, 0.f);
+    Frame g1(kW, kH, pal[GROUND]), g2(kW, kH, pal[GROUND]);
+    const Ink a = inkOf(big, pal, g1), b = inkOf(small, pal, g2);
+    const int ha = (int)kFeetY - a.top, hb = (int)kFeetY - b.top;
+    printf("  an adult stands %d px tall, a fawn %d px\n", ha, hb);
+    CHECK(hb >= 25 && hb <= 36, "a fawn stands %d px tall", hb);
+    CHECK(hb * 10 <= ha * 8, "a fawn (%d) is not clearly smaller than an adult (%d)", hb, ha);
+    CHECK(b.bottom >= (int)kFeetY - 2 && b.bottom <= (int)kFeetY + 1, "the fawn's lowest row %d", b.bottom);
+  }
+
+  // (e) The ear states draw four different ears.
+  {
+    uint64_t h[4];
+    const uint8_t ears[4] = {0, kDeerEarFwd, kDeerEarMid, kDeerEarBack};
+    for (int i = 0; i < 4; ++i) {
+      Critter c = deerAt(ears[i], 1.f, 1);
+      held(c, CA_LOOK, 0.f);
+      Frame f(kW, kH, pal[GROUND]);
+      h[i] = inkOf(c, pal, f).hash;
+    }
+    for (int i = 0; i < 4; ++i)
+      for (int j = i + 1; j < 4; ++j) CHECK(h[i] != h[j], "ear states %d and %d draw the same", i, j);
+  }
+
+  // (f) critterDeerNose and critterDeerCrown: inside the bounds, the mirror of each other for the two
+  // facings, the nose in front of the crown and not above it standing; for a kind that is not a deer they
+  // fall back to the mouth and the head.
+  {
+    for (int fawn = 0; fawn < 2; ++fawn)
+      for (int a = 0; a < CA_COUNT; ++a) {
+        if (!supports(CR_DEER, a)) continue;
+        const uint8_t tone = fawn ? kDeerFawn : 0;
+        const float sc = fawn ? 0.62f : 1.f;
+        Critter r = deerAt(tone, sc, 1), l = deerAt(tone, sc, -1);
+        held(r, a, 0.3f);
+        held(l, a, 0.3f);
+        const Vec2 nr = critterDeerNose(r), nl = critterDeerNose(l), cr = critterDeerCrown(r), cl = critterDeerCrown(l);
+        const Rect b = critterBounds(r);
+        CHECK(nr.x >= (float)b.x0 && nr.x <= (float)b.x1 && nr.y >= (float)b.y0 && nr.y <= (float)b.y1,
+              "%s %s: the nose (%.1f, %.1f) is outside the bounds", fawn ? "fawn" : "deer", an(a), (double)nr.x,
+              (double)nr.y);
+        CHECK(cr.x >= (float)b.x0 && cr.x <= (float)b.x1 && cr.y >= (float)b.y0 && cr.y <= (float)b.y1,
+              "%s %s: the crown is outside the bounds", fawn ? "fawn" : "deer", an(a));
+        CHECK(fabsf((nr.x - kFeetX) + (nl.x - kFeetX)) < 0.01f && fabsf(nr.y - nl.y) < 0.01f,
+              "%s %s: the nose does not mirror", fawn ? "fawn" : "deer", an(a));
+        CHECK(fabsf((cr.x - kFeetX) + (cl.x - kFeetX)) < 0.01f && fabsf(cr.y - cl.y) < 0.01f,
+              "%s %s: the crown does not mirror", fawn ? "fawn" : "deer", an(a));
+      }
+    Critter c = deerAt(0, 1.f, 1);
+    critterTick(c, 0.f);
+    const Vec2 n = critterDeerNose(c), cr = critterDeerCrown(c);
+    CHECK(n.x > cr.x + 4.f && n.y >= cr.y,
+          "idle: the nose (%.1f, %.1f) should be in front of and not above the crown (%.1f, %.1f)", (double)n.x,
+          (double)n.y, (double)cr.x, (double)cr.y);
+    Critter sq;
+    critterInit(sq, CR_SQUIRREL, Vec2{kFeetX, kFeetY}, 1);
+    critterTick(sq, 0.f);
+    CHECK(critterDeerNose(sq).x == critterMouth(sq).x && critterDeerCrown(sq).y == critterHead(sq).y,
+          "a squirrel's deer anchors are not its mouth and head");
+    // The old anchor did not move: critterMouth of a deer is still the top of its bounds.
+    const Vec2 m = critterMouth(c);
+    const Rect b = critterBounds(c);
+    CHECK(m.y == (float)b.y0 + 2.f, "critterMouth of a deer moved");
+  }
+
+  // (g) The stretch hesitates before it reaches: early in its blend the nose draws back before it goes
+  // forward, and by the end it is well in front of where it started.
+  {
+    Critter c = deerAt(0, 1.f, 1);
+    critterTick(c, 0.f);
+    const float x0 = critterDeerNose(c).x;
+    critterSetAction(c, CA_REACH, 1.8f);
+    float lo = x0, last = x0;
+    for (int t = 0; t < 45; ++t) {
+      critterTick(c, SS_TICK_DT);
+      last = critterDeerNose(c).x;
+      if (last < lo) lo = last;
+    }
+    printf("  stretch: the nose draws back %.1f px, then ends %.1f px past its start\n", (double)(x0 - lo),
+           (double)(last - x0));
+    CHECK(x0 - lo >= 0.5f, "the stretch has no hesitation (the nose only draws back %.2f px)", (double)(x0 - lo));
+    CHECK(last - x0 >= 4.f, "the stretch only reaches %.1f px", (double)(last - x0));
+  }
+
+  // (h) The shake moves the deer.
+  {
+    Critter c = deerAt(0, 1.f, 1);
+    held(c, CA_SHAKE, 0.f);
+    float x_lo = 1e9f, x_hi = -1e9f;
+    for (int i = 0; i < 40; ++i) {
+      c.phase = (float)i / 40.f;
+      critterTick(c, 0.f);
+      const Rect b = critterBounds(c);
+      if ((float)b.x1 > x_hi) x_hi = (float)b.x1;
+      if ((float)b.x1 < x_lo) x_lo = (float)b.x1;
+    }
+    CHECK(x_hi - x_lo >= 2.f, "the shake moves the deer only %.1f px", (double)(x_hi - x_lo));
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Inspection sheets.
 
 static int rowHeight(int k) {
@@ -627,6 +935,7 @@ int main() {
   testBlend();
   testMoves();
   testSizes();
+  testDeerHerd();
   sheetActions("critters_day.ppm", MOOD_DAY);
   sheetActions("critters_night.ppm", MOOD_NIGHT);
   sheetGaits("critters_gaits.ppm");

@@ -19,7 +19,7 @@ using gfx::hex;
 
 namespace {
 
-View g_prev = {};
+View &g_prev = ui_keep<View>();  // 1.5 KB, PSRAM on the panel (field fix 2026-11-20)
 bool g_have_prev = false;
 
 struct FloorTile {
@@ -33,6 +33,10 @@ struct FloorTile {
   lv_obj_t *mail = nullptr, *mail_ghost = nullptr, *mail_solid = nullptr;
   Art mail_ghost_art, mail_solid_art;
   int mail_mode = -1;  // see mail_render
+  // The no-mail badge just left of it (Mike, 2026-11-18): its touch area, the faint outline and the red one.
+  lv_obj_t *nomail = nullptr, *nomail_ghost = nullptr, *nomail_red = nullptr;
+  Art nomail_ghost_art, nomail_red_art;
+  int nomail_mode = -1;  // see nomail_render
   // The heat and cooling arrows on both panels' UPSTAIRS tile (requests.h): the touch area over them,
   // one picture per arrow (lit and dim, for the urgent flash), and what each one shows now.
   lv_obj_t *req = nullptr, *req_img[tc::kMaxArrows] = {};
@@ -47,6 +51,10 @@ struct FloorTile {
   lv_obj_t *note_hit = nullptr;
   bool note_on = false;
   int note_lines = 1;
+  // Voice notes (DESIGN 2.2, Mike 2026-11-20): the badge's own touch area on the OWN tile opens the
+  // recorder; live only while this panel can record (badge_live: -1 not set yet).
+  lv_obj_t *badge_hit = nullptr;
+  int badge_live = -1;
   int key = -1;      // what the front art shows (status * 4 + mode); -1 = nothing yet
   FloorView shown = {};  // the words that go with it, kept until the new art is ready
   int font_ns = -1;  // which state-word font is set: 1 = the 54 px one, for words over 8 letters
@@ -125,19 +133,30 @@ void spare_show(lv_obj_t *img) {
   lv_img_set_src(img, &d);
   lv_obj_invalidate(img);
 }
-Art g_strip, g_paw_in, g_paw_out, g_gear_art, g_close_art, g_fc_art, g_rays_art, g_odrop_art, g_ice_art;
+Art g_strip, g_paw_in, g_paw_out, g_gear_art, g_close_art, g_fc_art, g_rays_art, g_odrop_art;
 lv_obj_t *g_sky_img, *g_strip_img, *g_date, *g_time, *g_hol, *g_dog, *g_dog_disc, *g_dog_paw, *g_dog_lbl;
 lv_obj_t *g_gear, *g_gear_img, *g_gear_arc;
 lv_obj_t *g_out_cont, *g_out_img, *g_out_title, *g_out_fc, *g_out_rays, *g_out_phrase, *g_out_temp, *g_out_hum, *g_out_drop;
-lv_obj_t *g_ice_img;  // WeatherGate's danger cold: icicles over the top of the screen
+lv_obj_t *g_ice_obj;  // WeatherGate's danger cold: icicles over the top of the screen (ice_draw)
 // The calendar's chevron on the date strip (calendar spec 10): down while closed, up while open.
 lv_obj_t *g_cal_chev, *g_cal_chev_img;
 Art g_chev_up;
 int g_cal_chev_state = -1;
-bool g_ice_drawn = false;      // the icicles' picture exists (only while they show, and 3 frames after)
-bool g_ice_failed = false;     // no memory for it at the last try (while cold)
-uint32_t g_ice_failed_at = 0;  // when that was
-int g_ice_free_frames = 0;
+// The icicles are drawn straight into each area the screen redraws (ice_draw), a strip of rows at a
+// time, from art::icicle_layout's list: memory audit 2026-11-21, in place of an 800 x 100 picture
+// (240,000 bytes of PSRAM). One block of PSRAM holds the canvas's scanline scratch, the list and
+// the strip, about 14 KB, and only while the icicles show.
+struct Ice {
+  uint8_t *mem = nullptr;  // the block, or none
+  size_t bytes = 0;
+  gfx::Canvas cv;          // strips only (gfx::Canvas::strips_only), over the block's scratch
+  art::Icicle *list = nullptr;
+  int n = 0;
+  uint8_t *strip = nullptr;
+  int rows = 0;            // the strip's rows: 2, or 1 if PSRAM was too short for 2
+  bool failed = false;     // no memory for it at the last try (while cold)
+  uint32_t failed_at = 0;  // when that was
+} g_ice;
 lv_obj_t *g_bell_cont, *g_bell_img, *g_bell_word, *g_bell_line;
 // The bell itself, over the tile's picture: it shakes for each ring sent or received, and it's red
 // while an incoming ring waits (Mike, 2026-10-26).
@@ -193,6 +212,9 @@ void out_long(lv_event_t *) { open_outside_chart(); }
 void mail_clicked(lv_event_t *) {
   if (g_act) g_act->tap_mail();
 }
+void nomail_clicked(lv_event_t *) {
+  if (g_act) g_act->tap_nomail();
+}
 void req_clicked(lv_event_t *) {
   if (g_act) g_act->tap_requests();
 }
@@ -214,6 +236,9 @@ void note_clicked(lv_event_t *e) {
 // The touch area around the line: from a little above the (one-line) line to the tile's bottom,
 // left of the status badge (x 289).
 constexpr int kNoteHitX = 0, kNoteHitY = 124, kNoteHitW = 285;
+// The badge's touch area (voice notes): tile x 287 to the zone's right edge, y 97 to the bottom. The
+// whole badge picture (x 289-369, y 105-185) is inside it.
+constexpr int kBadgeHitX = 287, kBadgeHitY = 97;
 
 // The mail badge (Mike, 2026-10-26): in the status zone's top right corner, on the DOWNSTAIRS
 // word's line, as far from the top as from the zone's right edge (Mike, the same day). That makes
@@ -221,9 +246,17 @@ constexpr int kNoteHitX = 0, kNoteHitY = 124, kNoteHitW = 285;
 // of the weather zone. Tile coordinates of its centre.
 constexpr int kMailInset = 7;
 constexpr int kMailCx = art::kStatusW - kMailInset - art::kMail / 2, kMailCy = kMailInset + art::kMail / 2;
-// Its touch area: 90 x 90, like the gear and dog button (design brief 4), in the zone's top right
-// corner. Downstairs, while mail waits, that corner of the own status zone takes the mail tap.
-constexpr int kMailHitW = 90, kMailHitH = 90, kMailHitX = art::kStatusW - kMailHitW;
+// Its touch area: 90 tall like the gear and dog button (design brief 4), in the zone's top right
+// corner. Downstairs, while mail waits, that corner of the own status zone takes the mail tap. It was
+// 90 wide until the no-mail badge came (Mike, 2026-11-18); both badges now get 48 each, side by side.
+constexpr int kMailHitW = 48, kMailHitH = 90, kMailHitX = art::kStatusW - kMailHitW;
+// The no-mail badge (Mike, 2026-11-18): immediately left of the mail badge on the same line, a 6 px
+// gap between them (tile x 305 to 339, y 7 to 41; the mail badge is x 345 to 379). Its touch area is
+// the 48 px left of the mail badge's. Clear of the status word (its ink starts at tile y 49, the
+// longest word, SLEEPING at 64 px, ending at x 348) and of the DOWNSTAIRS label (ends at x 156).
+constexpr int kNoMailGap = 6;
+constexpr int kNoMailCx = kMailCx - art::kMail - kNoMailGap, kNoMailCy = kMailCy;
+constexpr int kNoMailHitW = 48, kNoMailHitX = kMailHitX - kNoMailHitW;
 // The request arrows (Mike, 2026-11-06): at the mail badge's spot mirrored to the UPSTAIRS tile, up
 // to three 38 px apart, newest on the right. Their touch area is 90 px tall like the mail badge's,
 // and grows left with each arrow.
@@ -270,6 +303,13 @@ void tile_build(FloorTile &t, Floor f, int x, int y) {
   // so theirs win (Mike, 2026-11-07).
   t.note_hit = plain(t.cont, kNoteHitX, kNoteHitY, kNoteHitW, art::kFloorH - kNoteHitY);
   lv_obj_add_event_cb(t.note_hit, note_clicked, LV_EVENT_CLICKED, &t);
+  // The badge (tile x 287-386, y 97-193, check fix C1): after the note's area, which ends at x 285, so
+  // the small status text still opens the tile message editor; under the mail, no-mail and arrow
+  // areas (y < 90). Mike, 2026-11-21: a LONG press opens the recorder (nothing records until its
+  // START); a tap does nothing. The press stays its own when the finger slides.
+  t.badge_hit = plain(t.cont, kBadgeHitX, kBadgeHitY, art::kStatusW - kBadgeHitX, art::kFloorH - kBadgeHitY);
+  lv_obj_add_flag(t.badge_hit, LV_OBJ_FLAG_PRESS_LOCK);
+  lv_obj_add_event_cb(t.badge_hit, voice_badge_long, LV_EVENT_LONG_PRESSED, nullptr);
   lv_obj_add_flag(t.chev, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_event_cb(t.chev, chev_clicked, LV_EVENT_CLICKED, nullptr);
   lv_obj_move_foreground(t.chev);  // in front of note_hit (it covers the chevron's place)
@@ -299,6 +339,15 @@ void tile_build(FloorTile &t, Floor f, int x, int y) {
     t.mail_ghost = image(t.mail, kMailCx - kMailHitX - art::kMail / 2, kMailCy - art::kMail / 2);
     t.mail_solid = image(t.mail, kMailCx - kMailHitX - art::kMail / 2, kMailCy - art::kMail / 2);
     show(t.mail, false);
+    // After the mail badge's area, beside it (they don't overlap).
+    t.nomail = plain(t.cont, kNoMailHitX, 0, kNoMailHitW, kMailHitH);
+    lv_obj_add_flag(t.nomail, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(t.nomail, nomail_clicked, LV_EVENT_CLICKED, nullptr);
+    t.nomail_ghost_art.make(art::kMail, art::kMail, true);
+    t.nomail_red_art.make(art::kMail, art::kMail, true);
+    t.nomail_ghost = image(t.nomail, kNoMailCx - kNoMailHitX - art::kMail / 2, kNoMailCy - art::kMail / 2);
+    t.nomail_red = image(t.nomail, kNoMailCx - kNoMailHitX - art::kMail / 2, kNoMailCy - art::kMail / 2);
+    show(t.nomail, false);
     // The weather zone asks how it feels (Mike, 2026-11-06). Right of the status zone, so it can't take
     // the badge's tap.
     t.wzone = plain(t.cont, art::kStatusW, 0, art::kFloorW - art::kStatusW, art::kFloorH);
@@ -320,13 +369,17 @@ void tile_fade_done(lv_anim_t *a) {
 }
 
 // The background drawing of a tile is done: show it with its badge, icons and text colors.
-void tile_apply(FloorTile &t, int key) {
+// direct: drawn straight into the tile's own picture while the screensaver held the spare
+// (tile_render), so there's nothing to copy, fade or give back.
+void tile_apply(FloorTile &t, int key, bool direct = false) {
   int st = key / 4;
   Mode m = (Mode)(key % 4);
   theme::StatusColors sc = theme::status_colors(st, m);
   const theme::Palette &pal = theme::palette(m);
   bool first = t.key < 0;
-  if (first || t.key % 4 != key % 4) {  // first time, or day/night changed: no fade
+  if (direct) {
+    t.art.show(t.img_bot);
+  } else if (first || t.key % 4 != key % 4) {  // first time, or day/night changed: no fade
     spare_copy(t.art, 0, t.img_bot);
     spare_release();
   } else {  // brief 10.1: the tile fades to the new color over about 250 ms; the spare is the new one
@@ -347,6 +400,13 @@ void tile_apply(FloorTile &t, int key) {
       t.mail_ghost_art.show(t.mail_ghost);
       art::mail(t.mail_solid_art.cv, true, sc.text, sc.tile);
       t.mail_solid_art.show(t.mail_solid);
+      // The no-mail badge: the faint one in the tile's text colour, gap in the tile's colour; the active
+      // one red on a disc in the mode's light text colour, so it reads on every tile colour.
+      const gfx::Color red = hex(0xC8372D), disc = pal.cream;
+      art::nomail(t.nomail_ghost_art.cv, sc.text, sc.tile, nullptr);
+      t.nomail_ghost_art.show(t.nomail_ghost);
+      art::nomail(t.nomail_red_art.cv, red, disc, &disc);
+      t.nomail_red_art.show(t.nomail_red);
     }
     set_text_color(t.floor_lbl, sc.text);
     set_text_color(t.word, sc.text);
@@ -365,8 +425,12 @@ void tile_render(FloorTile &t, const FloorView &fv, bool acted = false) {
   ArtSlot &slot = g_art[t.slot];
   ArtJob done;
   if (slot.take(done)) {
-    if (done.key == key) tile_apply(t, key);  // it lets the spare go once the picture is copied in
-    else spare_release();                     // a result that's out of date is dropped
+    const bool direct = done.cv == &t.art.cv;
+    if (done.key == key) tile_apply(t, key, direct);  // it lets the spare go once the picture is copied in
+    else if (direct) tile_apply(t, done.key, true);   // out of date, but already in the tile's picture: its
+                                                      // colours and words go with it, and the key differs, so
+                                                      // the request below draws the right one
+    else spare_release();                             // a result that's out of date is dropped
   }
   // A fade cut short never calls tile_fade_done: finish its work here, or the spare stays taken.
   if (g_spare.loan.owner() == t.slot && slot.idle() && !lv_anim_get(t.img_top, nullptr)) {
@@ -377,7 +441,21 @@ void tile_render(FloorTile &t, const FloorView &fv, bool acted = false) {
   }
   // Ask for the new tile in the background. Not while a fade shows both canvases.
   if (key != t.key && slot.idle() && !lv_anim_get(t.img_top, nullptr)) {
-    if (gfx::Canvas *cv = spare_claim(t.slot, art::kFloorW, art::kFloorH, true)) {
+    gfx::Canvas *cv = spare_claim(t.slot, art::kFloorW, art::kFloorH, true);
+    // Mike, 2026-11-22: while the screensaver has the spare, the status still changes behind it
+    // (the main screen's ready copy shows it at the touch). The new picture is drawn straight into
+    // the tile's own: the fade would be hidden behind the scene anyway. Only after the first
+    // picture, which needs the spare.
+    if (!cv && spare_lent() && t.key >= 0 && t.art.cv.ok()) {
+      cv = &t.art.cv;
+      uint8_t *d = cv->data();   // cleared as spare_claim clears the spare, a few KB at a time (spare_copy)
+      const size_t n = cv->bytes();
+      for (size_t i = 0; i < n; i += 4096) {
+        memset(d + i, 0, n - i < 4096 ? n - i : 4096);
+        if (g_copy_pause) g_copy_pause();
+      }
+    }
+    if (cv) {
       ArtJob j;
       j.kind = ArtKind::Floor;
       j.cv = cv;
@@ -404,6 +482,13 @@ void tile_render(FloorTile &t, const FloorView &fv, bool acted = false) {
       // (a short tap upstairs does nothing: wzone_clicked checks the floor)
     }
     t.mine = fv.mine;
+  }
+  // Voice notes: a long press on the own badge opens the recorder (DESIGN 2.2, Mike 2026-11-21).
+  const int badge_live = fv.mine && voice_offered() ? 1 : 0;
+  if (t.badge_live != badge_live) {
+    if (badge_live) lv_obj_add_flag(t.badge_hit, LV_OBJ_FLAG_CLICKABLE);
+    else lv_obj_clear_flag(t.badge_hit, LV_OBJ_FLAG_CLICKABLE);
+    t.badge_live = badge_live;
   }
   // Spec 4a: the state word at 64 px; one longer than 8 letters (NO SIGNAL) at 54 px so it fits.
   int ns = strlen(u.word) > 8 ? 1 : 0;
@@ -513,6 +598,20 @@ void mail_render(const MailView &mv) {
   lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
   lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
   lv_anim_start(&a);
+}
+
+// The no-mail badge: 0 hidden; 1 the faint outline (upstairs, nothing marked); 2 red (marked, either
+// panel). Steady: no pulse, because it makes no sound and asks for no attention (Mike, 2026-11-18).
+void nomail_render(const NoMailView &nv) {
+  FloorTile &t = g_tile[1];
+  if (!t.nomail) return;
+  int mode = !nv.show ? 0 : nv.active ? 2 : 1;
+  if (mode == t.nomail_mode) return;
+  t.nomail_mode = mode;
+  show(t.nomail, mode != 0);
+  show(t.nomail_ghost, mode == 1);
+  show(t.nomail_red, mode == 2);
+  lv_obj_set_style_img_opa(t.nomail_ghost, kMailGhostOpa, 0);
 }
 
 // The arrows on the UPSTAIRS tile. A picture is drawn again only when its arrow changes; an urgent
@@ -732,6 +831,67 @@ void glow_draw(lv_event_t *e) {
   }
 }
 
+// The icicles' block (Ice): false if PSRAM is too short even for a one-row strip.
+bool ice_make() {
+  const int W = art::kScreenW, n = art::icicle_layout(nullptr, 0);
+  const size_t scan = (gfx::Canvas::scanline_bytes(W) + 7) & ~(size_t)7, list = sizeof(art::Icicle) * n;
+  for (int rows = 2; rows >= 1; rows--) {
+    const size_t bytes = scan + list + (size_t)W * rows * 3;
+    uint8_t *m = (uint8_t *)gfx::alloc_bytes(bytes);
+    if (!m) continue;
+    g_ice.mem = m;
+    g_ice.bytes = bytes;
+    g_ice.cv.strips_only((float *)m, W, art::kIciclesH, true);
+    g_ice.list = (art::Icicle *)(m + scan);
+    g_ice.n = art::icicle_layout(g_ice.list, n);
+    g_ice.strip = m + scan + list;
+    g_ice.rows = rows;
+    return true;
+  }
+  return false;
+}
+
+void ice_free() {
+  g_ice.cv.destroy();
+  gfx::release_bytes(g_ice.mem);
+  g_ice.mem = g_ice.strip = nullptr;
+  g_ice.list = nullptr;
+  g_ice.bytes = 0;
+  g_ice.n = g_ice.rows = 0;
+}
+
+// The icicles in the area LVGL is redrawing: each strip of its rows drawn (only its columns), then
+// blended in at 50 percent as the old picture was (lv_color_mix by its alpha, as LVGL's image
+// drawing does). Cost: the icicles' edges in those rows, and a blend for the 15 percent of the
+// layer they cover.
+void ice_draw(lv_event_t *e) {
+  if (!g_ice.mem) return;
+  lv_draw_ctx_t *ctx = lv_event_get_draw_ctx(e);
+  const lv_area_t &clip = *ctx->clip_area, &ba = *ctx->buf_area;
+  const int W = art::kScreenW;
+  const int x0 = LV_MAX(clip.x1, 0), x1 = LV_MIN(clip.x2, W - 1);
+  const int y0 = LV_MAX(clip.y1, 0), y1 = LV_MIN(clip.y2, art::kIciclesH - 1);
+  if (x0 > x1 || y0 > y1) return;
+  lv_color_t *buf = (lv_color_t *)ctx->buf;
+  const int bw = lv_area_get_width(&ba);
+  for (int y = y0; y <= y1; y += g_ice.rows) {
+    const int m = LV_MIN(g_ice.rows, y1 - y + 1);
+    g_ice.cv.begin_strip(g_ice.strip, y, m);
+    art::icicles_cols(g_ice.cv, g_ice.list, g_ice.n, x0, x1);
+    g_ice.cv.end_strip();
+    for (int r = 0; r < m; r++) {
+      const uint8_t *s = g_ice.strip + ((size_t)r * W + x0) * 3;
+      lv_color_t *row = buf + (y + r - ba.y1) * bw - ba.x1;
+      for (int x = x0; x <= x1; x++, s += 3) {
+        if (!s[2]) continue;
+        lv_color_t c;
+        c.full = (uint16_t)(s[0] | s[1] << 8);
+        row[x] = lv_color_mix(c, row[x], (lv_opa_t)((s[2] * art::kIciclesOpa + 128) >> 8));
+      }
+    }
+  }
+}
+
 void build_main() {
   lv_obj_t *scr = lv_scr_act();
   lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
@@ -850,9 +1010,10 @@ void build_main() {
   // layer, above it). It follows the sky: placed when the sky's new drawing goes up.
   g_glow_obj = plain(scr, 0, 0, art::kScreenW, art::kScreenH);
   lv_obj_add_event_cb(g_glow_obj, glow_draw, LV_EVENT_DRAW_MAIN, nullptr);
-  // Over everything on the main screen, and an image, so touches go through to what's under it.
-  g_ice_img = image(scr, 0, 0);
-  show(g_ice_img, false);
+  // Over everything on the main screen; not clickable, so touches go through to what's under it.
+  g_ice_obj = plain(scr, 0, 0, art::kScreenW, art::kIciclesH);
+  lv_obj_add_event_cb(g_ice_obj, ice_draw, LV_EVENT_DRAW_MAIN, nullptr);
+  show(g_ice_obj, false);
 }
 
 void glow_place(Phase ph, float p) {
@@ -1211,35 +1372,18 @@ void render_outside(const View &v) {
     set_text(g_out_phrase, fit.text);
     lv_obj_set_y(g_out_phrase, board_y(fit.font, 86 - (fit.px * 1.24f + (fit.lines - 1) * pitch) / 2));
   }
-  // Danger cold: icicles. Their picture (240,000 bytes of PSRAM) exists only while they show (memory
-  // audit 2026-11-12, recommendation 3): drawn when cold comes, freed when it goes, not in the frame
-  // the image is hidden but 3 frames later, as the comfort arrows do. Cold again, and it's redrawn
-  // (art::icicles, on this task). No memory for it: no icicles, and another try every 5 s, not
-  // every frame.
+  // Danger cold: icicles, drawn as the screen redraws (ice_draw). Their block (about 14 KB of PSRAM)
+  // exists only while they show: made when cold comes, freed when it goes (the object is hidden
+  // first, and LVGL draws only between renders, so nothing is drawing from it then). No memory for
+  // it: no icicles, and another try every 5 s, not every frame.
   bool cold = v.outside.valid && v.outside.cold;
-  if (cold) {
-    g_ice_free_frames = 0;
-    if (!g_ice_drawn && (!g_ice_failed || lv_tick_elaps(g_ice_failed_at) >= 5000)) {
-      if (g_ice_art.make(art::kScreenW, art::kIciclesH, true)) {
-        art::icicles(g_ice_art.cv);
-        g_ice_art.show(g_ice_img);
-        g_ice_drawn = true;
-        g_ice_failed = false;
-      } else {
-        g_ice_failed = true;
-        g_ice_failed_at = lv_tick_get();
-      }
-    }
-  } else {
-    g_ice_failed = false;
+  if (cold && !g_ice.mem && (!g_ice.failed || lv_tick_elaps(g_ice.failed_at) >= 5000)) {
+    g_ice.failed = !ice_make();
+    if (g_ice.failed) g_ice.failed_at = lv_tick_get();
   }
-  show(g_ice_img, cold && g_ice_drawn);
-  if (!cold && g_ice_drawn && ++g_ice_free_frames >= 3) {
-    lv_img_cache_invalidate_src(&g_ice_art.dsc);  // the image is hidden and nothing else reads it
-    g_ice_art.cv.destroy();
-    g_ice_drawn = false;
-    g_ice_free_frames = 0;
-  }
+  if (!cold) g_ice.failed = false;
+  show(g_ice_obj, cold && g_ice.mem);
+  if (!cold && g_ice.mem) ice_free();
   // Spec 4c: the temperature, 16 px, the drop, 3 px, the humidity, centred on the tile as one.
   if (strcmp(lv_label_get_text(g_out_temp), v.outside.temp) != 0 || strcmp(lv_label_get_text(g_out_hum), v.outside.hum) != 0) {
     set_text(g_out_temp, v.outside.temp);
@@ -1454,10 +1598,11 @@ void render(const Frame &f) {
   tile_render(g_tile[0], v.floor[(int)Floor::Upstairs], v.req.acted);
   tile_render(g_tile[1], v.floor[(int)Floor::Downstairs]);
   mail_render(v.mail);
+  nomail_render(v.nomail);
   req_render(v.req, f.mono_ms);
   {
     // The Zambretti demo (Settings) shows its chosen sample on the real outside tile.
-    static View pv;
+    static View &pv = ui_keep<View>();  // the same
     bool night = false;
     if (zambretti_preview(pv.outside, night)) {
       OutsideView ov = pv.outside;
@@ -1473,6 +1618,7 @@ void render(const Frame &f) {
   cal_render(mode_changed);
   if (cal_covering()) main_tiles_visible(false);  // a tile whose first art just arrived stays hidden
   render_banner(v, mode_changed);
+  voice_render(v, f.mono_ms, mode_changed);  // after the banner: the arrival dialog stays under it
   render_toast(v);
   render_wake(v);
   keep_clean_screen_on_top();  // a doorbell still chimes, but the glass stays safe to wipe
@@ -1492,7 +1638,8 @@ bool spare_give_back(void *p) { return g_spare.loan.give_back(p); }
 bool spare_reclaim() { return g_spare.loan.reclaim(); }
 bool spare_lent() { return g_spare.loan.lent(); }
 uint32_t spare_refused() { return g_spare.loan.refused(); }
-bool icicles_held() { return g_ice_drawn; }
+bool icicles_held() { return g_ice.mem != nullptr; }
+size_t icicles_bytes() { return g_ice.bytes; }
 
 void scroll_sheet(int y) {
   if (g_sheet_root && lv_obj_get_child_cnt(g_sheet_root)) lv_obj_scroll_to_y(lv_obj_get_child(g_sheet_root, 0), y, LV_ANIM_OFF);
@@ -1514,6 +1661,7 @@ void open_sheet(Sheet s, Status timed) {
     case Sheet::Note: open_note_editor(); break;
     case Sheet::Outside: open_outside_chart(); break;
     case Sheet::CleanScreen: start_clean_screen(); break;
+    case Sheet::Voice: open_voice_recorder(); break;
     default: close_sheet(); break;
   }
 }

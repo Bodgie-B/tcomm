@@ -10,6 +10,7 @@
 #include "../core/requests.h"
 #include "../core/settings.h"
 #include "../core/status.h"
+#include "../core/voice_proto.h"
 #include "driver/i2c_master.h"
 
 namespace board {
@@ -83,6 +84,10 @@ void save_requests(const tc::RequestState &s);
 // load: false if nothing is saved, or what is saved has text with no NUL in it.
 bool load_notes(tc::NoteState *notes2);
 void save_notes(const tc::NoteState *notes2);
+// The voice-message inbox and its last 8 ids (voice_proto.h, docs/voice-notes/DESIGN.md 2.3), saved on
+// every change. load: false if nothing is saved or tc::voice_inbox_valid refuses it. (Piece B.)
+bool load_voice_inbox(tc::VoiceInboxData &d);
+void save_voice_inbox(const tc::VoiceInboxData &d);
 uint8_t load_clock_quality();
 void save_clock_quality(uint8_t q);
 // The calendar's files (tc::Platform::read_file names), in /tcomm on the SD card (Mike,
@@ -134,6 +139,8 @@ void save_display_test(uint8_t v);
 // ---- Audio: the synthesized sounds, played from their own task. ----
 bool audio_begin(uint8_t ringtone);  // after Waveshare's codec_init()
 // preview: a sample from Settings, cut short by whatever is asked for next.
+// tc::Sound::Ding (voice message arrived) is rendered when asked for and freed after playing; while a
+// recording runs it waits like every sound but the doorbell Chime (DESIGN 3.4, 3.5; piece A).
 void audio_play(tc::Sound s, uint8_t volume, bool preview = false);
 void audio_set_ringtone(uint8_t ringtone);
 void audio_report();  // one line on Serial: plays, errors, the ringtone held and chosen
@@ -143,6 +150,35 @@ bool audio_listen(uint32_t ms, float level_db[2], float &peak_db);
 void audio_amp_hold(bool hold);
 void audio_reopen_codec();
 void audio_log_state();  // the amp pin and the codec's registers, into the event log
+
+// ---- Voice capture (docs/voice-notes/DESIGN.md 3.2; piece A, board_audio.cpp). ----
+// The mic task stays the only I2S reader. LVGL builds a tc::VoiceRec (voice_proto.h) and hands it over;
+// from then on the mic task resamples, encodes, makes each chunk's first send (radio_send_voice to
+// rec->to, never 32 or more chunks past rec->base) and sends END itself when it stops.
+// voice_rec_begin: publishes rec (a release store of g_rec). False if a recording is already running
+// or the mic task is not running; then rec is still the caller's.
+// voice_rec_stop: asks the mic task to stop (rec->stop = why, if no stop was asked yet); it flushes the
+// last chunk, sends it and END, and sets rec->done.
+// voice_rec_release: takes rec back (g_rec = nullptr). True once the mic task is not inside it and never
+// will be again: only then free it. False: call again from the next tick (never a busy loop). Also
+// clears the doorbell flag (g_rec_bell) that stopped this recording.
+bool voice_rec_begin(tc::VoiceRec *rec);
+void voice_rec_stop(tc::VoiceRec *rec, tc::VoiceStop why);
+bool voice_rec_release(tc::VoiceRec *rec);
+bool voice_recording();  // a VoiceRec is published and not yet done
+// Field fix 2026-11-21 (board_audio.cpp):
+// audio_mic_recent: the mic task's blocks of the last ms (peak and RMS in dBFS), no waiting and no
+// capture; the badge row's live meter. False if none arrived.
+// voice_set_boost / voice_boost: the level boost before encoding (tc::kVoiceBoostDb, 0-30 dB), from the
+// next recording on, until restart (serial `voice boost N`).
+// mic_raw_dump: serial `mic raw [ms]`, the raw 44.1 kHz stereo blocks (50-1500 ms) as hex lines with the
+// I2S and ES7210 settings; loop task, outside the LVGL lock.
+bool audio_mic_recent(uint32_t ms, float &peak_db, float &rms_db);
+void voice_set_boost(int db);
+int voice_boost();
+void voice_set_treble(int db);  // the treble restore (tc::kVoiceTrebleDb, 0-20 dB), serial `voice treble N`
+int voice_treble();
+void mic_raw_dump(uint32_t ms);
 
 // ---- Event log: the last 64 events with their time, for serial "log" (board_log.cpp). ----
 // Any task may call elog; only the loop task writes to USB serial (elog_flush, elog_print).
@@ -156,6 +192,11 @@ void elog_print();
 int radio_own_floor();
 bool radio_begin();
 void radio_send(uint8_t to, const uint8_t *data, size_t len);
+// Voice frames (types 20-30; DESIGN 4.6; piece B, board_radio.cpp): true when esp_now_send took it. No
+// trace-ring entry and no elog per error; counted as voice_out and voice_err for serial "radio". Safe
+// from the mic task, the relay task and the LVGL task. on_recv counts voice frames in as voice_in (no
+// trace) and, on upstairs, queues the ones tc::voice_relay_frame says to pass on for the "vrelay" task.
+bool radio_send_voice(uint8_t to, const uint8_t *data, size_t len);
 bool radio_poll(uint8_t *out, size_t *len);  // one received frame from a known peer, if any
 void radio_report();  // for serial "radio": counts, and the last frames in and out
 

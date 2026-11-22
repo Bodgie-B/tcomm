@@ -81,6 +81,12 @@ int speaker_codec_read_reg(int reg, int *val)
     return esp_codec_dev_read_reg(play_dev_handle, reg, val);
 }
 
+// TComm (2026-11-21): one ES7210 register, for serial "mic raw".
+int microphone_codec_read_reg(int reg, int *val)
+{
+    return esp_codec_dev_read_reg(record_dev_handle, reg, val);
+}
+
 esp_err_t speaker_codec_volume_set(int volume, int *volume_set)
 {
     ESP_RETURN_ON_ERROR(esp_codec_dev_set_out_vol(play_dev_handle, volume), TAG, "Set Codec volume failed");

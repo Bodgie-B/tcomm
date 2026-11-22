@@ -12,6 +12,7 @@
 // 3) is pinned. Plain executable; returns non-zero on failure.
 #include "ss_app.h"
 #include "scene/spine_family.h"
+#include "scene/stage22_switch.h"
 #include "scene/weather.h"
 #include "scene/world.h"
 
@@ -119,19 +120,54 @@ static const char* const kMorning1[10] = {
 };
 // The midday's own (ss_preview --loops 10 --seed 1 --mood 3 --spine midday), pinned when it was built and
 // re-captured when the kite and the boomerang went in (2026-11-02) and again when the mountain bike, the archery, the
-// slackline and the ropes course did (2026-11-03): the evening's and the morning's lines above did not move either time
-// (checked with the new majors at weight 0, and again at their weights: byte-identical to the tree without them).
+// slackline and the ropes course did (2026-11-03) and again when the plinking did (2026-11-17): the evening's and the
+// morning's lines above did not move any time (checked with the new majors at weight 0, and again at their weights:
+// byte-identical to the tree without them; with the plinking the first line to move is loop 2, where plink takes the ropes
+// course's place, and the later loops follow through the memory's ring).
 static const char* const kMidday1[10] = {
     "loop=0 seed=1 length=638s plan=family=midday return=2 lunch=0 wade=1 nap=0 map=0 afternoon=0 fillers=cloud_watch,stream_listen,cairn majors=fish_leap,map_chase,fetch memory=loop=1 cairn=6 shoe=0 stolen=none hole=1 rod=0 brave=squirrel,frog,bird,mouse ring=fish_leap,map_chase,fetch",
     "loop=1 seed=3851155901 length=619s plan=family=midday return=1 lunch=1 wade=0 nap=1 map=1 afternoon=1 fillers=cairn,cloud_watch,skip_stone majors=fishing_log,ranger_ridge,pinecone memory=loop=2 cairn=7 shoe=0 stolen=none hole=1 rod=1 brave=squirrel,frog,bird,mouse ring=fish_leap,map_chase,fetch,fishing_log,ranger_ridge,pinecone",
-    "loop=2 seed=3700665890 length=650s plan=family=midday return=2 lunch=1 wade=2 nap=0 map=1 afternoon=0 fillers=stream_listen,cairn,cloud_watch majors=ants_cookie,ropes memory=loop=3 cairn=7 shoe=0 stolen=none hole=1 rod=1 brave=chipmunk,squirrel,frog,deer,raccoon,owl,bird,bear ring=fish_leap,map_chase,fetch,fishing_log,ranger_ridge,pinecone,ants_cookie,ropes",
-    "loop=3 seed=1306309954 length=650s plan=family=midday return=0 lunch=0 wade=1 nap=1 map=0 afternoon=1 fillers=cloud_watch,read majors=archery,deer_stick,bathe memory=loop=4 cairn=6 shoe=0 stolen=none hole=1 rod=1 brave=chipmunk,squirrel,frog,deer,raccoon,owl,bird,bear ring=fishing_log,ranger_ridge,pinecone,ants_cookie,ropes,archery,deer_stick,bathe",
-    "loop=4 seed=353847738 length=599s plan=family=midday return=1 lunch=1 wade=1 nap=2 map=1 afternoon=1 fillers=read,cairn,skip_stone majors=map_chase,echo memory=loop=5 cairn=7 shoe=0 stolen=none hole=1 rod=1 brave=squirrel,frog,deer,owl,mouse ring=pinecone,ants_cookie,ropes,archery,deer_stick,bathe,map_chase,echo",
-    "loop=5 seed=3740524944 length=622s plan=family=midday return=0 lunch=0 wade=0 nap=1 map=0 afternoon=0 fillers=birds_on_water,read majors=boomerang,kite,fishing_log memory=loop=6 cairn=6 shoe=0 stolen=none hole=1 rod=1 brave=squirrel,frog,deer,owl,mouse ring=archery,deer_stick,bathe,map_chase,echo,boomerang,kite,fishing_log boom=2",
-    "loop=6 seed=3824192997 length=614s plan=family=midday return=1 lunch=1 wade=2 nap=2 map=1 afternoon=1 fillers=cairn,read majors=archery,fetch,ants_cookie memory=loop=7 cairn=7 shoe=0 stolen=none hole=1 rod=1 brave=chipmunk,frog,mouse,dog ring=map_chase,echo,boomerang,kite,fishing_log,archery,fetch,ants_cookie boom=1",
-    "loop=7 seed=2517280624 length=628s plan=family=midday return=2 lunch=0 wade=1 nap=0 map=0 afternoon=0 fillers=skip_stone,cloud_watch majors=bike,squirrel_splash,pinecone memory=loop=8 cairn=6 shoe=0 stolen=none hole=1 rod=1 brave=chipmunk,frog,mouse,dog ring=kite,fishing_log,archery,fetch,ants_cookie,bike,squirrel_splash,pinecone",
-    "loop=8 seed=101596770 length=614s plan=family=midday return=1 lunch=1 wade=0 nap=1 map=0 afternoon=1 fillers=cairn,stream_listen,birds_on_water majors=deer_stick,archery,ranger_ridge memory=loop=9 cairn=7 shoe=0 stolen=none hole=1 rod=1 brave=chipmunk,frog,owl,bird,mouse,dog ring=fetch,ants_cookie,bike,squirrel_splash,pinecone,deer_stick,archery,ranger_ridge",
-    "loop=9 seed=292931141 length=650s plan=family=midday return=2 lunch=0 wade=1 nap=2 map=1 afternoon=0 fillers=cairn,read,stream_listen majors=pinecone,map_chase,bathe memory=loop=10 cairn=7 shoe=0 stolen=none hole=1 rod=1 brave=chipmunk,frog,owl,bird,mouse,dog ring=squirrel_splash,pinecone,deer_stick,archery,ranger_ridge,pinecone,map_chase,bathe",
+    "loop=2 seed=3700665890 length=596s plan=family=midday return=2 lunch=1 wade=2 nap=0 map=1 afternoon=0 fillers=stream_listen,cairn majors=ants_cookie,plink memory=loop=3 cairn=7 shoe=0 stolen=none hole=1 rod=1 brave=chipmunk,squirrel,frog,deer,raccoon,owl,bird,bear ring=fish_leap,map_chase,fetch,fishing_log,ranger_ridge,pinecone,ants_cookie,plink",
+    "loop=3 seed=750640662 length=650s plan=family=midday return=1 lunch=0 wade=1 nap=2 map=0 afternoon=1 fillers=birds_on_water,skip_stone majors=archery,deer_stick,ropes memory=loop=4 cairn=6 shoe=0 stolen=none hole=1 rod=1 brave=chipmunk,squirrel,frog,deer,raccoon,owl,bird,bear ring=fishing_log,ranger_ridge,pinecone,ants_cookie,plink,archery,deer_stick,ropes",
+    "loop=4 seed=1791658589 length=650s plan=family=midday return=2 lunch=1 wade=0 nap=0 map=0 afternoon=0 fillers=skip_stone,cairn,read majors=echo,slackline,boomerang memory=loop=5 cairn=7 shoe=0 stolen=none hole=1 rod=1 brave=squirrel,frog,deer,raccoon,mouse,dog ring=ants_cookie,plink,archery,deer_stick,ropes,echo,slackline,boomerang",
+    "loop=5 seed=690833878 length=603s plan=family=midday return=0 lunch=0 wade=1 nap=2 map=1 afternoon=1 fillers=birds_on_water,read majors=fetch,ranger_ridge,kite memory=loop=6 cairn=6 shoe=0 stolen=none hole=1 rod=1 brave=squirrel,frog,deer,raccoon,mouse,dog ring=deer_stick,ropes,echo,slackline,boomerang,fetch,ranger_ridge,kite",
+    "loop=6 seed=3739516147 length=633s plan=family=midday return=1 lunch=1 wade=0 nap=0 map=0 afternoon=0 fillers=birds_on_water,skip_stone majors=plink,ropes memory=loop=7 cairn=5 shoe=0 stolen=none hole=1 rod=1 brave=chipmunk,squirrel,deer,raccoon,owl,mouse,dog ring=echo,slackline,boomerang,fetch,ranger_ridge,kite,plink,ropes",
+    "loop=7 seed=1920143497 length=610s plan=family=midday return=0 lunch=0 wade=1 nap=2 map=0 afternoon=1 fillers=cairn,skip_stone,birds_on_water majors=archery,ants_cookie memory=loop=8 cairn=7 shoe=0 stolen=none hole=1 rod=1 brave=chipmunk,squirrel,deer,raccoon,owl,mouse,dog ring=boomerang,fetch,ranger_ridge,kite,plink,ropes,archery,ants_cookie",
+    "loop=8 seed=4122961066 length=614s plan=family=midday return=0 lunch=1 wade=2 nap=0 map=0 afternoon=0 fillers=birds_on_water,read majors=fish_leap,fishing_small,bathe memory=loop=9 cairn=6 shoe=0 stolen=none hole=1 rod=1 brave=squirrel,deer,owl,bear,mouse ring=kite,plink,ropes,archery,ants_cookie,fish_leap,fishing_small,bathe",
+    "loop=9 seed=3578621840 length=650s plan=family=midday return=2 lunch=0 wade=1 nap=2 map=1 afternoon=1 fillers=birds_on_water,read,cloud_watch majors=echo,pinecone,slackline memory=loop=10 cairn=5 shoe=0 stolen=none hole=1 rod=1 brave=squirrel,deer,owl,bear,mouse ring=archery,ants_cookie,fish_leap,fishing_small,bathe,echo,pinecone,slackline",
+};
+
+// Stage 22 went live (step C7, 2026-11-19): with SS_S22 on (the default) the same two runs, re-captured once. Read
+// line by line against the lines above before they were accepted: the morning's loop 0 is the day's first morning
+// loop, so tai chi is forced and plays alone after the wake; from loop 1 on the loop seeds differ (a forced pick ends
+// the plan with another loop rng state, as after a forced fetch) and the later loops follow; tai chi comes again in
+// loop 6 by its weight. The midday's loops 0 to 2 keep their seeds: the long shot's weight in the pool moves which
+// major a draw lands on (kite for fetch in loop 0; fetch and echo in loop 1), loop 2 plays the long shot where the
+// plinking was (the hillside rule), loop 3 is a deer visit (" herd=", two majors) and the later loops follow through
+// the loop seeds and the memory's ring. With SS_S22 off the lines above still hold, byte for byte.
+static const char* const kMorning1S22[10] = {
+    "loop=0 seed=1 length=614s plan=family=morning stay=1 wake=0 coffee=2 pee=0 breakfast=0 wash=0 tidy=0 day_hike=0 fillers=stream_listen majors=taichi fog=12 memory=loop=1 cairn=0 shoe=1 stolen=shoe hole=0 rod=0 brave=chipmunk,squirrel,raccoon,owl,bear,dog ring=taichi",
+    "loop=1 seed=545980955 length=649s plan=family=morning wake=2 coffee=0 bag_down=1 break_camp=1 douse=1 leave=1 fillers=stream_listen,read,cairn majors=squirrel_splash,echo,fishing_small fog=14 memory=loop=2 cairn=6 shoe=1 stolen=shoe hole=0 rod=1 brave=chipmunk,squirrel,raccoon,owl,bear,dog ring=taichi,squirrel_splash,echo,fishing_small",
+    "loop=2 seed=4143389021 length=618s plan=family=morning stay=1 wake=2 coffee=0 pee=0 breakfast=0 wash=0 tidy=1 day_hike=0 fillers=birds_on_water majors=fish_leap,ants_cookie,map_chase fog=12 memory=loop=3 cairn=5 shoe=1 stolen=mug hole=0 rod=1 brave=squirrel,raccoon,bird,dog ring=taichi,squirrel_splash,echo,fishing_small,fish_leap,ants_cookie,map_chase",
+    "loop=3 seed=3596995242 length=612s plan=family=morning stay=1 wake=1 coffee=1 pee=0 breakfast=1 wash=0 tidy=0 day_hike=0 fillers=cloud_watch,cairn majors=pinecone,deer_stick fog=12 memory=loop=4 cairn=7 shoe=1 stolen=mug hole=0 rod=1 brave=squirrel,raccoon,bird,dog ring=squirrel_splash,echo,fishing_small,fish_leap,ants_cookie,map_chase,pinecone,deer_stick",
+    "loop=4 seed=1935303903 length=586s plan=family=morning stay=1 wake=2 coffee=0 pee=0 breakfast=2 wash=0 tidy=1 day_hike=0 fillers=cairn majors=squirrel_splash,ranger_ridge,ants_cookie fog=13 memory=loop=5 cairn=7 shoe=1 stolen=mug hole=0 rod=1 brave=frog,deer,bird,bear,mouse ring=fish_leap,ants_cookie,map_chase,pinecone,deer_stick,squirrel_splash,ranger_ridge,ants_cookie",
+    "loop=5 seed=3854834758 length=634s plan=family=morning stay=1 wake=1 coffee=2 pee=0 breakfast=0 wash=0 tidy=0 day_hike=0 fillers=cloud_watch majors=echo,fish_leap,bathe fog=15 memory=loop=6 cairn=6 shoe=1 stolen=mug hole=0 rod=1 brave=frog,deer,bird,bear,mouse ring=pinecone,deer_stick,squirrel_splash,ranger_ridge,ants_cookie,echo,fish_leap,bathe",
+    "loop=6 seed=3694268543 length=644s plan=family=morning wake=1 coffee=1 bag_down=1 break_camp=2 douse=0 leave=1 fillers=stream_listen,birds_on_water majors=taichi,fishing_small fog=11 memory=loop=7 cairn=5 shoe=1 stolen=mug hole=0 rod=1 brave=chipmunk,deer,raccoon,bird,bear ring=squirrel_splash,ranger_ridge,ants_cookie,echo,fish_leap,bathe,taichi,fishing_small",
+    "loop=7 seed=2924976671 length=635s plan=family=morning stay=1 wake=1 coffee=3 pee=0 breakfast=0 wash=0 tidy=0 day_hike=0 fillers=cloud_watch majors=map_chase,fishing_log,ranger_ridge fog=13 memory=loop=8 cairn=4 shoe=1 stolen=mug hole=0 rod=1 brave=chipmunk,deer,raccoon,bird,bear ring=echo,fish_leap,bathe,taichi,fishing_small,map_chase,fishing_log,ranger_ridge",
+    "loop=8 seed=2711059124 length=615s plan=family=morning stay=1 wake=1 coffee=0 pee=0 breakfast=2 wash=0 tidy=1 day_hike=0 fillers=read majors=pinecone,squirrel_splash,ants_cookie fog=12 memory=loop=9 cairn=3 shoe=1 stolen=mug hole=0 rod=1 brave=raccoon,owl,bird,dog ring=taichi,fishing_small,map_chase,fishing_log,ranger_ridge,pinecone,squirrel_splash,ants_cookie",
+    "loop=9 seed=2565594086 length=594s plan=family=morning stay=1 wake=2 coffee=3 pee=0 breakfast=2 wash=0 tidy=1 day_hike=0 fillers=stream_listen majors=fish_leap,deer_stick,echo fog=13 memory=loop=10 cairn=2 shoe=1 stolen=mug hole=0 rod=1 brave=raccoon,owl,bird,dog ring=fishing_log,ranger_ridge,pinecone,squirrel_splash,ants_cookie,fish_leap,deer_stick,echo",
+};
+static const char* const kMidday1S22[10] = {
+    "loop=0 seed=1 length=650s plan=family=midday return=2 lunch=0 wade=1 nap=0 map=0 afternoon=0 fillers=cloud_watch,stream_listen,cairn majors=fish_leap,map_chase,kite memory=loop=1 cairn=6 shoe=0 stolen=none hole=0 rod=0 brave=squirrel,frog,bird,mouse ring=fish_leap,map_chase,kite",
+    "loop=1 seed=3851155901 length=605s plan=family=midday return=1 lunch=1 wade=0 nap=1 map=1 afternoon=1 fillers=cairn,cloud_watch,skip_stone majors=fetch,echo,pinecone memory=loop=2 cairn=7 shoe=0 stolen=none hole=0 rod=0 brave=squirrel,frog,bird,mouse ring=fish_leap,map_chase,kite,fetch,echo,pinecone",
+    "loop=2 seed=3700665890 length=607s plan=family=midday return=2 lunch=1 wade=2 nap=0 map=1 afternoon=0 fillers=stream_listen,cairn majors=ants_cookie,longshot memory=loop=3 cairn=7 shoe=0 stolen=none hole=0 rod=0 brave=chipmunk,squirrel,frog,deer,raccoon,owl,bird,bear ring=fish_leap,map_chase,kite,fetch,echo,pinecone,ants_cookie,longshot",
+    "loop=3 seed=2419121647 length=599s plan=family=midday return=0 lunch=0 wade=1 nap=1 map=0 afternoon=1 herd=2 fillers=cairn majors=slackline,bike memory=loop=4 cairn=7 shoe=0 stolen=none hole=0 rod=0 brave=chipmunk,squirrel,frog,deer,raccoon,owl,bird,bear ring=kite,fetch,echo,pinecone,ants_cookie,longshot,slackline,bike",
+    "loop=4 seed=1193374392 length=612s plan=family=midday return=1 lunch=0 wade=0 nap=2 map=1 afternoon=0 fillers=skip_stone,read,cairn majors=deer_stick,bathe memory=loop=5 cairn=7 shoe=0 stolen=none hole=0 rod=0 brave=chipmunk,raccoon,bird,dog ring=echo,pinecone,ants_cookie,longshot,slackline,bike,deer_stick,bathe",
+    "loop=5 seed=3383422565 length=641s plan=family=midday return=2 lunch=1 wade=2 nap=1 map=0 afternoon=0 fillers=birds_on_water,stream_listen majors=fetch,ropes,ranger_ridge memory=loop=6 cairn=6 shoe=0 stolen=none hole=0 rod=0 brave=chipmunk,raccoon,bird,dog ring=longshot,slackline,bike,deer_stick,bathe,fetch,ropes,ranger_ridge",
+    "loop=6 seed=392076514 length=647s plan=family=midday return=0 lunch=0 wade=2 nap=2 map=1 afternoon=0 fillers=stream_listen,cairn,read majors=ants_cookie,bathe,map_chase memory=loop=7 cairn=7 shoe=0 stolen=none hole=0 rod=0 brave=chipmunk,frog,deer ring=deer_stick,bathe,fetch,ropes,ranger_ridge,ants_cookie,bathe,map_chase",
+    "loop=7 seed=3035157141 length=592s plan=family=midday return=0 lunch=1 wade=0 nap=0 map=0 afternoon=0 fillers=read majors=plink,archery memory=loop=8 cairn=6 shoe=0 stolen=none hole=0 rod=0 brave=chipmunk,frog,deer ring=fetch,ropes,ranger_ridge,ants_cookie,bathe,map_chase,plink,archery",
+    "loop=8 seed=1260552528 length=650s plan=family=midday return=2 lunch=0 wade=2 nap=2 map=1 afternoon=1 fillers=birds_on_water,stream_listen majors=longshot,pinecone,kite memory=loop=9 cairn=5 shoe=0 stolen=none hole=0 rod=0 brave=chipmunk,squirrel,frog,bear,mouse,dog ring=ants_cookie,bathe,map_chase,plink,archery,longshot,pinecone,kite",
+    "loop=9 seed=1771708354 length=618s plan=family=midday return=1 lunch=1 wade=1 nap=0 map=0 afternoon=0 fillers=birds_on_water,skip_stone,read majors=deer_stick,ropes memory=loop=10 cairn=4 shoe=0 stolen=none hole=0 rod=0 brave=chipmunk,squirrel,frog,bear,mouse,dog ring=map_chase,plink,archery,longshot,pinecone,kite,deer_stick,ropes",
 };
 
 // One --loops line, as ss_preview's previewRunLoops writes it (less the
@@ -176,8 +212,12 @@ static int compareLines(const char* what, uint64_t seed, const Inputs& in, const
 static void testRegression() {
   const int e1 = compareLines("evening", 1, makeInputs(4.f), "family=evening ", kEvening1);
   const int e7 = compareLines("evening", 7, makeInputs(4.f), "family=evening ", kEvening7);
-  const int m1 = compareLines("morning", 1, makeInputs(1.5f, kForceMorning), "", kMorning1);
-  const int d1 = compareLines("midday", 1, makeInputs(3.f, kForceMidday), "", kMidday1);
+  // Stage 22 (INTEGRATION_PLAN 6.1; Mike, 2026-11-18): the new pieces change the morning's and the midday's plans,
+  // so those two have a pin set each way (step C7 re-captured the SS_S22 ones). The evening's never move: the same
+  // pins either way.
+  const bool s22 = ssS22Switch() != 0;
+  const int m1 = compareLines("morning", 1, makeInputs(1.5f, kForceMorning), "", s22 ? kMorning1S22 : kMorning1);
+  const int d1 = compareLines("midday", 1, makeInputs(3.f, kForceMidday), "", s22 ? kMidday1S22 : kMidday1);
   printf("regression: evening seed 1 %d/10, seed 7 %d/10, morning seed 1 %d/10, midday seed 1 %d/10 lines identical\n",
          e1, e7, m1, d1);
 }
@@ -216,7 +256,8 @@ static bool isMajor(const char* name) {
                                        "raccoon_pack",    "ants_cookie",   "shadow_theater", "ranger_ridge", "echo",
                                        "firefly_jar",     "stargaze",      "fishing_small",  "fishing_log",  "fishing_good",
                                        "bathe",           "fetch",         "kite",        "boomerang",
-                                       "bike",            "archery",       "slackline",   "ropes"};
+                                       "bike",            "archery",       "slackline",   "ropes",         "plink",
+                                       "taichi",          "longshot",      "mushroom"};
   for (const char* k : kMajor)
     if (strcmp(name, k) == 0) return true;
   return false;

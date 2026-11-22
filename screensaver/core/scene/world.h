@@ -23,6 +23,7 @@
 #include "lookout.h"
 #include "lookout_land.h"
 #include "props.h"
+#include "reeds.h"
 #include "spine.h"
 #include "stream.h"
 #include "sunrise.h"
@@ -76,6 +77,8 @@ enum ActorKind : uint8_t {
   // The boulder in the current (stream.h), sorted at its waterline: the rock over what passed behind it,
   // a snagged floater, the foam.
   ACT_STREAM,
+  // A clump of reeds and cattails (reeds.h): idx the clump (ReedSiteId), sorted at its root on the waterline.
+  ACT_REED,
 #if SS_XMAS
   // The Christmas mockups (xmas.h; only while its mock is posed): idx the piece. Added last, after the
   // glyphs, so a full list drops them and nothing of the scene's (WORLD_ACTOR_MAX is not raised for them).
@@ -95,10 +98,12 @@ struct ActorRef {
 // 88 holds them all; the weather's bits (WX_BITS 4) on top; the kite, the
 // boomerang and the eagle (3) on top of those: the stuck boomerang stays in
 // the camp pine into the next loop, so it can meet the evening's 28 glyphs.
-#define WORLD_ACTOR_MAX 130   // the visiting couple's 7 and their pine redraws (they never meet fire and ice's 7); 98 and the morning stay's four items (pan, cake, brush, sack), and the day pieces' second part (day.h);
+#define WORLD_ACTOR_MAX 136   // the visiting couple's 7 and their pine redraws (they never meet fire and ice's 7); 98 and the morning stay's four items (pan, cake, brush, sack), and the day pieces' second part (day.h);
                               // Lucy and Copper (housedogs.h) 2 more critters with their pine redraws
                               // the mail bird with its pine redraws and its letter (4), fire and ice's 7 (FI_ACTORS)
                               // the boulder in the current and the heron (2, stream.h)
+                              // stage 22 (Mike, 2026-11-18): the five reed clumps (REED_CLUMPS, reeds.h) and the
+                              // day pieces' third part (DAY_PARTS 3, day.h): 130 + 6
 
 // Critters in the scene: slots the director (director.h) hands out. The story's
 // critters get the first CRITTER_STORY; the last two belong to Lucy and Copper
@@ -111,7 +116,8 @@ struct ActorRef {
 
 // Who holds a critter slot, and how the director treats it.
 enum CritterTag : uint8_t { CT_NONE = 0, CT_DINNER, CT_BEAR, CT_THIEF, CT_MINOR, CT_MAJOR, CT_HOUSEDOG, CT_MAIL,
-                            CT_STREAM };   // CT_STREAM: the stream's visiting deer (stream.h)
+                            CT_STREAM,     // CT_STREAM: the stream's visiting deer (stream.h)
+                            CT_HERD };     // CT_HERD: the deer of the midday visit while he is away (day_herd.h)
 enum CritterMode : uint8_t {
   CM_FREE = 0,     // the owner drives it
   CM_STARTLE,      // scattered: a startle, then CM_FLEE
@@ -236,6 +242,7 @@ struct World {
       XmasState xmas;   // only in the host builds (xmas_switch.h): the panel's World has no room for it
 #endif
       StreamLife stream;   // the boulder's foam and wake, things drifting by, fish, the visitors (stream.h)
+      Reeds reeds;         // the reeds and cattails along it and the stem in his mouth (reeds.h); camp loops only
     };
   };
   Cloud clouds[2];
@@ -305,10 +312,11 @@ struct World {
 static_assert(sizeof(Sunrise) <= sizeof(LookoutLand), "the sunrise must fit in the Lookout's place");
 static_assert(sizeof(Visitors) <= sizeof(LookoutLand), "the visitors must fit in the Lookout's place");
 #if SS_XMAS
-static_assert(sizeof(XmasState) + sizeof(StreamLife) <= sizeof(LookoutState),
-              "the Christmas mockups and the stream's life must fit in the Lookout's running state");
+static_assert(sizeof(XmasState) + sizeof(StreamLife) + sizeof(Reeds) <= sizeof(LookoutState),
+              "the Christmas mockups, the stream's life and the reeds must fit in the Lookout's running state");
 #else
-static_assert(sizeof(StreamLife) <= sizeof(LookoutState), "the stream's life must fit in the Lookout's running state");
+static_assert(sizeof(StreamLife) + sizeof(Reeds) <= sizeof(LookoutState),
+              "the stream's life and the reeds must fit in the Lookout's running state");
 #endif
 
 // The story's clock: ticks since loop start, less the doorbell freezes. Every

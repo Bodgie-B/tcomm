@@ -50,6 +50,7 @@ Inputs previewInputsFromOptions(const PreviewOptions& o) {
   in.month = (uint8_t)(o.month >= 1 && o.month <= 12 ? o.month : 0);
   in.spine_force = (uint8_t)o.spine;
   for (int i = 0; i < 3; i++) in.req[i] = o.req[i];
+  in.carry = o.carry;
   return in;
 }
 
@@ -277,6 +278,9 @@ void previewUsage(const char* prog, FILE* to) {
           "  --sunrise           inside the sunrise window (the sunrise overlook)\n"
           "  --visitors          the visiting couple may drop by (about one camp loop in seven)\n"
          "  --month N           the month, 1-12, for the stream's leaves (default 0: unknown)\n"
+          "  --carry N           the word the last run handed on (Inputs::carry, 0..65535): low byte the\n"
+          "                      mushroom patch, high byte tai chi's chapter (default 0: nothing)\n"
+          "  --mush N            the mushroom patch byte alone (the low byte of --carry, 0..255)\n"
           "  --spine NAME        evening morning midday lookout sunrise: play that spine family whatever the\n"
           "                      inputs say (--spine lookout --mood 4 is the Lookout's reference run)\n"
           "  --status N          other floor status 0..5\n"
@@ -378,6 +382,16 @@ void previewParseArgs(int argc, char** argv, PreviewOptions& o) {
     } else if (!strcmp(a, "--month")) {
       need(1);
       o.month = atoi(argv[++i]);
+    } else if (!strcmp(a, "--carry")) {
+      need(1);
+      const long long v = parseInt(prog, a, argv[++i]);
+      if (v < 0 || v > 65535) bad(prog, "must be 0..65535", a);
+      o.carry = (uint16_t)v;
+    } else if (!strcmp(a, "--mush")) {
+      need(1);
+      const long long v = parseInt(prog, a, argv[++i]);
+      if (v < 0 || v > 255) bad(prog, "must be 0..255", a);
+      o.carry = (uint16_t)((o.carry & 0xFF00u) | (unsigned)v);
     } else if (!strcmp(a, "--spine")) {
       need(1);
       static const char* const kFam[5] = {"evening", "morning", "midday", "lookout", "sunrise"};

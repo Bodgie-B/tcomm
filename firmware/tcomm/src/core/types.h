@@ -39,7 +39,11 @@ inline Mode mode_for(Phase p) {
 
 // Sounds the panel plays. Synthesized at boot (core/synth.h).
 // DogAlert: five quick dings, for a dog out too long (Mike, 2026-11-13: not to be taken for a doorbell).
-enum class Sound : uint8_t { Chime = 0, SoftChime = 1, ReplyYes = 2, ReplyNo = 3, DogAlert = 4, Count = 5 };
+// Ding: a voice message arrived (Mike, 2026-11-20; docs/voice-notes/DESIGN.md 2.3, 3.5): one G5 bell-bar
+// strike, an octave under the dog alert. Never a resident clip: rendered when asked for and freed after
+// playing, so the boot-time clips stay the first five (Count moved from 5 to 6; nothing uses Count).
+enum class Sound : uint8_t { Chime = 0, SoftChime = 1, ReplyYes = 2, ReplyNo = 3, DogAlert = 4, Ding = 5, Count = 6 };
+constexpr int kResidentSounds = 5;  // Chime to DogAlert: the clips rendered once at boot
 
 // Wall clock as the platform reports it. quality ranks where the time came from, so units
 // copy the clock only from a better source and never ping-pong.

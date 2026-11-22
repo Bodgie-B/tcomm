@@ -896,15 +896,19 @@ static void testProps() {
 // (moods day, night, dusk in turn: the owl and moth need the dark); each
 // minor's critters are gone when it ends; same-seed frames identical at 3
 // ticks of a dusk loop full of minors.
-static const char* const kMinors[11] = {"chipmunk_cross", "squirrel_nut", "frog_splash", "bird_chip",
+// reed_bird (stage 22, the reeds' blackbird) plays only with SS_S22 on and never in an evening loop (its minors
+// stay as they were), and these 12 seeds are evening loops: it is not asked to fire here (test_reeds asks it to
+// fire in midday loops).
+static const char* const kMinors[12] = {"chipmunk_cross", "squirrel_nut", "frog_splash", "bird_chip",
                                         "deer_edge",      "owl_watch",    "mouse_tent",  "leaf_fall",
-                                        "moth_lantern",   "bee_visit",    "cloud_animal"};
+                                        "moth_lantern",   "bee_visit",    "cloud_animal", "reed_bird"};
 static const char* const kCalmBeats[12] = {"pause",      "arrival",     "setup", "firewood", "fire",
                                            "foodbag",    "mug_sunset",  "read",  "cairn",    "skip_stone",
                                            "cloud_watch", "stream_listen"};
 
 static void testMinors() {
-  int fired_by[11] = {};
+  int fired_by[12] = {};
+  const int n_minors = 11;   // all but reed_bird (above)
   int bad_beat = 0, forced = 0, total = 0, unknown = 0;
   for (uint64_t seed = 1; seed <= 12; ++seed) {
     const float mood = seed % 3 == 1 ? 3.f : (seed % 3 == 2 ? 0.3f : 5.f);
@@ -918,7 +922,7 @@ static void testMinors() {
       const char* name = appMinorName(a.app);
       if (c != count) {   // a minor started this tick
         count = c;
-        const int k = beatIndex(name, kMinors, 11);
+        const int k = beatIndex(name, kMinors, 12);
         if (k >= 0) ++fired_by[k];
         else ++unknown;
         if (beatIndex(appBeatName(a.app), kCalmBeats, 12) < 0) {
@@ -943,14 +947,14 @@ static void testMinors() {
     a.stop();
   }
   int missing = 0;
-  for (int k = 0; k < 11; ++k) {
+  for (int k = 0; k < n_minors; ++k) {
     if (fired_by[k] == 0) {
       ++missing;
       printf("minor %s never fired in 12 seeds\n", kMinors[k]);
     }
   }
   printf("minors: %d in 12 loops (%.1f a loop); each fired:", total, (double)total / 12.0);
-  for (int k = 0; k < 11; ++k) printf(" %s %d", kMinors[k], fired_by[k]);
+  for (int k = 0; k < 12; ++k) printf(" %s %d", kMinors[k], fired_by[k]);
   printf("\n");
   CHECK(missing == 0, "%d minors never fired", missing);
   CHECK(unknown == 0, "%d minors started with an unknown name", unknown);

@@ -1,0 +1,36 @@
+sizeof App 29856 World 24680 StreamLife 288 Landscape 3228 LookoutState 624 XmasState 92 Memory 84 LoopPlan 88 Inputs 84 DayState 1912 DayBike 1904 DayPlink 848 Hiker 204 Visitors 952 LookoutLand 3516
+sway seed 1 evening 2000 ticks 334a8431a659fb66
+plink seed 6 live ticks 2925 state a0307caa4948019f
+plink seed 26 live ticks 2925 state febc3ad9009f7016
+deer action  0 995cfdafe95db881
+deer action  1 1ac214060a584c99
+deer action  2 d2cf8b8b6eacb271
+deer action  3 995cfdafe95db881
+deer action  4 c601e3d21f870870
+deer action  5 15ffb64c8d14dfb1
+deer action  6 995cfdafe95db881
+deer action  7 995cfdafe95db881
+deer action  8 995cfdafe95db881
+deer action  9 995cfdafe95db881
+deer action 10 995cfdafe95db881
+deer action 11 3abe0d7b56b3fb3b
+deer action 12 72190bcadbd6ef0b
+deer action 13 995cfdafe95db881
+deer action 14 995cfdafe95db881
+deer action 15 995cfdafe95db881
+deer action 16 995cfdafe95db881
+deer action 17 995cfdafe95db881
+deer action 18 2eca56a02ddd5959
+deer action 19 51456da677e10748
+frames evening seed  1 ticks 16250 frame20 f2badce245000b67 every20 a890615fea61ef8b strips/frame 10.077 ms/frame 0.1609
+frames evening seed  7 ticks 16250 frame20 10d6530c263b9eea every20 753fd94f211192fe strips/frame 7.760 ms/frame 0.1256
+frames evening seed 12 ticks 16250 frame20 225bfdbdfe78732b every20 e11c3b39f73cbda9 strips/frame 7.495 ms/frame 0.1192
+frames night   seed  1 ticks 15425 frame20 b325d7d971083b63 every20 0f4f70416521bd63 strips/frame 7.642 ms/frame 0.1207
+frames night   seed  7 ticks 16250 frame20 65a97197cce11d0b every20 6b1460cb849fda2e strips/frame 7.887 ms/frame 0.1239
+frames night   seed 12 ticks 16250 frame20 87286bc787f6f182 every20 3a7875f99bc0ffff strips/frame 7.663 ms/frame 0.1210
+frames morning seed  1 ticks 15750 frame20 0f4a1adcd919679b every20 fea38202fb1bb9ce strips/frame 7.502 ms/frame 0.1269
+frames morning seed  7 ticks 16250 frame20 3e133e39058e1a2b every20 2247767d3900d606 strips/frame 7.620 ms/frame 0.1281
+frames morning seed 12 ticks 15050 frame20 8ce6ed7891baced3 every20 31a9a5bcfc88d5cd strips/frame 7.606 ms/frame 0.1265
+frames midday  seed  1 ticks 15950 frame20 d1eedd8c209b9198 every20 2097789f19eb56d2 strips/frame 8.311 ms/frame 0.1185
+frames midday  seed  7 ticks 15550 frame20 5e3abb24505e543f every20 27453162da2d9672 strips/frame 7.387 ms/frame 0.1208
+frames midday  seed 12 ticks 16025 frame20 c08534f039f8cc5c every20 1431e591985b8fbd strips/frame 7.415 ms/frame 0.1161

@@ -136,6 +136,10 @@ struct Pair {
   std::vector<Msg> gw;
   int gw_from_b = 0;
   bool gw_acks = false;
+  // ROOMS (Mike, 2026-11-22): every ROOMS frame upstairs sent the gateway (tries included), ACKed as the
+  // gateway does when gw_acks is set; and how many ROOMS the downstairs panel sent anywhere.
+  std::vector<Msg> rooms;
+  int rooms_from_b = 0;
 
   Pair(uint32_t utc = 1792627200u /* 2026-10-22 00:00 UTC */) {
     pa.w = {true, utc, kClockManual};
@@ -166,6 +170,19 @@ struct Pair {
         Msg m;
         if (drop && decode(s.bytes.data(), s.bytes.size(), m) && drop(true, m)) continue;
         if (s.to == kSenderGateway) {
+          if (decode(s.bytes.data(), s.bytes.size(), m) && m.type == MsgType::Rooms) {
+            rooms.push_back(m);
+            if (gw_acks) {
+              Msg k;
+              k.type = MsgType::Ack;
+              k.sender = kSenderGateway;
+              k.u.ack.seq = m.seq;
+              k.u.ack.type = (uint8_t)MsgType::Rooms;
+              uint8_t kb[16];
+              a.on_radio(kb, encode(k, kb, sizeof(kb)));
+            }
+            continue;
+          }
           if (decode(s.bytes.data(), s.bytes.size(), m) && m.type == MsgType::Notice) {
             gw.push_back(m);
             if (gw_acks) {
@@ -186,6 +203,7 @@ struct Pair {
       for (auto &s : ob) {
         Msg m;
         if (drop && decode(s.bytes.data(), s.bytes.size(), m) && drop(false, m)) continue;
+        if (decode(s.bytes.data(), s.bytes.size(), m) && m.type == MsgType::Rooms) rooms_from_b++;
         if (s.to == kSenderGateway) gw_from_b++;
         if (s.to == kSenderUpstairs) a.on_radio(s.bytes.data(), s.bytes.size());
       }
@@ -758,10 +776,14 @@ static void test_doorbell() {
   CHECK(!p.pa.played.empty() && p.pa.played.back().first == Sound::ReplyYes);
   CHECK(p.b.view().banner.kind == BannerKind::None);
 
-  // Nobody answers: "No answer yet" after 60 s, and the receiver's banner times out into a missed note.
+  // Nobody answers: "No answer yet" after 2 minutes (Mike, 2026-11-15: was 60 s), and the receiver's
+  // banner times out into a missed note at the same time; not before.
   p.run(11000);
   p.a.tap_bell();
-  p.run(61000);
+  p.run(110000);
+  CHECK(p.a.view().bell.out == BellOut::Delivered);
+  CHECK(p.b.view().banner.kind == BannerKind::Knock);
+  p.run(11000);
   CHECK(p.a.view().bell.out == BellOut::NoAnswer);
   CHECK(p.b.view().banner.kind == BannerKind::None);
   CHECK(std::string(p.b.view().bell.missed).find("Missed ") == 0);
@@ -1386,6 +1408,150 @@ static void test_update_both_and_pending() {
   }
 }
 
+// The chart's zoom (Mike, 2026-11-18): the view for the dots shown, the pace, the steps of the
+// labelled lines, and that the whole chart still lands on the pixels it always did.
+static void test_chart_view() {
+  const auto near = [](float a, float b, float tol = 0.001f) { return fabsf(a - b) <= tol; };
+  const auto inside = [](const ChartView &v) {
+    return v.t0 >= kChartTMin && v.t1 <= kChartTMax && v.g0 >= 0 && v.g1 <= kChartGrMax && v.t0 < v.t1 && v.g0 < v.g1;
+  };
+  const auto pt = [](int t10, int h10, Feel f, DayPart part, bool removed = false) {
+    ComfortPoint p = {};
+    p.n = 1; p.t = (int16_t)t10; p.h = (uint16_t)h10; p.feel = (uint8_t)f; p.part = (uint8_t)part; p.removed = removed;
+    return p;
+  };
+
+  // The box of the dots, 1.5 times as wide and as tall, about its middle.
+  ChartView v = chart_view_around(66, 74, 40, 80);
+  CHECK(near(v.t0, 64) && near(v.t1, 76) && near(v.g0, 30) && near(v.g1, 90));
+  CHECK(near((v.t0 + v.t1) / 2, 70) && near((v.g0 + v.g1) / 2, 60));
+  CHECK(near(v.t1 - v.t0, 1.5f * 8) && near(v.g1 - v.g0, 1.5f * 40));
+  // Minimum spans: one dot, and a tight cluster, each about its own middle.
+  v = chart_view_around(70, 70, 50, 50);
+  CHECK(near(v.t0, 67) && near(v.t1, 73) && near(v.g0, 38) && near(v.g1, 62));
+  v = chart_view_around(70, 71, 50, 52);
+  CHECK(near(v.t1 - v.t0, kChartMinSpanT) && near(v.g1 - v.g0, kChartMinSpanG) && near((v.t0 + v.t1) / 2, 70.5f) &&
+        near((v.g0 + v.g1) / 2, 51));
+  // The minimums leave labelled lines: 6 F at 1 F steps, 24 gr/lb at 5.
+  CHECK(chart_nice_step(kChartMinSpanT) == 1 && chart_nice_step(kChartMinSpanG) == 5);
+  // Each edge of the chart: the view keeps its size and is moved inside.
+  v = chart_view_around(55, 57, 50, 60);  // left
+  CHECK(near(v.t0, 55) && near(v.t1, 61) && inside(v));
+  v = chart_view_around(83, 85, 50, 60);  // right
+  CHECK(near(v.t0, 79) && near(v.t1, 85) && inside(v));
+  v = chart_view_around(68, 72, 0, 20);  // bottom
+  CHECK(near(v.g0, 0) && near(v.g1, 30) && inside(v));
+  v = chart_view_around(68, 72, 100, 120);  // top
+  CHECK(near(v.g0, 90) && near(v.g1, 120) && inside(v));
+  v = chart_view_around(55, 55, 120, 120);  // a single dot in a corner
+  CHECK(near(v.t0, 55) && near(v.t1, 61) && near(v.g0, 96) && near(v.g1, 120));
+  // Never larger than the chart: dots over more than two thirds of an axis give the whole axis.
+  v = chart_view_around(56, 84, 50, 60);
+  CHECK(v.t0 == kChartTMin && v.t1 == kChartTMax && near(v.g1 - v.g0, kChartMinSpanG));
+  v = chart_view_around(55, 85, 0, 120);
+  CHECK(chart_view_same(v, kChartFull));
+  v = chart_view_around(60, 80.1f, 10, 95);
+  CHECK(chart_view_same(v, kChartFull));
+
+  // From the points: only those shown count.
+  ComfortPoint ps[6] = {pt(680, 450, Feel::JustRight, DayPart::Night),  pt(720, 500, Feel::TooWarm, DayPart::Morning),
+                        pt(740, 550, Feel::TooWarm, DayPart::Morning),  pt(600, 300, Feel::TooCool, DayPart::Night, true),
+                        pt(900, 500, Feel::MuchTooHot, DayPart::Night), pt(700, 500, Feel::JustRight, DayPart::Evening)};
+  ps[5].feel = 9;  // not a known answer
+  CHECK(chart_point_shown(ps[0], 0) && chart_point_shown(ps[0], 1) && !chart_point_shown(ps[0], 2));
+  CHECK(!chart_point_shown(ps[3], 0) && !chart_point_shown(ps[4], 0) && !chart_point_shown(ps[5], 0));
+  float g0 = grains_per_lb(68, 45), g2 = grains_per_lb(74, 55), g1 = grains_per_lb(72, 50);
+  v = chart_target_view(ps, 6, 0);  // ALL: the three kept, on-chart, known answers
+  CHECK(near(v.t0, 71 - 4.5f) && near(v.t1, 71 + 4.5f));
+  CHECK(near(v.g0, (g0 + g2) / 2 - 0.75f * (g2 - g0), 0.01f) && near(v.g1, (g0 + g2) / 2 + 0.75f * (g2 - g0), 0.01f));
+  v = chart_target_view(ps, 6, 2);  // MORNING: two dots 2 F apart, so the minimum across
+  CHECK(near(v.t0, 70) && near(v.t1, 76) && near((v.g0 + v.g1) / 2, (g1 + g2) / 2, 0.01f) && near(v.g1 - v.g0, kChartMinSpanG, 0.01f));
+  v = chart_target_view(ps, 6, 1);  // NIGHT: one dot (the removed and the off-chart ones don't count)
+  CHECK(near(v.t0, 65) && near(v.t1, 71) && near((v.g0 + v.g1) / 2, g0, 0.01f) && near(v.g1 - v.g0, kChartMinSpanG, 0.01f));
+  // No dots shown: the whole chart, so nothing moves.
+  CHECK(chart_view_same(chart_target_view(ps, 6, 3), kChartFull));
+  CHECK(chart_view_same(chart_target_view(ps, 0, 0), kChartFull));
+  CHECK(chart_view_same(chart_target_view(nullptr, 0, 0), kChartFull));
+  CHECK(chart_view_same(chart_target_view(ps + 3, 3, 0), kChartFull));
+  CHECK(!chart_view_same(chart_target_view(ps, 6, 0), kChartFull));
+
+  // The pace: 0 at 0, 1 at 1, never backwards, gentle at the start, and much slower at the end
+  // than in the middle.
+  CHECK(chart_ease(0) == 0 && chart_ease(1) == 1 && chart_ease(-1) == 0 && chart_ease(2) == 1);
+  bool rising = true;
+  for (int i = 1; i <= 1000; i++)
+    if (!(chart_ease(i / 1000.0f) >= chart_ease((i - 1) / 1000.0f))) rising = false;
+  CHECK(rising);
+  float first = chart_ease(0.1f) - chart_ease(0), mid = chart_ease(0.5f) - chart_ease(0.4f), last = chart_ease(1) - chart_ease(0.9f);
+  CHECK(first < mid / 4);   // starts gently
+  CHECK(last < mid / 20);   // the last tenth of the time: under a twentieth of the middle's pace
+  CHECK(chart_ease(0.75f) > 0.9f && chart_ease(0.5f) > 0.5f && chart_ease(0.5f) < 0.65f);
+  CHECK(chart_ease(1) - chart_ease(0.75f) < chart_ease(0.5f) - chart_ease(0.25f));
+
+  // Interpolation: the ends exactly, in between inside both, the span shrinking in equal ratios.
+  ChartView a = kChartFull, b = chart_view_around(70, 70, 50, 50);
+  ChartView m = chart_view_lerp(a, b, 0);
+  CHECK(m.t0 == a.t0 && m.t1 == a.t1 && m.g0 == a.g0 && m.g1 == a.g1);
+  m = chart_view_lerp(a, b, 1);
+  CHECK(m.t0 == b.t0 && m.t1 == b.t1 && m.g0 == b.g0 && m.g1 == b.g1);
+  m = chart_view_lerp(a, b, 0.5f);
+  CHECK(near(m.t1 - m.t0, sqrtf(30.0f * 6), 0.01f) && near(m.g1 - m.g0, sqrtf(120.0f * 24), 0.01f));
+  CHECK(m.t0 > a.t0 && m.t0 < b.t0 && m.t1 < a.t1 && m.t1 > b.t1 && m.g0 > a.g0 && m.g0 < b.g0 && m.g1 < a.g1 && m.g1 > b.g1);
+  bool ok = true;
+  ChartView prev = a;
+  for (int i = 1; i <= 100; i++) {
+    ChartView s = chart_view_lerp(a, b, i / 100.0f);
+    if (!inside(s) || s.t0 < prev.t0 || s.t1 > prev.t1 || s.g0 < prev.g0 || s.g1 > prev.g1) ok = false;
+    prev = s;
+  }
+  CHECK(ok);
+  // The same size both ends (a slide between two parts of the day): halfway is halfway.
+  ChartView c = chart_view_around(60, 60, 30, 30), d = chart_view_around(78, 78, 90, 90);
+  m = chart_view_lerp(c, d, 0.5f);
+  CHECK(near(m.t0, (c.t0 + d.t0) / 2) && near(m.t1, (c.t1 + d.t1) / 2) && near(m.g0, (c.g0 + d.g0) / 2) && near(m.g1, (c.g1 + d.g1) / 2));
+  // Back out to the whole chart is the same path the other way.
+  ChartView out = chart_view_lerp(b, a, 0.25f), in = chart_view_lerp(a, b, 0.75f);
+  CHECK(near(out.t0, in.t0, 0.01f) && near(out.t1, in.t1, 0.01f) && near(out.g0, in.g0, 0.05f) && near(out.g1, in.g1, 0.05f));
+  CHECK(chart_view_same(a, a) && !chart_view_same(a, b));
+
+  // The steps of the labelled lines: the whole chart's own (5 F, 20 gr/lb), then finer.
+  CHECK(chart_nice_step(30) == 5 && chart_nice_step(120) == 20);
+  CHECK(chart_nice_step(24.75f) == 5 && chart_nice_step(20) == 5 && chart_nice_step(19.9f) == 2);
+  CHECK(chart_nice_step(12) == 2 && chart_nice_step(8) == 2 && chart_nice_step(7.9f) == 1 && chart_nice_step(6) == 1);
+  CHECK(chart_nice_step(96) == 20 && chart_nice_step(79) == 10 && chart_nice_step(40) == 10 && chart_nice_step(39) == 5);
+  CHECK(chart_nice_step(3) == 0.5f && chart_nice_step(0.01f) == 0.1f);
+  bool count_ok = true;
+  for (float span = 6; span <= 120; span += 0.37f) {
+    float lines = span / chart_nice_step(span);
+    if (lines < 4 || lines >= 10) count_ok = false;
+  }
+  CHECK(count_ok);
+  // The humidity curves: every 20 % on the whole chart; closer in, every 10 or 5 so two still cross.
+  CHECK(chart_rh_step(kChartFull) == 20);
+  CHECK(chart_rh_step(ChartView{67, 73, 42.6f, 66.6f}) == 20);  // 40 % and 60 % both cross
+  CHECK(chart_rh_step(ChartView{68, 74, 50, 74}) == 10);        // only 60 % of the 20s: 50 % joins it
+  CHECK(chart_rh_step(ChartView{55, 61, 0, 24}) == 10);         // the cool dry corner: 10, 20, 30 %
+  CHECK(chart_rh_step(ChartView{79, 85, 0, 24}) == 5);          // the warm dry corner: 5, 10, 15 %
+
+  // The whole chart puts known points on the pixels the chart always used (plot 64..712 by 84..404).
+  const auto old_x = [](float t) { return 64 + (t - kChartTMin) / (kChartTMax - kChartTMin) * (712 - 64); };
+  const auto old_y = [](float g) { return 404 - g / kChartGrMax * (404 - 84); };
+  const float ts[] = {55, 61.3f, 67.4f, 70, 72.5f, 76.6f, 82.9f, 85}, gs[] = {0, 28, 43.21f, 56, 58.3f, 84, 92, 100, 120};
+  bool same_px = true;
+  for (float t : ts)
+    if (chart_x(kChartFull, t, 64, 712) != old_x(t)) same_px = false;
+  for (float g : gs)
+    if (chart_y(kChartFull, g, 84, 404) != old_y(g)) same_px = false;
+  CHECK(same_px);
+  CHECK(chart_x(kChartFull, 55, 64, 712) == 64 && chart_x(kChartFull, 85, 64, 712) == 712 && chart_x(kChartFull, 70, 64, 712) == 388);
+  CHECK(chart_y(kChartFull, 0, 84, 404) == 404 && chart_y(kChartFull, 120, 84, 404) == 84 && chart_y(kChartFull, 60, 84, 404) == 244);
+  // A zoomed view: its own edges on the plot's edges, its middle in the middle.
+  v = chart_view_around(70, 70, 50, 50);
+  CHECK(chart_x(v, 67, 64, 712) == 64 && chart_x(v, 73, 64, 712) == 712 && near(chart_x(v, 70, 64, 712), 388));
+  CHECK(chart_y(v, 38, 84, 404) == 404 && chart_y(v, 62, 84, 404) == 84 && near(chart_y(v, 50, 84, 404), 244));
+  CHECK(kChartHoldMs == 1000 && kChartZoomMs == 1400 && kChartZoomGrow == 1.5f);
+}
+
 static void test_comfort_chart() {
   std::string head = kComfortCsvHeader;
   std::string body = chart_line(1, Feel::MuchTooHot, 781, 612) + chart_line(2, Feel::TooCool, 655, 400, 5000) +
@@ -1563,7 +1729,7 @@ static void test_mail() {
   z.restore(a);
   CHECK(!z.apply_remote(b));                       // on both panels
 
-  // The message: 14 bytes; waiting is 0 or 1.
+  // The message: 14 bytes; waiting is 0 or 1 (and 2 for no mail, see test_nomail).
   Msg m;
   m.type = MsgType::Mail;
   m.sender = kSenderUpstairs;
@@ -1577,7 +1743,9 @@ static void test_mail() {
   Msg d;
   CHECK(decode(buf, n, d) && d.type == MsgType::Mail && d.u.mail.waiting == 1 && d.u.mail.since == 0x6ADF03D0u &&
         d.u.mail.ver == 7);
-  buf[5] = 2;
+  buf[5] = 2;  // Mike, 2026-11-18: 2 is "no mail", same size
+  CHECK(decode(buf, n, d) && d.u.mail.waiting == 2 && d.u.mail.ver == 7);
+  buf[5] = 3;
   CHECK(!decode(buf, n, d));
   CHECK_STR(msg_name(MsgType::Mail), "MAIL");
 
@@ -1704,6 +1872,14 @@ static void test_mail() {
   CHECK(real.view().mail.solid);  // not yet
   run(5000);
   CHECK(!demo.peer().mail().waiting && !real.mail().waiting && !real.view().mail.solid);
+  // Mike, 2026-11-18: the simulated tenant acknowledges a "no mail" mark the same way, after 20 s.
+  real.tap_nomail();
+  run(1000);
+  CHECK(demo.peer().mail().none && real.view().nomail.active);
+  run(15000);
+  CHECK(real.view().nomail.active);  // not yet
+  run(5000);
+  CHECK(!demo.peer().mail().none && !real.mail().none && !real.view().nomail.active && real.view().nomail.show);
 }
 
 // Mike, 2026-10-26: the bell shakes for each ring sent or received; an incoming ring turns it red
@@ -1724,15 +1900,16 @@ static void test_bell_shake_and_red() {
   p.b.answer_banner(true);
   p.run(200);
   CHECK(!p.b.view().bell.alert);
-  // Unanswered: still red after the banner has gone (60 s), then plain at 2 minutes.
+  // Unanswered: red while the banner shows, and both end at 2 minutes (the banner is 2 minutes long
+  // since 2026-11-15, like the red bell).
   p.run(BellSender::kRepeatIgnoreMs);
   p.a.tap_bell();
   p.run(200);
   CHECK(p.b.view().bell.alert && p.b.view().bell.shakes == (uint16_t)(b0 + 2));
   p.run(70000);
-  CHECK(p.b.view().banner.kind == BannerKind::None && p.b.view().bell.alert);
+  CHECK(p.b.view().banner.kind == BannerKind::Knock && p.b.view().bell.alert);
   p.run(50000);
-  CHECK(!p.b.view().bell.alert);
+  CHECK(p.b.view().banner.kind == BannerKind::None && !p.b.view().bell.alert);
   // Dismissed: plain at once.
   p.a.tap_bell();
   p.run(200);
@@ -3914,8 +4091,8 @@ static void test_tile_agenda() {
 }
 
 // An OUTSIDE reading with the clock's own time, so it is fresh and the clocks agree.
-static void dog_out_reading(Pair &p, int16_t tenths, uint8_t flags = kOutsideValid) {
-  gw_outside(p, p.pa.w.utc, tenths, 71, 3, flags);
+static void dog_out_reading(Pair &p, int16_t tenths, uint8_t flags = kOutsideValid, uint8_t hum = 71) {
+  gw_outside(p, p.pa.w.utc, tenths, hum, 3, flags);
   p.run(100);
 }
 static int dings(const FakePlatform &f) {  // the dog alert: five dings
@@ -3931,19 +4108,19 @@ static int soft_chimes(const FakePlatform &f) {
 
 // One outing at this outside reading: the pill reads plain just before the limit and with minutes and
 // temperature just after, on both panels. tenths -9999: no outside reading at all.
-static void dog_limit_case(int16_t tenths, uint8_t flags, const char *want, int limit_min) {
+static void dog_limit_case(int16_t tenths, uint8_t flags, const char *want, int limit_min, uint8_t hum = 71) {
   Pair p(1792670400u);
   req_start(p);
   CHECK(p.b.tap_dog());  // Copper out
   p.run(200);
-  if (tenths != -9999) dog_out_reading(p, tenths, flags);
+  if (tenths != -9999) dog_out_reading(p, tenths, flags, hum);
   req_jump(p, (uint32_t)(limit_min * 60 - 30));
-  if (tenths != -9999) dog_out_reading(p, tenths, flags);
+  if (tenths != -9999) dog_out_reading(p, tenths, flags, hum);
   CHECK_STR(p.a.view().dog.pill, "COPPER OUT");
   CHECK(!p.a.view().dog.alert && !p.b.view().dog.alert);
   CHECK(dings(p.pa) == 0 && dings(p.pb) == 0);
   req_jump(p, 45);
-  if (tenths != -9999) dog_out_reading(p, tenths, flags);
+  if (tenths != -9999) dog_out_reading(p, tenths, flags, hum);
   CHECK(p.a.view().dog.alert && p.b.view().dog.alert);
   CHECK_STR(p.a.view().dog.pill, want);
   CHECK_STR(p.b.view().dog.pill, want);
@@ -3952,18 +4129,73 @@ static void dog_limit_case(int16_t tenths, uint8_t flags, const char *want, int 
 #define DEGF "\xC2\xB0" "F"
 
 static void test_dog_nudge() {
-  CHECK(kDogOutMinNormal == 30 && kDogOutMinExtreme == 15 && kDogOutMinDanger == 10);
-  // Limits.
-  dog_limit_case(480, kOutsideValid, "COPPER OUT 30 min, 48" DEGF, 30);  // mild: 30
-  dog_limit_case(320, kOutsideValid, "COPPER OUT 30 min, 32" DEGF, 30);  // 32.0 is not below 32
-  dog_limit_case(880, kOutsideValid, "COPPER OUT 30 min, 88" DEGF, 30);  // 88.0 is not above 88
-  dog_limit_case(319, kOutsideValid, "COPPER OUT 15 min, 32" DEGF, 15);  // below 32: 15
-  dog_limit_case(-50, kOutsideValid, "COPPER OUT 15 min, -5" DEGF, 15);
-  dog_limit_case(881, kOutsideValid, "COPPER OUT 15 min, 88" DEGF, 15);  // above 88: 15
-  dog_limit_case(950, kOutsideValid | kOutsideDangerHeat, "COPPER OUT 10 min, 95" DEGF, 10);  // danger heat: 10
-  dog_limit_case(100, kOutsideValid | kOutsideDangerCold, "COPPER OUT 10 min, 10" DEGF, 10);  // danger cold: 10
-  dog_limit_case(500, kOutsideValid | kOutsideDangerCold, "COPPER OUT 10 min, 50" DEGF, 10);  // the flag wins
+  CHECK(kDogOutMinNormal == 30);
+  // Mike's table (2026-11-22), by the feels-like temperature in whole degrees: Lucy (0), Copper (1).
+  {
+    struct Band { int16_t tenths; int lucy, copper; };
+    const Band bands[] = {
+        {1200, 15, 15}, {1050, 15, 15}, {1045, 15, 15},   // 104.5 rounds to 105
+        {1044, 25, 30}, {1000, 25, 30}, {994, 40, 45},    // 99.4 rounds to 99
+        {950, 40, 45}, {945, 40, 45}, {944, 60, 60}, {900, 60, 60},   // 94.5 rounds to 95
+        {894, 0, 0}, {700, 0, 0}, {450, 0, 0}, {445, 0, 0},   // 45 to 89: no warning
+        {444, 60, 60}, {350, 60, 60}, {344, 30, 30}, {250, 30, 30},
+        {244, 20, 20}, {150, 20, 20}, {144, 10, 10}, {50, 10, 10},
+        {44, 5, 5}, {0, 5, 5}, {-50, 5, 5}, {-400, 5, 5}};
+    for (const Band &b : bands) {
+      CHECK(dog_limit_min(0, b.tenths) == b.lucy);
+      CHECK(dog_limit_min(1, b.tenths) == b.copper);
+    }
+    // Feels like: the air itself when it's cool; the NWS heat index when it's hot (its published
+    // chart, to a degree); never cooler than the air.
+    CHECK(feels_like_tenths(-123, 90) == -123 && feels_like_tenths(480, 71) == 480 && feels_like_tenths(690, 100) == 690);
+    auto near = [](int16_t got, int want_f) { return got >= want_f * 10 - 10 && got <= want_f * 10 + 10; };
+    CHECK(near(feels_like_tenths(900, 50), 95));
+    CHECK(near(feels_like_tenths(900, 70), 106));
+    CHECK(near(feels_like_tenths(1000, 40), 109));
+    CHECK(near(feels_like_tenths(860, 85), 102));
+    CHECK(feels_like_tenths(960, 5) == 960);    // dry heat: the heat index dips below the air, so the air
+    CHECK(feels_like_tenths(800, 40) >= 800 && feels_like_tenths(800, 40) < 830);
+  }
+  // On the panels: Copper, at the outside temperature with the reading's humidity.
+  dog_limit_case(300, kOutsideValid, "COPPER OUT 30 min, 30" DEGF, 30);
+  dog_limit_case(400, kOutsideValid, "COPPER OUT 60 min, 40" DEGF, 60);
+  dog_limit_case(100, kOutsideValid, "COPPER OUT 10 min, 10" DEGF, 10);
+  dog_limit_case(-50, kOutsideValid, "COPPER OUT 5 min, -5" DEGF, 5);
+  dog_limit_case(960, kOutsideValid, "COPPER OUT 45 min, 96" DEGF, 45, 5);   // dry 96: Copper 45
+  dog_limit_case(900, kOutsideValid, "COPPER OUT 15 min, 90" DEGF, 15, 70);  // 90 at 70%: feels 106, 15
   dog_limit_case(-9999, 0, "COPPER OUT 30 min", 30);  // no outside reading: 30 minutes, no temperature
+  // 45 to 89: no warning however long, and WeatherGate's danger flags no longer change the limit.
+  for (const uint8_t flags : {(uint8_t)kOutsideValid, (uint8_t)(kOutsideValid | kOutsideDangerCold)}) {
+    Pair p(1792670400u);
+    req_start(p);
+    CHECK(p.a.tap_dog());
+    CHECK(p.b.tap_dog());
+    p.run(200);
+    for (int k = 0; k < 6; k++) {  // three hours at 60 F
+      dog_out_reading(p, 600, flags);
+      req_jump(p, 30 * 60);
+    }
+    dog_out_reading(p, 600, flags);
+    CHECK_STR(p.a.view().dog.pill, "BOTH DOGS OUT");
+    CHECK(!p.a.view().dog.alert && !p.b.view().dog.alert && dings(p.pa) == 0 && dings(p.pb) == 0);
+  }
+  // Each dog its own limit: dry 96 F, Lucy at 40 minutes and Copper at 45.
+  {
+    Pair p(1792670400u);
+    req_start(p);
+    CHECK(p.a.tap_dog());
+    CHECK(p.b.tap_dog());
+    p.run(200);
+    dog_out_reading(p, 960, kOutsideValid, 5);
+    req_jump(p, 40 * 60 + 15);
+    dog_out_reading(p, 960, kOutsideValid, 5);
+    CHECK_STR(p.a.view().dog.pill, "LUCY OUT 40 min, 96" DEGF);
+    CHECK(dings(p.pa) == 1 && dings(p.pb) == 0);
+    req_jump(p, 5 * 60);
+    dog_out_reading(p, 960, kOutsideValid, 5);
+    CHECK_STR(p.a.view().dog.pill, "BOTH OUT 45 min, 96" DEGF);
+    CHECK(dings(p.pb) == 1);
+  }
 
   // The sound (Mike, 2026-11-13): five dings, never the soft chime (it was taken for a doorbell),
   // only on the floor the dog belongs to (Copper: downstairs, panel b), at the doorbell volume
@@ -3974,9 +4206,9 @@ static void test_dog_nudge() {
     int soft_a = soft_chimes(p.pa), soft_b = soft_chimes(p.pb);
     CHECK(p.b.tap_dog());
     p.run(200);
-    dog_out_reading(p, 480);
+    dog_out_reading(p, 300);
     req_jump(p, 31 * 60);
-    dog_out_reading(p, 480);
+    dog_out_reading(p, 300);
     CHECK(dings(p.pa) == 0 && dings(p.pb) == 1);  // upstairs stays silent for Copper
     CHECK(p.pb.played.back().first == Sound::DogAlert && p.pb.played.back().second == 90);
     CHECK(p.a.view().dog.alert && p.b.view().dog.alert);  // the warning shows on both
@@ -4081,21 +4313,21 @@ static void test_dog_nudge() {
     req_jump(p, 10 * 60);
     CHECK(p.b.tap_dog());  // Copper out ten minutes later
     p.run(200);
-    dog_out_reading(p, 480);
+    dog_out_reading(p, 300);
     CHECK_STR(p.a.view().dog.pill, "BOTH DOGS OUT");
     req_jump(p, 20 * 60 + 15);  // Lucy 30 min, Copper 20
-    dog_out_reading(p, 480);
-    CHECK_STR(p.a.view().dog.pill, "LUCY OUT 30 min, 48" DEGF);
-    CHECK_STR(p.b.view().dog.pill, "LUCY OUT 30 min, 48" DEGF);
+    dog_out_reading(p, 300);
+    CHECK_STR(p.a.view().dog.pill, "LUCY OUT 30 min, 30" DEGF);
+    CHECK_STR(p.b.view().dog.pill, "LUCY OUT 30 min, 30" DEGF);
     CHECK(dings(p.pa) == 1 && dings(p.pb) == 0);
     req_jump(p, 10 * 60);  // Lucy 40, Copper 30
-    dog_out_reading(p, 480);
-    CHECK_STR(p.a.view().dog.pill, "BOTH OUT 40 min, 48" DEGF);
+    dog_out_reading(p, 300);
+    CHECK_STR(p.a.view().dog.pill, "BOTH OUT 40 min, 30" DEGF);
     CHECK(dings(p.pa) == 2 && dings(p.pb) == 1);  // a repeat upstairs for Lucy, the first downstairs for Copper
     CHECK(p.a.tap_dog());  // Lucy in: Copper alone
     p.run(300);
-    dog_out_reading(p, 480);
-    CHECK_STR(p.a.view().dog.pill, "COPPER OUT 30 min, 48" DEGF);
+    dog_out_reading(p, 300);
+    CHECK_STR(p.a.view().dog.pill, "COPPER OUT 30 min, 30" DEGF);
     CHECK(p.a.view().dog.alert);
   }
   // Both cross together: each floor rings once, for its own dog.
@@ -4160,6 +4392,9 @@ static int notice_tries(const Pair &p, uint16_t seq) {
 }
 static void notice_start(Pair &p, uint8_t mask) {
   req_start(p);
+  // Local noon, so the phones' quiet hours (22:00 to 07:00, Mike 2026-11-15) don't hold back a ring
+  // or mail notice; req_start's clock reads midnight.
+  p.pa.offset = p.pb.offset = 12 * 3600;
   p.gw_acks = true;
   p.a.set_notice_kinds(mask);
 }
@@ -4186,20 +4421,24 @@ static void test_notice_wire() {
   m.u.notice.text[kNoticeTextMax] = 0;
   n = encode(m, buf, sizeof(buf));
   CHECK(n == 5 + 9 + 40 && decode(buf, n, d) && d.u.notice.text_len == 40);
-  // What it won't take: a kind outside 1 to 7, a floor over 1, text over 40, a length that disagrees.
+  // What it won't take: a kind outside 1 to 8, a floor over 1, text over 40, a length that disagrees.
   Msg bad = m;
   bad.u.notice.kind = 0;
   CHECK(encode(bad, buf, sizeof(buf)) == 0);
-  bad.u.notice.kind = 8;
+  bad.u.notice.kind = 9;
   CHECK(encode(bad, buf, sizeof(buf)) == 0);
+  bad.u.notice.kind = 8;  // Ring (Mike, 2026-11-15) is a kind now
+  CHECK(encode(bad, buf, sizeof(buf)) != 0);
   bad = m;
   bad.u.notice.floor = 2;
   CHECK(encode(bad, buf, sizeof(buf)) == 0);
   n = encode(m, buf, sizeof(buf));
   buf[5] = 0;
   CHECK(!decode(buf, n, d));
-  buf[5] = 8;
+  buf[5] = 9;
   CHECK(!decode(buf, n, d));
+  buf[5] = 8;
+  CHECK(decode(buf, n, d) && d.u.notice.kind == 8);
   buf[5] = 7;
   buf[6] = 2;
   CHECK(!decode(buf, n, d));
@@ -4213,19 +4452,27 @@ static void test_notice_wire() {
   buf[15] = 0xC3;
   CHECK(decode(buf, n, d) && d.u.notice.text[1] == '?');
   CHECK_STR(msg_name(MsgType::Notice), "NOTICE");
-  CHECK(kNoticeDefaultMask == 0x13 && notice_bit(NoticeKind::Knock) == 1 && notice_bit(NoticeKind::Note) == 64);
+  // Mike, 2026-11-15: mail and ring are on from the start (they push the phones); Mike, 2026-11-18:
+  // mild arrows and notes too. Only the status kind is off.
+  CHECK(kNoticeDefaultMask == 0xDF && kNoticeDefaultMask == (0x9B | 0x44) && Settings().notice_mask == 0xDF);
+  CHECK(!(kNoticeDefaultMask & notice_bit(NoticeKind::Status)));
+  CHECK(kNoticeMaskAddedV8 == (notice_bit(NoticeKind::ArrowMild) | notice_bit(NoticeKind::Note)));
+  CHECK( notice_bit(NoticeKind::Knock) == 1 && notice_bit(NoticeKind::Note) == 64);
+  CHECK(notice_bit(NoticeKind::Ring) == 0x80 && notice_bit(NoticeKind::Mail) == 0x08 && kNoticeKinds == 8);
+  CHECK(kNoticeMaskAddedV7 == (notice_bit(NoticeKind::Mail) | notice_bit(NoticeKind::Ring)));
 }
 
 static void test_notice_kinds() {
   const uint8_t all = 0x7F;
-  // Knock, upstairs rang downstairs: nobody answers in the ring time (60 s). Once, and not before.
+  // Knock, upstairs rang downstairs: nobody answers in the ring time (2 minutes since 2026-11-15).
+  // Once, and not before.
   {
     Pair p;
     notice_start(p, all);
     p.a.tap_bell();
-    p.run(30000);
+    p.run(110000);
     CHECK(p.gw.empty());
-    p.run(31000);
+    p.run(11000);
     const Msg *m = last_notice(p, NoticeKind::Knock);
     CHECK(notices_of(p, NoticeKind::Knock) == 1 && m && m->u.notice.floor == 0 && m->u.notice.value == 0);
     CHECK(m && m->u.notice.time > 1792627200u && m->u.notice.text_len == 0);
@@ -4233,7 +4480,7 @@ static void test_notice_kinds() {
     CHECK(notices_of(p, NoticeKind::Knock) == 1);
     CHECK(notice_tries(p, m->seq) == 1);  // the gateway ACKed the first try
   }
-  // Downstairs rang and the banner ran out unanswered (its minute): once, with the ring's time.
+  // Downstairs rang and the banner ran out unanswered (its 2 minutes): once, with the ring's time.
   {
     Pair p;
     notice_start(p, all);
@@ -4241,7 +4488,9 @@ static void test_notice_kinds() {
     p.run(2000);
     CHECK(p.gw.empty());
     uint32_t rang = p.pa.w.utc;
-    p.run(61000);
+    p.run(100000);
+    CHECK(p.gw.empty());
+    p.run(21000);
     const Msg *m = last_notice(p, NoticeKind::Knock);
     CHECK(notices_of(p, NoticeKind::Knock) == 1 && m && m->u.notice.floor == 1 && m->u.notice.value == 0);
     CHECK(m && m->u.notice.time + 3 >= rang && m->u.notice.time <= rang + 3);
@@ -4255,15 +4504,15 @@ static void test_notice_kinds() {
     p.a.tap_bell();
     p.run(1000);
     p.b.answer_banner(true);
-    p.run(70000);
+    p.run(130000);
     p.b.tap_bell();
     p.run(1000);
     p.a.answer_banner(false);
-    p.run(70000);
+    p.run(130000);
     p.b.tap_bell();
     p.run(1000);
     p.a.dismiss_banner();
-    p.run(70000);
+    p.run(130000);
     CHECK(p.gw.empty());
   }
   // A ring while upstairs is Away is kept for later: told at once, value 1.
@@ -4277,7 +4526,7 @@ static void test_notice_kinds() {
     p.run(2000);
     const Msg *m = last_notice(p, NoticeKind::Knock);
     CHECK(notices_of(p, NoticeKind::Knock) == 1 && m && m->u.notice.floor == 1 && m->u.notice.value == 1);
-    p.run(70000);
+    p.run(130000);
     CHECK(notices_of(p, NoticeKind::Knock) == 1);
   }
   // Arrows from the tenant: urgent cooling is kind 2 with -1, mild heat kind 3 with +1, the arrow's
@@ -4423,33 +4672,40 @@ static void test_notice_kinds() {
 }
 
 static void test_notice_mask_and_queue() {
-  // The default: knock, urgent arrow and dog out too long are on, the rest are off.
+  // The default: every kind but status is on (mail and ring since 2026-11-15, for the phones; mild
+  // arrow and note since 2026-11-18, for Mike's phone).
   {
     Pair p;
     req_start(p);
+    p.pa.offset = p.pb.offset = 12 * 3600;  // local noon: not quiet hours
     p.gw_acks = true;
     CHECK(p.a.notice_kinds() == kNoticeDefaultMask && p.b.notice_kinds() == kNoticeDefaultMask);
-    CHECK(p.a.tap_mail());
     CHECK(p.a.choose_status(Status::Busy));
     CHECK(p.a.set_note("hello", 600));
     CHECK(p.b.comfort_answer(Feel::TooCool, ask_for_feel(Feel::TooCool), AskSent::Send));
     p.run(2000);
-    CHECK(p.gw.empty());  // mail, status, note and a mild arrow are off to begin with
+    CHECK(notices_of(p, NoticeKind::Status) == 0);  // status is off to begin with
+    CHECK(notices_of(p, NoticeKind::Note) == 1 && notices_of(p, NoticeKind::ArrowMild) == 1 && (int)p.gw.size() == 2);
+    CHECK(p.a.tap_mail());
+    p.run(500);
+    CHECK(notices_of(p, NoticeKind::Mail) == 1 && (int)p.gw.size() == 3);
     CHECK(p.b.comfort_answer(Feel::MuchTooHot, ask_for_feel(Feel::MuchTooHot), AskSent::Send));
     p.run(500);
-    CHECK(notices_of(p, NoticeKind::ArrowUrgent) == 1 && (int)p.gw.size() == 1);
+    CHECK(notices_of(p, NoticeKind::ArrowUrgent) == 1 && (int)p.gw.size() == 4);
     p.a.tap_bell();
-    p.run(62000);
-    CHECK(notices_of(p, NoticeKind::Knock) == 1);
-    // Switching a kind on or off takes effect at once; bits past kind 7 are ignored.
+    p.run(122000);
+    CHECK(notices_of(p, NoticeKind::Ring) == 1 && notices_of(p, NoticeKind::Knock) == 1);
+    // Switching a kind on or off takes effect at once; every bit of the byte is a kind now.
     p.a.set_notice_kinds(0xFF);
-    CHECK(p.a.notice_kinds() == 0x7F);
+    CHECK(p.a.notice_kinds() == 0xFF);
     p.a.set_notice_kinds(0);
+    CHECK(p.a.tap_mail());  // taken back
     CHECK(p.a.tap_mail());
     CHECK(p.a.choose_status(Status::Open));
     p.a.tap_bell();
-    p.run(100000);
-    CHECK(notices_of(p, NoticeKind::Mail) == 0 && notices_of(p, NoticeKind::Knock) == 1);
+    p.run(130000);
+    CHECK(notices_of(p, NoticeKind::Mail) == 1 && notices_of(p, NoticeKind::Knock) == 1);
+    CHECK(notices_of(p, NoticeKind::Ring) == 1);
   }
   // Downstairs never sends one, whatever its mask says.
   {
@@ -4470,6 +4726,7 @@ static void test_notice_mask_and_queue() {
   {
     Pair p;
     req_start(p);
+    p.pa.offset = p.pb.offset = 12 * 3600;  // local noon: the mail notice isn't held for quiet hours
     p.a.set_notice_kinds(0x7F);
     p.pa.out.clear();
     CHECK(p.a.choose_status(Status::Busy));
@@ -4518,7 +4775,7 @@ static void test_notice_no_gateway() {
   req_start(p);
   p.a.set_notice_kinds(0x7F);
   p.a.tap_bell();
-  p.run(63000);
+  p.run(123000);
   CHECK(notices_of(p, NoticeKind::Knock) == 1);
   uint16_t seq = last_notice(p, NoticeKind::Knock)->seq;
   CHECK(notice_tries(p, seq) == RetryQueue::kTries);
@@ -4665,16 +4922,102 @@ static void test_presence_settings_migration() {
   // A blob of the wrong size or version is refused, never half read.
   Settings x;
   CHECK(!settings_from_old(5, blob, kSettingsV5Size - 4, x) && !settings_from_old(5, blob, kSettingsV4Size, x));
-  CHECK(!settings_from_old(4, blob, kSettingsV5Size, x) && !settings_from_old(6, blob, sizeof(Settings), x));
+  CHECK(!settings_from_old(4, blob, kSettingsV5Size, x) && !settings_from_old(6, blob, kSettingsV5Size, x));
   CHECK(!settings_from_old(0, blob, kSettingsV5Size, x) && !settings_from_old(99, blob, kSettingsV5Size, x));
+  CHECK(!settings_from_old(8, blob, sizeof(Settings), x));  // today's version is read as it is, not here
+}
+
+// Version 7 (Mike, 2026-11-15): the same layout as 6, and a saved mask gains mail and ring, once.
+static void test_settings_mask_migration() {
+  CHECK(kSettingsV6Size == sizeof(Settings));
+  Settings s;
+  s.volume = 64;
+  s.presence_fitted = true;
+  s.presence_hold_s = 120;
+  s.notice_mask = 0x13;  // version 6's starting mask
+  uint8_t blob[sizeof(Settings)];
+  std::memcpy(blob, &s, sizeof(blob));
+  Settings o;
+  CHECK(settings_from_old(6, blob, kSettingsV6Size, o));
+  CHECK(o.notice_mask == 0xDF && o.notice_mask == kNoticeDefaultMask);  // 0x13 gains 0x88 and 0x44
+  CHECK(o.volume == 64 && o.presence_fitted && o.presence_hold_s == 120);  // the rest as saved
+  // A mask Mike changed keeps his bits and gains the two.
+  s.notice_mask = 0x05;
+  std::memcpy(blob, &s, sizeof(blob));
+  CHECK(settings_from_old(6, blob, kSettingsV6Size, o) && o.notice_mask == (0x05 | 0x08 | 0x80 | 0x04 | 0x40));
+  // A version 6 blob gains 0xCC in all (0x88 and 0x44) from an empty mask.
+  s.notice_mask = 0;
+  std::memcpy(blob, &s, sizeof(blob));
+  CHECK(settings_from_old(6, blob, kSettingsV6Size, o) && o.notice_mask == 0xCC);
+  // Older versions start at the new default.
+  CHECK(settings_from_old(5, blob, kSettingsV5Size, o) && o.notice_mask == 0xDF);
+  // Version 6 must be its own size.
+  CHECK(!settings_from_old(6, blob, kSettingsV6Size - 4, o));
+}
+
+// Version 8 (Mike, 2026-11-18): the same layout again, and a version 7 mask gains the mild arrow and
+// note kinds, once.
+static void test_settings_mask_migration_v8() {
+  CHECK(kSettingsV7Size == sizeof(Settings) && settings_old_size(7) == sizeof(Settings));
+  Settings s;
+  s.volume = 41;
+  s.presence_fitted = true;
+  s.presence_hold_s = 90;
+  s.notice_mask = 0x9B;  // version 7's starting mask
+  uint8_t blob[sizeof(Settings)];
+  std::memcpy(blob, &s, sizeof(blob));
+  Settings o;
+  CHECK(settings_from_old(7, blob, kSettingsV7Size, o));
+  CHECK(o.notice_mask == 0xDF && o.volume == 41 && o.presence_fitted && o.presence_hold_s == 90);
+  // Once only: a migrated mask carried through again changes nothing more, and a mask Mike turned
+  // some of the new bits off in (saved as version 8, so never sent through here) is read as it is.
+  Settings again = o;
+  again.notice_mask = (uint8_t)(o.notice_mask & ~notice_bit(NoticeKind::ArrowMild));
+  CHECK(again.notice_mask == 0xDB);
+  CHECK(!settings_from_old(8, (const uint8_t *)&again, sizeof(Settings), o));  // not an old version: kept as saved
+  CHECK(again.notice_mask == 0xDB);
+  // A mask Mike had narrowed in version 7 keeps its bits and gains the two.
+  s.notice_mask = 0x11;
+  std::memcpy(blob, &s, sizeof(blob));
+  CHECK(settings_from_old(7, blob, kSettingsV7Size, o) && o.notice_mask == (0x11 | 0x44));
+  CHECK(!settings_from_old(7, blob, kSettingsV7Size - 4, o));
+  // A version 7 blob with the status bit on keeps it.
+  s.notice_mask = 0x9B | 0x20;
+  std::memcpy(blob, &s, sizeof(blob));
+  CHECK(settings_from_old(7, blob, kSettingsV7Size, o) && o.notice_mask == 0xFF);
+}
+
+// Mike, 2026-11-18: with the default settings, the tenant's mild arrow and a downstairs note reach
+// the gateway from the upstairs panel, and a cleared note says nothing.
+static void test_notice_defaults_mild_and_note() {
+  Pair p;
+  req_start(p);
+  p.pa.offset = p.pb.offset = 12 * 3600;
+  p.gw_acks = true;
+  CHECK(p.a.notice_kinds() == 0xDF);
+  CHECK(p.b.comfort_answer(Feel::TooWarm, ask_for_feel(Feel::TooWarm), AskSent::Send));
+  p.run(500);
+  const Msg *m = last_notice(p, NoticeKind::ArrowMild);
+  CHECK(notices_of(p, NoticeKind::ArrowMild) == 1 && m && m->u.notice.floor == 1 && m->u.notice.value == -1);
+  CHECK(p.b.comfort_answer(Feel::TooCool, ask_for_feel(Feel::TooCool), AskSent::Send));
+  p.run(500);
+  m = last_notice(p, NoticeKind::ArrowMild);
+  CHECK(notices_of(p, NoticeKind::ArrowMild) == 2 && m && m->u.notice.floor == 1 && m->u.notice.value == 1);
+  CHECK(p.b.set_note("Back at 3", 3600));
+  p.run(500);
+  m = last_notice(p, NoticeKind::Note);
+  CHECK(notices_of(p, NoticeKind::Note) == 1 && m && m->u.notice.floor == 1 && std::string(m->u.notice.text) == "Back at 3");
+  CHECK(p.b.clear_note());  // taken away
+  p.run(500);
+  CHECK(notices_of(p, NoticeKind::Note) == 1);
 }
 
 static void test_presence_notice_mask_saved() {
   Pair p;
   req_start(p);
   const int before = p.pa.settings_saves;
-  p.a.set_notice_kinds(0xFF);  // only the seven kinds
-  CHECK(p.a.notice_kinds() == 0x7F && p.pa.saved_settings.notice_mask == 0x7F && p.pa.settings_saves == before + 1);
+  p.a.set_notice_kinds(0xFF);  // all eight kinds (Ring is bit 0x80 since 2026-11-15)
+  CHECK(p.a.notice_kinds() == 0xFF && p.pa.saved_settings.notice_mask == 0xFF && p.pa.settings_saves == before + 1);
   p.a.set_notice_kinds(0x05);
   CHECK(p.pa.saved_settings.notice_mask == 0x05);
   // A restart with what was saved: the mask comes back, and the rest of the settings with it.
@@ -4683,11 +5026,11 @@ static void test_presence_notice_mask_saved() {
   Controller c(pf);
   c.begin(p.pa.saved_settings, OwnState(), DogState());
   CHECK(c.notice_kinds() == 0x05 && c.settings().floor == Floor::Upstairs);
-  // The Settings screen's copy (apply_settings) keeps it too, and drops bits that aren't kinds.
+  // The Settings screen's copy (apply_settings) keeps it too; with eight kinds every bit is one.
   Settings s = c.settings();
   s.notice_mask = 0xFF;
   c.apply_settings(s);
-  CHECK(c.notice_kinds() == 0x7F);
+  CHECK(c.notice_kinds() == 0xFF);
 }
 
 static void test_presence_wire() {
@@ -5202,6 +5545,987 @@ static void test_spare_loan() {
   }
 }
 
+// ---------------------------------------------------------------------------------------------
+// The phones (Mike, 2026-11-15): a RING notice when a floor is rung (Open or Busy, not quiet hours),
+// ANSWERED when a panel answered first, PHONE_ANSWER from the gateway (relayed to downstairs), the
+// REPLY's phone bit, MAIL_ACK, and the 2-minute ring.
+
+static uint16_t g_knock_seen = 0;
+static void watch_knocks(Pair &p) {
+  g_knock_seen = 0;
+  p.drop = [](bool, const Msg &m) {
+    if (m.type == MsgType::Knock) g_knock_seen = m.u.knock.id;
+    return false;
+  };
+}
+// The gateway (or another sender) radios a PHONE_ANSWER to a panel.
+static void gw_phone(Controller &c, uint8_t floor, uint16_t id, bool come_on, uint8_t sender = kSenderGateway) {
+  Msg m;
+  m.type = MsgType::PhoneAnswer;
+  m.sender = sender;
+  m.seq = g_gw_seq++;
+  m.u.phone.floor = floor;
+  m.u.phone.id = id;
+  m.u.phone.come_on = come_on ? 1 : 0;
+  uint8_t buf[kMaxMsg];
+  c.on_radio(buf, encode(m, buf, sizeof(buf)));
+}
+static void gw_mail_ack(Controller &c) {
+  Msg m;
+  m.type = MsgType::MailAck;
+  m.sender = kSenderGateway;
+  m.seq = g_gw_seq++;
+  uint8_t buf[kMaxMsg];
+  c.on_radio(buf, encode(m, buf, sizeof(buf)));
+}
+static int rings_with(const Pair &p, const char *text) {
+  std::vector<uint16_t> seen;
+  for (const Msg &m : p.gw) {
+    if (m.u.notice.kind != (uint8_t)NoticeKind::Ring || std::string(m.u.notice.text) != text) continue;
+    bool dup = false;
+    for (uint16_t q : seen) dup |= q == m.seq;
+    if (!dup) seen.push_back(m.seq);
+  }
+  return (int)seen.size();
+}
+static bool acked_to_gateway(const FakePlatform &f, MsgType t) {
+  for (const Sent &s : f.out) {
+    Msg m;
+    if (s.to == kSenderGateway && decode(s.bytes.data(), s.bytes.size(), m) && m.type == MsgType::Ack &&
+        m.u.ack.type == (uint8_t)t)
+      return true;
+  }
+  return false;
+}
+
+// ROOMS (Mike, 2026-11-22): flags u8 | up_t i16 | up_h u16 | down_t i16 | down_h u16 | time u32, 18 bytes in all.
+static void test_rooms_wire() {
+  uint8_t buf[kMaxMsg];
+  Msg m, d;
+  m.type = MsgType::Rooms;
+  m.sender = kSenderUpstairs;
+  m.seq = 0x0102;
+  m.u.rooms = {(uint8_t)(kRoomsUpValid | kRoomsDownValid | kRoomsOccKnown | kRoomsOccupied), 692, 570, -15, 455, 1795358600u};
+  size_t n = encode(m, buf, sizeof(buf));
+  const uint8_t want[] = {1, 32, 0, 0x02, 0x01, 0x0F, 0xB4, 0x02, 0x3A, 0x02, 0xF1, 0xFF, 0xC7, 0x01, 0x88, 0xFF, 0x02, 0x6B};
+  CHECK(n == sizeof(want) && std::memcmp(buf, want, n) == 0);
+  CHECK(decode(buf, n, d) && d.type == MsgType::Rooms && d.sender == kSenderUpstairs && d.seq == 0x0102);
+  CHECK(d.u.rooms.flags == 0x0F && d.u.rooms.up_t == 692 && d.u.rooms.up_h == 570 && d.u.rooms.down_t == -15);
+  CHECK(d.u.rooms.down_h == 455 && d.u.rooms.time == 1795358600u);
+  CHECK_STR(msg_name(MsgType::Rooms), "ROOMS");
+  CHECK(!decode(buf, n - 1, d));  // short
+  uint8_t longer[kMaxMsg];
+  std::memcpy(longer, buf, n);
+  longer[n] = 0;
+  CHECK(!decode(longer, n + 1, d));  // long
+  buf[5] = 0x10;  // an unknown bit
+  CHECK(!decode(buf, n, d));
+  buf[5] = kRoomsOccupied;  // occupied without known
+  CHECK(!decode(buf, n, d));
+  buf[5] = 0;  // nothing valid is still a ROOMS
+  CHECK(decode(buf, n, d) && d.u.rooms.flags == 0);
+  buf[8] = 0x03; buf[9] = 0xE9;  // upstairs humidity 5965.1 %: refused
+  CHECK(!decode(buf, n, d));
+  buf[8] = 0xE9; buf[9] = 0x03;  // 1001 tenths: refused
+  CHECK(!decode(buf, n, d));
+  buf[8] = 0xE8;  // 1000: taken
+  CHECK(decode(buf, n, d) && d.u.rooms.up_h == 1000);
+  // encode refuses what decode would.
+  Msg bad = m;
+  bad.u.rooms.flags = kRoomsOccupied;
+  CHECK(encode(bad, buf, sizeof(buf)) == 0);
+  bad = m;
+  bad.u.rooms.down_h = 1001;
+  CHECK(encode(bad, buf, sizeof(buf)) == 0);
+
+  // The retry queue: a ROOMS goes after panel traffic and after a NOTICE, is latest-wins, and is never
+  // counted as pending for the other panel.
+  RetryQueue q;
+  Msg st;
+  st.type = MsgType::State;
+  Msg no;
+  no.type = MsgType::Notice;
+  no.u.notice.kind = (uint8_t)NoticeKind::Knock;
+  uint16_t r1 = q.push(m, kSenderUpstairs, 0);
+  uint16_t r2 = q.push(m, kSenderUpstairs, 0);
+  CHECK(r1 && r2 && r1 != r2 && q.pending(MsgType::Rooms) == 1);  // the second replaced the first
+  q.push(no, kSenderUpstairs, 0);
+  q.push(st, kSenderUpstairs, 0);
+  CHECK(q.pending() == 1);
+  const RetryQueue::Frame *f = q.due(0);
+  CHECK(f && f->type == MsgType::State);
+  q.sent(f->seq, 0);
+  f = q.due(0);
+  CHECK(f && f->type == MsgType::Notice);
+  q.sent(f->seq, 0);
+  f = q.due(0);
+  CHECK(f && f->type == MsgType::Rooms && f->seq == r2);
+  CHECK(for_gateway(MsgType::Rooms) && for_gateway(MsgType::Notice) && !for_gateway(MsgType::Reading));
+}
+
+// ROOMS from the upstairs panel (Mike, 2026-11-22): when it goes, what it carries, retries and ACKs.
+static void test_rooms() {
+  const uint8_t both = kRoomsUpValid | kRoomsDownValid;
+  {  // first one 20 s after start-up; the tiles' values (offset applied); thresholds; the 10 s floor; heartbeat
+    Pair p;
+    p.sa.temp_offset_tenths_f = 20;
+    p.gw_acks = true;
+    p.begin();
+    p.a.on_local_reading(true, 690, 570);
+    p.b.on_local_reading(true, 681, 455);
+    p.run(18000);
+    CHECK(p.rooms.empty());
+    p.run(3000);
+    CHECK(p.rooms.size() == 1);
+    if (p.rooms.empty()) return;
+    const Msg &m = p.rooms[0];
+    CHECK(m.sender == kSenderUpstairs && m.u.rooms.flags == both);
+    CHECK(m.u.rooms.up_t == 710 && m.u.rooms.up_h == 570 && m.u.rooms.down_t == 681 && m.u.rooms.down_h == 455);
+    CHECK(m.u.rooms.time + 3 >= p.pa.w.utc && m.u.rooms.time <= p.pa.w.utc);
+    CHECK(p.a.rooms_info().any && p.a.rooms_info().acked && !p.a.rooms_info().failed);
+    p.run(12000);  // nothing changed
+    CHECK(p.rooms.size() == 1);
+    p.a.on_local_reading(true, 694, 589);  // 0.4 F and 1.9 points: not enough
+    p.run(1000);
+    CHECK(p.rooms.size() == 1);
+    p.a.on_local_reading(true, 695, 589);  // 0.5 F
+    p.run(100);
+    CHECK(p.rooms.size() == 2 && p.rooms.back().u.rooms.up_t == 715);
+    p.run(10000);
+    p.a.on_local_reading(true, 695, 609);  // 2.0 points
+    p.run(100);
+    CHECK(p.rooms.size() == 3 && p.rooms.back().u.rooms.up_h == 609);
+    p.a.on_local_reading(true, 720, 609);  // 2.5 F straight after: waits for the 10 s floor
+    p.run(9000);
+    CHECK(p.rooms.size() == 3);
+    p.run(1200);
+    CHECK(p.rooms.size() == 4 && p.rooms.back().u.rooms.up_t == 740);
+    p.run(10000);
+    p.b.on_local_reading(true, 691, 455);  // downstairs 1 F up: its READING, then a ROOMS
+    p.run(200);
+    const uint32_t down_at = p.pa.mono;
+    CHECK(p.rooms.size() == 5 && p.rooms.back().u.rooms.down_t == 691);
+    p.run(298000);  // the heartbeat, five minutes after the last
+    CHECK(p.rooms.size() == 5);
+    p.run(3000);
+    CHECK(p.rooms.size() == 6 && p.rooms.back().u.rooms.flags == both);
+    // A steady downstairs room sends no READING for a long time (no heartbeats): it still counts while
+    // the link is up, so the Home tile doesn't flap (2026-11-22).
+    p.run(down_at + 1800000 - p.pa.mono);
+    CHECK(p.rooms.back().u.rooms.flags == both && p.rooms.back().u.rooms.down_t == 691);
+    // Downstairs's own sensor drops out: its READING says so, and that goes out (a validity change).
+    size_t k = p.rooms.size();
+    p.b.on_local_reading(false, 0, 0);
+    p.run(11000);
+    CHECK(p.rooms.size() > k && p.rooms.back().u.rooms.flags == kRoomsUpValid);
+    p.b.on_local_reading(true, 705, 455);  // back: valid again, after the 10 s floor
+    p.run(11000);
+    CHECK(p.rooms.back().u.rooms.flags == both && p.rooms.back().u.rooms.down_t == 705);
+    p.a.on_local_reading(false, 0, 0);  // the upstairs sensor drops out
+    p.run(11000);
+    CHECK(p.rooms.back().u.rooms.flags == kRoomsDownValid);
+    CHECK(p.rooms_from_b == 0);  // downstairs never sends one
+  }
+  {  // occupancy: only with the sensor fitted upstairs; a change goes at once, inside the 10 s floor
+    Pair p;
+    p.sa.presence_fitted = true;
+    p.gw_acks = true;
+    p.begin();
+    p.a.on_local_reading(true, 690, 500);
+    p.run(21000);
+    CHECK(p.rooms.size() == 1 && p.rooms.back().u.rooms.flags == (kRoomsUpValid | kRoomsOccKnown));
+    p.pa.pres = true;
+    p.run(100);
+    CHECK(p.rooms.size() == 2 && p.rooms.back().u.rooms.flags == (kRoomsUpValid | kRoomsOccKnown | kRoomsOccupied));
+    p.pa.pres = false;
+    p.run(58000);  // held for presence_hold_s (60 s)
+    CHECK(p.rooms.size() == 2);
+    p.run(3000);
+    CHECK(p.rooms.size() == 3 && p.rooms.back().u.rooms.flags == (kRoomsUpValid | kRoomsOccKnown));
+    CHECK(p.rooms_from_b == 0);
+  }
+  {  // a sensor fitted on the downstairs panel says nothing about upstairs
+    Pair p;
+    p.sb.presence_fitted = true;
+    p.gw_acks = true;
+    p.begin();
+    p.pb.pres = true;
+    p.run(22000);
+    CHECK(p.rooms.size() == 1 && p.rooms.back().u.rooms.flags == 0);
+    CHECK(p.rooms_from_b == 0);
+  }
+  {  // no gateway: five tries, never No signal, again a minute later; once ACKed, every five minutes
+    Pair p;
+    p.begin();
+    p.a.on_local_reading(true, 690, 500);
+    p.run(22000);
+    CHECK(p.rooms.size() == (size_t)RetryQueue::kTries);
+    bool same = true;
+    for (const Msg &m : p.rooms) same = same && m.seq == p.rooms[0].seq;
+    CHECK(same);
+    CHECK(!p.a.rooms_info().acked && p.a.rooms_info().failed && !p.a.peer_no_signal());
+    p.run(57000);
+    CHECK(p.rooms.size() == (size_t)RetryQueue::kTries);
+    p.gw_acks = true;
+    p.run(4000);
+    CHECK(p.rooms.size() == (size_t)RetryQueue::kTries + 1 && p.rooms.back().seq != p.rooms[0].seq);
+    CHECK(p.a.rooms_info().acked && !p.a.rooms_info().failed);
+    p.run(290000);
+    CHECK(p.rooms.size() == (size_t)RetryQueue::kTries + 1);
+    p.run(12000);
+    CHECK(p.rooms.size() == (size_t)RetryQueue::kTries + 2);
+  }
+}
+
+static void test_phone_wire() {
+  uint8_t buf[kMaxMsg];
+  Msg m, d;
+  // PHONE_ANSWER: floor u8 | knock_id u16 | come_on u8, 9 bytes in all.
+  m.type = MsgType::PhoneAnswer;
+  m.sender = kSenderGateway;
+  m.seq = 0x1234;
+  m.u.phone.floor = 1;
+  m.u.phone.id = 0xBEEF;
+  m.u.phone.come_on = 1;
+  size_t n = encode(m, buf, sizeof(buf));
+  const uint8_t want_pa[] = {1, 18, 2, 0x34, 0x12, 1, 0xEF, 0xBE, 1};
+  CHECK(n == sizeof(want_pa) && std::memcmp(buf, want_pa, n) == 0);
+  CHECK(decode(buf, n, d) && d.type == MsgType::PhoneAnswer && d.sender == kSenderGateway && d.seq == 0x1234);
+  CHECK(d.u.phone.floor == 1 && d.u.phone.id == 0xBEEF && d.u.phone.come_on == 1);
+  buf[8] = 0;
+  CHECK(decode(buf, n, d) && d.u.phone.come_on == 0);
+  buf[5] = 2;  // floor 2
+  CHECK(!decode(buf, n, d));
+  buf[5] = 0;
+  buf[8] = 2;  // come_on 2
+  CHECK(!decode(buf, n, d));
+  buf[8] = 1;
+  buf[6] = buf[7] = 0;  // knock id 0
+  CHECK(!decode(buf, n, d));
+  buf[6] = 1;
+  CHECK(decode(buf, n, d) && d.u.phone.floor == 0 && d.u.phone.id == 1);
+  CHECK(!decode(buf, n - 1, d));  // truncated
+  Msg bad = m;
+  bad.u.phone.floor = 2;
+  CHECK(encode(bad, buf, sizeof(buf)) == 0);
+  bad = m;
+  bad.u.phone.id = 0;
+  CHECK(encode(bad, buf, sizeof(buf)) == 0);
+  CHECK_STR(msg_name(MsgType::PhoneAnswer), "PHONE_ANSWER");
+  // MAIL_ACK: one reserved byte, 6 in all; any value of it is accepted.
+  Msg k;
+  k.type = MsgType::MailAck;
+  k.sender = kSenderGateway;
+  k.seq = 0x0102;
+  n = encode(k, buf, sizeof(buf));
+  const uint8_t want_ma[] = {1, 19, 2, 0x02, 0x01, 0};
+  CHECK(n == sizeof(want_ma) && std::memcmp(buf, want_ma, n) == 0);
+  CHECK(decode(buf, n, d) && d.type == MsgType::MailAck && d.seq == 0x0102);
+  buf[5] = 7;
+  CHECK(decode(buf, n, d) && d.type == MsgType::MailAck);
+  CHECK(!decode(buf, n - 1, d));
+  CHECK_STR(msg_name(MsgType::MailAck), "MAIL_ACK");
+  // REPLY's answer byte: bit 0 Come on, bit 1 from a phone; other bits refused.
+  Msg r;
+  r.type = MsgType::Reply;
+  r.sender = kSenderDownstairs;
+  r.seq = 5;
+  r.u.reply.id = 0x0203;
+  r.u.reply.come_on = 1;
+  r.u.reply.phone = 1;
+  n = encode(r, buf, sizeof(buf));
+  const uint8_t want_r[] = {1, 3, 1, 5, 0, 0x03, 0x02, 3};
+  CHECK(n == sizeof(want_r) && std::memcmp(buf, want_r, n) == 0);
+  CHECK(decode(buf, n, d) && d.u.reply.come_on == 1 && d.u.reply.phone == 1 && d.u.reply.id == 0x0203);
+  r.u.reply.come_on = 0;
+  n = encode(r, buf, sizeof(buf));
+  CHECK(buf[7] == 2 && decode(buf, n, d) && d.u.reply.come_on == 0 && d.u.reply.phone == 1);
+  r.u.reply.phone = 0;
+  r.u.reply.come_on = 1;
+  n = encode(r, buf, sizeof(buf));
+  CHECK(buf[7] == 1 && decode(buf, n, d) && d.u.reply.come_on == 1 && d.u.reply.phone == 0);  // as before
+  // Bit 2 alone: the banner was dismissed (2026-11-15). Not with an answer bit.
+  r.u.reply.come_on = 0;
+  r.u.reply.dismissed = 1;
+  n = encode(r, buf, sizeof(buf));
+  CHECK(n == sizeof(want_r) && buf[7] == 4);
+  CHECK(decode(buf, n, d) && d.u.reply.dismissed == 1 && d.u.reply.come_on == 0 && d.u.reply.phone == 0);
+  r.u.reply.come_on = 1;
+  CHECK(encode(r, buf, sizeof(buf)) == 0);
+  for (uint8_t a : {5, 6, 7, 8, 0x80}) {
+    buf[7] = a;
+    CHECK(!decode(buf, n, d));
+  }
+  buf[7] = 1;
+  CHECK(decode(buf, n, d) && d.u.reply.dismissed == 0);
+  // The 2-minute ring (Mike, 2026-11-15).
+  CHECK(BellReceiver::kBannerMs == 120000 && BellSender::kNoAnswerMs == 120000);
+}
+
+static void test_phone_ring_notice() {
+  const uint8_t ring = notice_bit(NoticeKind::Ring);
+  // Downstairs rings upstairs: RING for upstairs's phones while upstairs is Open or Busy.
+  for (Status st : {Status::Open, Status::Busy, Status::Private, Status::Sleeping, Status::Away}) {
+    Pair p;
+    notice_start(p, ring);
+    if (st != Status::Open) CHECK(p.a.choose_status(st));
+    p.run(300);
+    p.gw.clear();
+    watch_knocks(p);
+    uint32_t rang = p.pa.w.utc;
+    p.b.tap_bell();
+    p.run(500);
+    bool want = st == Status::Open || st == Status::Busy;
+    CHECK(g_knock_seen != 0);
+    CHECK(rings_with(p, "RING") == (want ? 1 : 0));
+    const Msg *m = last_notice(p, NoticeKind::Ring);
+    if (want) {
+      CHECK(m && m->u.notice.floor == 0 && (uint16_t)m->u.notice.value == g_knock_seen);
+      CHECK(m && m->u.notice.time + 1 >= rang && m->u.notice.time <= rang + 1);
+    }
+    p.run(2000);  // the knock's retries and repeats don't push again
+    CHECK(rings_with(p, "RING") == (want ? 1 : 0));
+  }
+  // Upstairs rings downstairs: by downstairs's status, as upstairs last heard it.
+  for (Status st : {Status::Open, Status::Busy, Status::Private, Status::Sleeping, Status::Away}) {
+    Pair p;
+    notice_start(p, ring);
+    if (st != Status::Open) CHECK(p.b.choose_status(st));
+    p.run(300);
+    p.gw.clear();
+    watch_knocks(p);
+    p.a.tap_bell();
+    p.run(500);
+    bool want = st == Status::Open || st == Status::Busy;
+    CHECK(rings_with(p, "RING") == (want ? 1 : 0));
+    const Msg *m = last_notice(p, NoticeKind::Ring);
+    if (want) CHECK(m && m->u.notice.floor == 1 && (uint16_t)m->u.notice.value == g_knock_seen && m->u.notice.time != 0);
+  }
+  // Quiet hours (22:00 to 07:00 by upstairs's clock): no RING either way; the panels still ring.
+  {
+    Pair p;
+    notice_start(p, ring);
+    p.pa.offset = p.pb.offset = 0;  // midnight
+    p.b.tap_bell();
+    p.run(500);
+    CHECK(p.a.view().banner.kind == BannerKind::Knock);
+    p.a.answer_banner(true);
+    p.run(BellSender::kRepeatIgnoreMs + 500);
+    p.a.tap_bell();
+    p.run(500);
+    CHECK(p.b.view().banner.kind == BannerKind::Knock);
+    CHECK(notices_of(p, NoticeKind::Ring) == 0);
+    p.pa.offset = p.pb.offset = 6 * 3600 + 59 * 60;  // 06:59: still quiet
+    p.b.answer_banner(true);
+    p.run(BellSender::kRepeatIgnoreMs + 500);
+    p.b.tap_bell();
+    p.run(500);
+    CHECK(notices_of(p, NoticeKind::Ring) == 0);
+    p.a.dismiss_banner();
+    p.pa.offset = p.pb.offset = 7 * 3600;  // 07:00: over
+    p.run(BellSender::kRepeatIgnoreMs + 500);
+    p.b.tap_bell();
+    p.run(500);
+    CHECK(rings_with(p, "RING") == 1);
+  }
+  // Without a clock upstairs can't tell quiet hours: no RING (it could be 3 AM), either way. The
+  // panels still ring.
+  {
+    Pair p;
+    notice_start(p, ring);
+    p.pa.w.valid = false;
+    p.b.tap_bell();
+    p.run(500);
+    CHECK(p.a.view().banner.kind == BannerKind::Knock);
+    p.a.answer_banner(true);
+    p.run(BellSender::kRepeatIgnoreMs + 500);
+    p.a.tap_bell();
+    p.run(500);
+    CHECK(p.b.view().banner.kind == BannerKind::Knock);
+    CHECK(notices_of(p, NoticeKind::Ring) == 0);
+  }
+  // The ring kind switched off: nothing.
+  {
+    Pair p;
+    notice_start(p, 0x7F);
+    p.b.tap_bell();
+    p.run(500);
+    CHECK(notices_of(p, NoticeKind::Ring) == 0);
+  }
+}
+
+static void test_phone_answered_notice() {
+  const uint8_t ring = notice_bit(NoticeKind::Ring);
+  // A ring to upstairs answered at the upstairs panel: ANSWERED, same floor, id and time as the RING.
+  {
+    Pair p;
+    notice_start(p, ring);
+    p.b.tap_bell();
+    p.run(3000);
+    p.a.answer_banner(false);
+    p.run(500);
+    CHECK(rings_with(p, "RING") == 1 && rings_with(p, "ANSWERED") == 1);
+    const Msg &r = p.gw.front();
+    const Msg *m = last_notice(p, NoticeKind::Ring);
+    CHECK(m && std::string(m->u.notice.text) == "ANSWERED" && m->u.notice.floor == 0);
+    CHECK(m && m->u.notice.value == r.u.notice.value && m->u.notice.time == r.u.notice.time);
+    CHECK(p.b.view().bell.out == BellOut::NotNow);
+    CHECK_STR(p.b.view().bell.line, "Not now");  // a panel's answer: no "(from phone)"
+  }
+  // Dismissed at the panel: ANSWERED too (the phones stop asking).
+  {
+    Pair p;
+    notice_start(p, ring);
+    p.b.tap_bell();
+    p.run(3000);
+    p.a.dismiss_banner();
+    p.run(500);
+    CHECK(rings_with(p, "RING") == 1 && rings_with(p, "ANSWERED") == 1);
+  }
+  // A ring to downstairs dismissed at the downstairs panel: downstairs says so (REPLY, dismissed bit),
+  // upstairs tells the phones, shows nothing for it, and passes no later phone answer on.
+  {
+    Pair p;
+    notice_start(p, ring);
+    watch_knocks(p);
+    p.a.tap_bell();
+    p.run(3000);
+    uint16_t id = g_knock_seen;
+    CHECK(p.b.view().banner.kind == BannerKind::Knock);
+    int relayed = 0;
+    p.drop = [&relayed](bool from_a, const Msg &m) {
+      if (from_a && m.type == MsgType::PhoneAnswer) relayed++;
+      if (m.type == MsgType::Knock) g_knock_seen = m.u.knock.id;
+      return false;
+    };
+    p.b.dismiss_banner();
+    p.run(500);
+    CHECK(p.b.view().banner.kind == BannerKind::None);
+    CHECK(rings_with(p, "RING") == 1 && rings_with(p, "ANSWERED") == 1);
+    const Msg *m = last_notice(p, NoticeKind::Ring);
+    CHECK(m && m->u.notice.floor == 1 && (uint16_t)m->u.notice.value == id);
+    CHECK(p.a.view().bell.out == BellOut::Delivered);  // the dismiss stays silent to the ringer
+    gw_phone(p.a, 1, id, true);
+    p.run(300);
+    CHECK(relayed == 0 && p.a.view().bell.out == BellOut::Delivered);
+    p.run(BellSender::kNoAnswerMs);
+    CHECK(p.a.view().bell.out == BellOut::NoAnswer);  // as before: "No answer yet" in time
+    CHECK(rings_with(p, "ANSWERED") == 1);
+    // The next ring is relayed again.
+    p.run(BellSender::kRepeatIgnoreMs);
+    p.a.tap_bell();
+    p.run(3000);
+    gw_phone(p.a, 1, g_knock_seen, true);
+    p.run(300);
+    CHECK(relayed == 1 && p.a.view().bell.out == BellOut::ComeOn);
+  }
+  // A ring to downstairs answered at the downstairs panel: upstairs sees the REPLY and tells the phones.
+  {
+    Pair p;
+    notice_start(p, ring);
+    p.a.tap_bell();
+    p.run(3000);
+    p.b.answer_banner(true);
+    p.run(500);
+    const Msg *m = last_notice(p, NoticeKind::Ring);
+    CHECK(rings_with(p, "RING") == 1 && rings_with(p, "ANSWERED") == 1);
+    CHECK(m && m->u.notice.floor == 1 && std::string(m->u.notice.text) == "ANSWERED");
+    CHECK_STR(p.a.view().bell.line, "Come on");
+  }
+  // Answered from a phone: no ANSWERED (both directions).
+  {
+    Pair p;
+    notice_start(p, ring);
+    watch_knocks(p);
+    p.b.tap_bell();
+    p.run(3000);
+    gw_phone(p.a, 0, g_knock_seen, true);
+    p.run(500);
+    p.run(BellSender::kRepeatIgnoreMs);
+    p.a.tap_bell();
+    p.run(3000);
+    gw_phone(p.a, 1, g_knock_seen, true);
+    p.run(500);
+    CHECK(rings_with(p, "RING") == 2 && rings_with(p, "ANSWERED") == 0);
+    CHECK(p.a.view().bell.out == BellOut::ComeOn && p.b.view().bell.out == BellOut::ComeOn);
+  }
+  // A ring that never pushed the phones (Private) gets no ANSWERED.
+  {
+    Pair p;
+    notice_start(p, ring);
+    CHECK(p.a.choose_status(Status::Private));
+    p.run(300);
+    p.b.tap_bell();
+    p.run(3000);
+    p.a.answer_banner(true);
+    p.run(500);
+    CHECK(notices_of(p, NoticeKind::Ring) == 0);
+  }
+  // The banner ran out: no ANSWERED, and nothing to answer afterwards.
+  {
+    Pair p;
+    notice_start(p, ring);
+    p.b.tap_bell();
+    p.run(121000);
+    CHECK(p.a.view().banner.kind == BannerKind::None);
+    p.a.answer_banner(true);
+    p.a.dismiss_banner();
+    p.run(500);
+    CHECK(rings_with(p, "RING") == 1 && rings_with(p, "ANSWERED") == 0);
+  }
+  // Answered downstairs just inside its 2 minutes, but the REPLY only gets through after them: upstairs
+  // still shows the answer, and the phones (which have given up) get no ANSWERED.
+  {
+    Pair p;
+    notice_start(p, ring);
+    p.a.tap_bell();
+    p.run(119500);
+    p.cut_ba = true;
+    p.b.answer_banner(true);
+    p.run(600);
+    p.cut_ba = false;
+    p.run(1500);
+    CHECK(p.a.view().bell.out == BellOut::ComeOn);
+    CHECK(rings_with(p, "RING") == 1 && rings_with(p, "ANSWERED") == 0);
+  }
+}
+
+static void test_phone_answer() {
+  const uint8_t ring = notice_bit(NoticeKind::Ring);
+  // A ring to upstairs answered from Mike's phone: upstairs's banner goes as if tapped, and the
+  // tenant's panel shows the answer "(from phone)".
+  {
+    Pair p;
+    notice_start(p, ring);
+    watch_knocks(p);
+    p.b.tap_bell();
+    p.run(3000);
+    CHECK(p.a.view().banner.kind == BannerKind::Knock && p.a.view().bell.alert);
+    uint16_t id = g_knock_seen;
+    gw_phone(p.a, 0, (uint16_t)(id + 1), true);  // another ring's id: ignored
+    p.run(300);
+    CHECK(p.a.view().banner.kind == BannerKind::Knock && p.b.view().bell.out == BellOut::Delivered);
+    p.pa.out.clear();
+    gw_phone(p.a, 0, id, true);
+    CHECK(acked_to_gateway(p.pa, MsgType::PhoneAnswer));  // ACKed like any frame
+    p.run(300);
+    CHECK(p.a.view().banner.kind == BannerKind::None && !p.a.view().bell.alert);
+    CHECK(p.b.view().bell.out == BellOut::ComeOn);
+    CHECK_STR(p.b.view().bell.line, "Come on (from phone)");
+    CHECK(!p.pb.played.empty() && p.pb.played.back().first == Sound::ReplyYes);
+    // A second phone tapping later: nothing happens (the Pi says "Already answered").
+    gw_phone(p.a, 0, id, false);
+    p.run(300);
+    CHECK(p.b.view().bell.out == BellOut::ComeOn);
+    // No "nobody answered" Knock notice later: it was answered.
+    p.a.set_notice_kinds(0xFF);
+    p.run(130000);
+    CHECK(notices_of(p, NoticeKind::Knock) == 0);
+    CHECK_STR(p.b.view().bell.line, "");  // the answer has gone from the tile
+  }
+  // Not now from the phone.
+  {
+    Pair p;
+    notice_start(p, ring);
+    watch_knocks(p);
+    p.b.tap_bell();
+    p.run(3000);
+    gw_phone(p.a, 0, g_knock_seen, false);
+    p.run(300);
+    CHECK(p.b.view().bell.out == BellOut::NotNow);
+    CHECK_STR(p.b.view().bell.line, "Not now (from phone)");
+  }
+  // A ring to downstairs answered from a tenant's phone: upstairs passes it on, downstairs answers its
+  // banner, and upstairs shows "(from phone)".
+  {
+    Pair p;
+    notice_start(p, ring);
+    watch_knocks(p);
+    p.a.tap_bell();
+    p.run(3000);
+    uint16_t id = g_knock_seen;
+    CHECK(p.b.view().banner.kind == BannerKind::Knock);
+    int relayed = 0, replies = 0;
+    p.drop = [&relayed, &replies, id](bool from_a, const Msg &m) {
+      if (from_a && m.type == MsgType::PhoneAnswer && m.u.phone.floor == 1 && m.u.phone.id == id && m.sender == kSenderUpstairs)
+        relayed++;
+      if (!from_a && m.type == MsgType::Reply && m.u.reply.phone) replies++;
+      return false;
+    };
+    gw_phone(p.a, 1, (uint16_t)(id + 1), true);  // not the ring upstairs is waiting on
+    p.run(300);
+    CHECK(relayed == 0 && p.b.view().banner.kind == BannerKind::Knock);
+    gw_phone(p.a, 1, id, true);
+    p.run(300);
+    CHECK(relayed == 1 && replies == 1);
+    CHECK(p.b.view().banner.kind == BannerKind::None && !p.b.view().bell.alert);
+    CHECK(p.a.view().bell.out == BellOut::ComeOn);
+    CHECK_STR(p.a.view().bell.line, "Come on (from phone)");
+    gw_phone(p.a, 1, id, false);  // the other phone, later: upstairs isn't waiting any more
+    p.run(300);
+    CHECK(relayed == 1 && p.a.view().bell.out == BellOut::ComeOn);
+  }
+  // After the 2-minute window: ignored both ways.
+  {
+    Pair p;
+    notice_start(p, ring);
+    watch_knocks(p);
+    p.b.tap_bell();
+    p.run(121000);
+    gw_phone(p.a, 0, g_knock_seen, true);
+    p.run(300);
+    CHECK(p.b.view().bell.out == BellOut::NoAnswer);
+    p.run(BellSender::kRepeatIgnoreMs);
+    p.a.tap_bell();
+    p.run(121000);
+    CHECK(p.b.view().banner.kind == BannerKind::None && p.a.view().bell.out == BellOut::NoAnswer);
+    gw_phone(p.a, 1, g_knock_seen, true);  // upstairs still says "No answer yet" and passes it on;
+    p.run(300);                            // downstairs's banner is gone, so nothing changes
+    CHECK(p.a.view().bell.out == BellOut::NoAnswer && p.b.view().banner.kind == BannerKind::None);
+  }
+  // Downstairs takes a PHONE_ANSWER only from upstairs: one from the gateway's id is ignored. And
+  // upstairs takes one only from the gateway.
+  {
+    Pair p;
+    notice_start(p, ring);
+    watch_knocks(p);
+    p.a.tap_bell();
+    p.run(3000);
+    gw_phone(p.b, 1, g_knock_seen, true);  // the gateway straight to downstairs
+    p.run(300);
+    CHECK(p.b.view().banner.kind == BannerKind::Knock && p.a.view().bell.out == BellOut::Delivered);
+    gw_phone(p.b, 0, g_knock_seen, true, kSenderUpstairs);  // upstairs's floor: not downstairs's ring
+    p.run(300);
+    CHECK(p.b.view().banner.kind == BannerKind::Knock);
+    p.b.answer_banner(false);
+    p.run(300);
+    p.run(BellSender::kRepeatIgnoreMs);
+    p.b.tap_bell();
+    p.run(3000);
+    gw_phone(p.a, 0, g_knock_seen, true, kSenderDownstairs);  // from the downstairs panel: ignored
+    p.run(300);
+    CHECK(p.a.view().banner.kind == BannerKind::Knock);
+  }
+  // Missed while Away: a phone can't answer that banner.
+  {
+    Pair p;
+    notice_start(p, ring);
+    watch_knocks(p);
+    CHECK(p.a.choose_status(Status::Away));
+    p.run(300);
+    p.b.tap_bell();
+    p.run(3000);
+    CHECK(p.a.choose_status(Status::Open));
+    p.run(300);
+    CHECK(p.a.view().banner.kind == BannerKind::MissedWhileAway);
+    gw_phone(p.a, 0, g_knock_seen, true);
+    p.run(300);
+    CHECK(p.a.view().banner.kind == BannerKind::MissedWhileAway && p.b.view().bell.out != BellOut::ComeOn);
+  }
+}
+
+// "No mail" (Mike, 2026-11-18): the badge left of the mail badge. Quiet, carried in the mail state and
+// message, mail and no-mail never together, one phone notice (Mail kind, value 3, text NOMAIL).
+static void test_nomail() {
+  WallTime t1{true, 1000, kClockManual}, t2{true, 2000, kClockManual};
+  // The model: mark, undo, acknowledge, each clearing the other; every change is one counter more.
+  {
+    MailModel up, down;
+    up.toggle_none(t1);
+    CHECK(up.state().none && !up.state().waiting && up.state().ver == 1 && up.state().since == 1000);
+    CHECK(down.apply_remote(up.state()) && down.state().none && !down.state().waiting);
+    CHECK(!down.apply_remote(up.state()));
+    CHECK(!down.acknowledge_mail(t2) && down.state().none && down.state().ver == 1);  // not the mail badge's to clear
+    CHECK(down.acknowledge_none(t2) && !down.state().none && down.state().ver == 2);
+    CHECK(!down.acknowledge_none(t2) && !down.acknowledge(t2));
+    CHECK(up.apply_remote(down.state()) && !up.state().none);
+    up.toggle_none(t1);  // marked, then taken back by a second tap
+    up.toggle_none(t2);
+    CHECK(!up.state().none && up.state().ver == 4);
+    // Mail clears no-mail, and the reverse.
+    up.toggle_none(t1);
+    CHECK(up.state().none);
+    up.toggle(t2);
+    CHECK(up.state().waiting && !up.state().none);
+    up.toggle_none(t2);
+    CHECK(up.state().none && !up.state().waiting);
+    CHECK(!up.acknowledge_mail(t2) && up.acknowledge(t2) && !up.state().none && !up.state().waiting);  // acknowledge clears either
+    up.toggle(t1);
+    CHECK(up.acknowledge(t2) && !up.state().waiting);
+    // The counter rule: higher wins, then the later time, then the louder (mail over no mail).
+    MailState a, b;
+    a.none = true; a.since = 5; a.ver = 3;
+    b.since = 6; b.ver = 3;
+    MailModel x;
+    x.restore(a);
+    CHECK(x.apply_remote(b) && !x.state().none);  // the same counter: the later change
+    b.since = 5;
+    MailModel y;
+    y.restore(b);
+    CHECK(y.apply_remote(a) && y.state().none);   // a tie: a mark beats nothing
+    MailModel z;
+    z.restore(a);
+    CHECK(!z.apply_remote(b));
+    MailState m1;
+    m1.waiting = true; m1.since = 5; m1.ver = 3;
+    MailModel w;
+    w.restore(a);
+    CHECK(w.apply_remote(m1) && w.state().waiting && !w.state().none);  // a tie: mail beats no mail
+    MailModel v;
+    v.restore(m1);
+    CHECK(!v.apply_remote(a) && v.state().waiting);                    // on both panels
+    MailState hi = a;
+    hi.ver = 9;
+    MailModel u;
+    u.restore(m1);
+    CHECK(u.apply_remote(hi) && u.state().none && !u.state().waiting);  // the higher counter wins either way
+  }
+  // The wire: the same 14 bytes; the byte is 2 for no mail and a plain mail message is unchanged.
+  {
+    Msg m;
+    m.type = MsgType::Mail;
+    m.sender = kSenderUpstairs;
+    m.seq = 0x1234;
+    m.u.mail.waiting = 2;
+    m.u.mail.since = 0x6ADF03D0u;
+    m.u.mail.ver = 7;
+    uint8_t buf[32];
+    size_t n = encode(m, buf, sizeof(buf));
+    CHECK(n == 14 && buf[5] == 2);
+    Msg d;
+    CHECK(decode(buf, n, d) && d.u.mail.waiting == 2 && d.u.mail.ver == 7);
+    m.u.mail.waiting = 1;
+    CHECK(encode(m, buf, sizeof(buf)) == 14 && buf[5] == 1);
+    buf[5] = 255;
+    CHECK(!decode(buf, 14, d));
+  }
+  // Two panels: marked upstairs, red on both, nothing heard or woken, acknowledged downstairs.
+  {
+    Pair p;
+    notice_start(p, notice_bit(NoticeKind::Mail));
+    p.run(200);
+    CHECK(p.a.view().nomail.show && !p.a.view().nomail.active);  // upstairs: the faint outline
+    CHECK(!p.b.view().nomail.show);                              // downstairs: nothing
+    CHECK(!p.b.tap_nomail());                                    // nothing to acknowledge
+    size_t played_a = p.pa.played.size(), played_b = p.pb.played.size();
+    CHECK(p.a.tap_nomail());
+    p.run(300);
+    CHECK(p.a.mail().none && p.b.mail().none && !p.a.mail().waiting && !p.b.mail().waiting);
+    CHECK(p.pa.saved_mail.none && p.pb.saved_mail.none);
+    CHECK(p.a.view().nomail.show && p.a.view().nomail.active);
+    CHECK(p.b.view().nomail.show && p.b.view().nomail.active);
+    // Plain mail's badge stays out of it, on both panels, and so does the screensaver's (it reads mail.show).
+    CHECK(p.a.view().mail.show && !p.a.view().mail.solid && !p.a.view().mail.pulse);
+    CHECK(!p.b.view().mail.show && !p.b.view().mail.solid && !p.b.view().mail.pulse);
+    CHECK(p.pa.played.size() == played_a && p.pb.played.size() == played_b);  // no sound anywhere
+    // The one phone notice: Mail kind, downstairs, value 3, NOMAIL, the time it was marked.
+    const Msg *m = last_notice(p, NoticeKind::Mail);
+    CHECK(notices_of(p, NoticeKind::Mail) == 1 && m && m->u.notice.floor == 1 && m->u.notice.value == 3 &&
+          std::string(m->u.notice.text) == "NOMAIL" && m->u.notice.text_len == 6 && m->u.notice.time == p.a.mail().since);
+    p.run(20000);
+    CHECK(notices_of(p, NoticeKind::Mail) == 1);
+    // The tenant taps it: gone on both, nothing sent for that.
+    CHECK(p.b.tap_nomail());
+    p.run(300);
+    CHECK(!p.a.mail().none && !p.b.mail().none && !p.pa.saved_mail.none && !p.pb.saved_mail.none);
+    CHECK(p.a.view().nomail.show && !p.a.view().nomail.active && !p.b.view().nomail.show);
+    CHECK(notices_of(p, NoticeKind::Mail) == 1);
+    CHECK(p.pa.played.size() == played_a && p.pb.played.size() == played_b);
+    // Marked by mistake: a second tap upstairs takes it back, on both, with no notice.
+    CHECK(p.a.tap_nomail());
+    p.run(300);
+    CHECK(p.b.mail().none && notices_of(p, NoticeKind::Mail) == 2);
+    CHECK(p.a.tap_nomail());
+    p.run(300);
+    CHECK(!p.b.mail().none && !p.b.view().nomail.show && notices_of(p, NoticeKind::Mail) == 2);
+    // The mail badge's own tap downstairs does not clear a no-mail mark, nor the reverse.
+    CHECK(p.a.tap_nomail());
+    p.run(300);
+    CHECK(!p.b.tap_mail() && p.b.mail().none);
+    CHECK(p.a.tap_mail());  // mail clears no-mail, on both
+    p.run(300);
+    CHECK(p.a.mail().waiting && !p.a.mail().none && p.b.mail().waiting && !p.b.mail().none);
+    CHECK(!p.b.view().nomail.show && !p.a.view().nomail.active && p.b.view().mail.pulse);
+    CHECK(p.pb.played.size() == played_b + 1 && p.pb.played.back().first == Sound::SoftChime);  // mail still chimes
+    CHECK(!p.b.tap_nomail());
+    CHECK(p.a.tap_nomail());  // no mail clears mail, on both, and is quiet again
+    p.run(300);
+    CHECK(p.a.mail().none && !p.a.mail().waiting && p.b.mail().none && !p.b.mail().waiting);
+    CHECK(!p.b.view().mail.show && p.b.view().nomail.active && !p.a.view().mail.solid);
+    CHECK(p.pb.played.size() == played_b + 1);
+    CHECK(notices_of(p, NoticeKind::Mail) == 5);  // no mail, no mail, no mail, mail, no mail: each marking once
+  }
+  // No wake: new mail wakes a dark downstairs screen, a no-mail mark does not.
+  {
+    Pair p;
+    p.sb.screen_off_overnight = true;
+    p.sa.screen_off_overnight = true;
+    p.begin();
+    p.pa.offset = p.pb.offset = 23 * 3600;  // local 23:00
+    p.run(30000);
+    uint8_t dark = p.b.view().backlight;
+    CHECK(p.a.tap_nomail());
+    p.run(500);
+    CHECK(p.b.mail().none && p.b.view().backlight == dark);
+    CHECK(p.b.tap_nomail());
+    p.run(30000);
+    dark = p.b.view().backlight;
+    CHECK(p.a.tap_nomail());
+    p.run(500);
+    CHECK(p.b.mail().none && p.b.view().backlight == dark);
+    CHECK(p.b.tap_nomail());
+    p.run(30000);
+    CHECK(p.b.view().backlight == dark);
+    CHECK(p.a.tap_mail());  // the same setup does wake it for mail, so the checks above can fail
+    p.run(500);
+    CHECK(p.b.view().backlight != dark);
+  }
+  // The phones' rules, the same as the Mail notice: Open or Busy, not in quiet hours; the panel's own
+  // badge shows either way.
+  for (Status st : {Status::Open, Status::Busy, Status::Private, Status::Sleeping, Status::Away}) {
+    Pair p;
+    notice_start(p, notice_bit(NoticeKind::Mail));
+    if (st != Status::Open) CHECK(p.b.choose_status(st));
+    p.run(300);
+    CHECK(p.a.tap_nomail());
+    p.run(300);
+    bool want = st == Status::Open || st == Status::Busy;
+    CHECK(notices_of(p, NoticeKind::Mail) == (want ? 1 : 0));
+    CHECK(p.b.mail().none && p.b.view().nomail.active);
+  }
+  {
+    Pair p;
+    notice_start(p, notice_bit(NoticeKind::Mail));
+    p.pa.offset = p.pb.offset = 23 * 3600;  // quiet hours
+    CHECK(p.a.tap_nomail());
+    p.run(300);
+    CHECK(notices_of(p, NoticeKind::Mail) == 0 && p.b.mail().none);
+  }
+  {
+    Pair p;  // the Mail kind switched off: no notice, the badge still works
+    notice_start(p, 0);
+    CHECK(p.a.tap_nomail());
+    p.run(300);
+    CHECK(notices_of(p, NoticeKind::Mail) == 0 && p.b.mail().none);
+  }
+  // "Got it" on a phone: MAIL_ACK clears whichever is showing, on both panels, with no notice.
+  {
+    Pair p;
+    notice_start(p, notice_bit(NoticeKind::Mail));
+    CHECK(p.a.tap_nomail());
+    p.run(300);
+    CHECK(p.a.mail().none && p.b.mail().none);
+    p.pa.out.clear();
+    gw_mail_ack(p.a);
+    CHECK(acked_to_gateway(p.pa, MsgType::MailAck));
+    p.run(300);
+    CHECK(!p.a.mail().none && !p.b.mail().none && !p.pa.saved_mail.none && !p.pb.saved_mail.none);
+    CHECK(!p.b.view().nomail.show && !p.a.view().nomail.active);
+    CHECK(notices_of(p, NoticeKind::Mail) == 1);
+    uint32_t ver = p.a.mail().ver;
+    gw_mail_ack(p.a);  // nothing showing: ignored
+    p.run(300);
+    CHECK(p.a.mail().ver == ver);
+    CHECK(p.a.tap_nomail());
+    p.run(300);
+    gw_mail_ack(p.b);  // straight from the gateway to the downstairs panel: ignored, as for mail
+    p.run(300);
+    CHECK(p.a.mail().none && p.b.mail().none);
+  }
+  // A restart keeps it, on either panel, the way mail is kept.
+  {
+    Pair p;
+    notice_start(p, notice_bit(NoticeKind::Mail));
+    CHECK(p.a.tap_nomail());
+    p.run(300);
+    MailState saved = p.pa.saved_mail;
+    CHECK(saved.none && !saved.waiting);
+    FakePlatform fa;
+    fa.w = p.pa.w;
+    Controller a2(fa);
+    a2.begin(p.sa, OwnState(), DogState(), saved);
+    CHECK(a2.mail().none && a2.view().nomail.show && a2.view().nomail.active);
+    FakePlatform fb;
+    fb.w = p.pb.w;
+    Controller b2(fb);
+    b2.begin(p.sb, OwnState(), DogState(), p.pb.saved_mail);
+    CHECK(b2.mail().none && b2.view().nomail.show && b2.view().nomail.active && !b2.view().mail.show);
+  }
+  // The sync both ways with the counter rule on two live panels: a change one panel missed comes
+  // across when they hear each other again, and the later change wins.
+  {
+    Pair p;
+    notice_start(p, notice_bit(NoticeKind::Mail));
+    p.cut = true;
+    CHECK(p.a.tap_nomail());
+    p.run(3000);
+    CHECK(p.a.mail().none && !p.b.mail().none);
+    p.cut = false;
+    p.b.choose_status(Status::Busy);  // downstairs says something, and upstairs catches it up
+    p.run(500);
+    CHECK(p.b.mail().none && p.a.mail().none);
+    p.cut = true;
+    CHECK(p.b.tap_nomail());  // acknowledged downstairs while upstairs can't hear
+    p.run(3000);
+    CHECK(!p.b.mail().none && p.a.mail().none);
+    p.cut = false;
+    p.b.choose_status(Status::Open);
+    p.run(500);
+    CHECK(!p.a.mail().none && !p.b.mail().none);
+  }
+}
+
+static void test_phone_mail() {
+  const uint8_t mail = notice_bit(NoticeKind::Mail);
+  // The Mail notice pushes the downstairs phones: only while downstairs is Open or Busy.
+  for (Status st : {Status::Open, Status::Busy, Status::Private, Status::Sleeping, Status::Away}) {
+    Pair p;
+    notice_start(p, mail);
+    if (st != Status::Open) CHECK(p.b.choose_status(st));
+    p.run(300);
+    CHECK(p.a.tap_mail());
+    p.run(300);
+    bool want = st == Status::Open || st == Status::Busy;
+    CHECK(notices_of(p, NoticeKind::Mail) == (want ? 1 : 0));
+    CHECK(p.b.mail().waiting);  // the panel's badge either way
+  }
+  // Never in quiet hours.
+  {
+    Pair p;
+    notice_start(p, mail);
+    p.pa.offset = p.pb.offset = 23 * 3600;
+    CHECK(p.a.tap_mail());
+    p.run(300);
+    CHECK(notices_of(p, NoticeKind::Mail) == 0 && p.b.mail().waiting);
+  }
+  // "Got it" on a phone: MAIL_ACK clears the mail on both panels, as the downstairs tap does.
+  {
+    Pair p;
+    notice_start(p, mail);
+    CHECK(p.a.tap_mail());
+    p.run(300);
+    CHECK(p.a.mail().waiting && p.b.mail().waiting && p.b.view().mail.pulse);
+    p.pa.out.clear();
+    gw_mail_ack(p.a);
+    CHECK(acked_to_gateway(p.pa, MsgType::MailAck));
+    p.run(300);
+    CHECK(!p.a.mail().waiting && !p.b.mail().waiting && !p.pa.saved_mail.waiting && !p.pb.saved_mail.waiting);
+    CHECK(!p.b.view().mail.solid && !p.b.view().mail.pulse);
+    CHECK(notices_of(p, NoticeKind::Mail) == 1);  // no notice for the pick-up
+    // Nothing waiting: ignored, no change at all.
+    uint32_t ver = p.a.mail().ver;
+    gw_mail_ack(p.a);
+    p.run(300);
+    CHECK(p.a.mail().ver == ver && !p.a.mail().waiting);
+    // Mail again, and the downstairs panel given a MAIL_ACK straight from the gateway: ignored.
+    CHECK(p.a.tap_mail());
+    p.run(300);
+    gw_mail_ack(p.b);
+    p.run(300);
+    CHECK(p.a.mail().waiting && p.b.mail().waiting);
+  }
+}
+
 int main(int argc, char **argv) {
   const char *wav_dir = argc > 1 ? argv[1] : nullptr;
   test_sht4x();
@@ -5212,6 +6536,7 @@ int main(int argc, char **argv) {
   test_mail();
   test_comfort();
   test_comfort_chart();
+  test_chart_view();
   test_update_both_and_pending();
   test_requests();
   test_request_ties();
@@ -5253,6 +6578,15 @@ int main(int argc, char **argv) {
   test_dog_nudge();
   test_notice_wire();
   test_notice_kinds();
+  test_settings_mask_migration();
+  test_settings_mask_migration_v8();
+  test_notice_defaults_mild_and_note();
+  test_phone_wire();
+  test_phone_ring_notice();
+  test_phone_answered_notice();
+  test_phone_answer();
+  test_phone_mail();
+  test_nomail();
   test_notice_mask_and_queue();
   test_notice_no_gateway();
   test_presence_filter();
@@ -5261,6 +6595,8 @@ int main(int argc, char **argv) {
   test_presence_wire();
   test_presence();
   test_spare_loan();
+  test_rooms_wire();
+  test_rooms();
   std::printf("%d passed, %d failed\n", g_pass, g_fail);
   return g_fail ? 1 : 0;
 }

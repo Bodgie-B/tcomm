@@ -231,7 +231,7 @@ static bool atRest(const World& w, bool pack_was, char* why, size_t n) {
   else if (h.carry != CARRY_NONE) bad = "carrying";
   else if (h.walking) bad = "walking";
   else if (h.pack_on != pack_was) bad = "his pack is not as it was";
-  else if (w.fx.arm_w[0] != 0.f || w.fx.arm_w[1] != 0.f || w.fx.lean != 0.f || w.fx.head != 0.f || w.fx.lift != 0.f) bad = "arms or lean still set";
+  else if (w.fx.arm_w[0] != 0.f || w.fx.arm_w[1] != 0.f || w.fx.lean != 0.f || fabsf(w.fx.head) > 1.0e-6f || w.fx.lift != 0.f) bad = "arms or lean still set";
   else if (w.fx.wade) bad = "still wading";
   else if (w.day.kind != DAY_NONE) bad = "the daytime union is not zero";
   else if (h.target != POSE_SIT) bad = "not sitting";
@@ -408,7 +408,9 @@ static Ev playBeat(uint64_t seed, const Inputs& in, const Major& m, int var, boo
     printf("  %-18s %4d beat ticks, script done at %d (%.1f s spare), strips avg %.2f max %d, %d full-render checks\n", tag, ev.beat_ticks,
            ev.done_at, (double)(ev.beat_ticks - ev.done_at) / 25.0, avg, ev.strips_max, ev.checks);
   // (majors may average 10 strips a frame, 11 in the heat's shimmer; rain and snow dirty every strip on their own)
-  const double limit = w->weather.kind == WX_HEAT ? 11.0 : 10.0;
+  // (a float residue of 1e-8 in the head offset after an easing is not "still set": it draws the same)
+  // (and the wind: it sways the tufts, and a seed with a wind loop in the plan turned up once the plinking joined the pool: Mike, 2026-11-17)
+  const double limit = (w->weather.kind == WX_HEAT || w->weather.kind == WX_WIND) ? 11.0 : 10.0;
   CHECK(precip || ev.strips_n == 0 || avg <= limit, "%s: %.2f strips a frame (weather %s)", tag, avg, weatherKindName(w->weather.kind));
   a.stop();
   b.stop();

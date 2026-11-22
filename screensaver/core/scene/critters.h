@@ -72,6 +72,14 @@ enum DogTone : uint8_t { DT_CAMP = 0, DT_CAMP2 = 1, DT_LUCY = 2, DT_COPPER = 3, 
 constexpr float kLucyScale = 1.3f;      // about 48 px long and 36 px tall to the ear tips: half the hiker
 constexpr float kCopperScale = 0.62f;   // about 23 px long and 16 px tall: well under half of Lucy
 inline float dogToneScale(uint8_t tone) { return tone == DT_LUCY ? kLucyScale : (tone == DT_COPPER ? kCopperScale : 1.f); }
+// Critter::tone on a deer (the herd, stage 22; Mike, 2026-11-18): 0, every earlier scene's, is the plain adult.
+//   kDeerFawn    a fawn: legs 1.12 x, body 0.9 x, a big head with a short muzzle, three pale spots on the back.
+//                Set Critter::scale to about 0.62 as well (the herd does).
+//   The near ear (the other stays up): kDeerEarBack laid back, kDeerEarMid half way (a flick passes
+//   through it on the way and back), kDeerEarFwd pricked forward (alert). Back wins over mid over fwd.
+// The white flag (the tail raised) is not a tone bit: it is Critter::tail_add, 0 to 1, and a deer draws
+// no flag at 0.08 or less, so a deer nobody gives a flag to is pixel for pixel what it was.
+constexpr uint8_t kDeerFawn = 1, kDeerEarBack = 2, kDeerEarMid = 4, kDeerEarFwd = 8;
 #if SS_XMAS
 // Critter::tone on a raccoon or a bird: 0 (every scene's) is the plain silhouette. The Christmas
 // mockups (xmas.h, PROPOSED) draw them in their own colours so they read at a glance:
@@ -85,6 +93,9 @@ constexpr uint8_t kToneMasked = 1, kToneCardinal = 1;
 // rest of the scene. (The Christmas mockups' cardinal red and wrapping paper.)
 Pixel critterLitAs(const Palette& pal, uint32_t hex, Slot ref);
 #endif
+// Critter::tone on a bird, outside the Christmas switch (stage 22, the reeds' minor reed_bird): a red-winged
+// blackbird, the plain black silhouette with a red shoulder patch over a thin yellow bar (CATTAILS_PLAN 4.3).
+constexpr uint8_t kToneRedwing = 2;
 
 // The blended body state. Lengths in px at scale 1, angles in radians.
 // fore[]/hind[] are the near (0) and far (1) limbs, absolute from straight down,
@@ -112,12 +123,13 @@ struct Critter {
   float speed_dial;    // 0..1 per loop: timid slow mover .. quick; scales move speed and gait rate
   float jitter_dial;   // 0..1 per loop: calm .. fidgety; scales idle fidget size and rate
   uint8_t carry;       // CritterCarry
-  uint8_t tone;        // dog: DogTone (the camp dog's browns, or Lucy or Copper); others: unused
+  uint8_t tone;        // dog: DogTone (the camp dog's browns, or Lucy or Copper); deer: kDeer* bits; others: unused
   // Offsets the caller lays over the drawn pose (not the blend, so a new action
   // never starts from them): radians added to the near fore limb (a bear's paw
   // reaching from the trunk) and to the head (+ up). Ease them back to 0.
   // tail_add is the dog's wag: added to the pose's tail swing (+ up), set by
-  // whoever drives the dog from its own clock, so a held sit still wags.
+  // whoever drives the dog from its own clock, so a held sit still wags. For a
+  // deer it is the white flag alone, 0 hanging (nothing drawn) to 1 straight up.
   float fore_add;
   float head_add;
   float tail_add;
@@ -165,6 +177,13 @@ Vec2 critterPaw(const Critter& c);
 Vec2 critterHead(const Critter& c);
 // The mouth (bear and the small quadrupeds; critterHead for the others).
 Vec2 critterMouth(const Critter& c);
+// A deer's muzzle tip and the crown of its head between the ears, in frame space, from the drawn head
+// outline (the fawn's included). critterMouth for a deer is the top of its bounds and the stream's
+// drinking rings are placed from that, so these are new and that is unchanged. The crown is where a pair
+// of antlers would root (REVIEW_FIXES F19); the head's direction is nose minus crown. Not a deer: the
+// mouth (nose) and the head (crown).
+Vec2 critterDeerNose(const Critter& c);
+Vec2 critterDeerCrown(const Critter& c);
 // The drawn x scale of the figure: 1, or down to 0.15 mid turn-around (facing
 // flips at the narrowest point). What it holds squeezes with it.
 float critterTurnScale(const Critter& c);
@@ -178,7 +197,7 @@ const char* critterActionName(CritterAction a);
 
 // Rasterizer calls issued by the most recent critterDraw (budget checks).
 int critterLastDrawPrimitives();
-// Primitive budget per frame for a kind (7, the bear 9).
+// Primitive budget per frame for a kind (7, the bear 9, the deer 10: with the flag up a fawn draws 10).
 int critterBudget(CritterKind k);
 // Standing (CA_IDLE) height in px at scale 1, feet to top; the nominal size
 // from the brief is the larger of height and length (see the stage 5 notes).

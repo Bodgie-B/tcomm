@@ -125,6 +125,34 @@ void DevicePlatform::save_notes(const tc::NoteState *notes2) {
   taskEXIT_CRITICAL(&g_save_mux);
 }
 
+// Voice frames go out by ESP-NOW only: the demo loopback carries no voice (false: not sent).
+bool DevicePlatform::radio_send_voice(uint8_t to, const uint8_t *data, size_t len) {
+  if (demo_) return false;
+  return board::radio_send_voice(to, data, len);
+}
+
+// The voice-message inbox (voice_inbox.h): about 570 bytes, written with the next flush. Its two
+// buffers come from PSRAM at the first save (called from the LVGL task; never inside the lock).
+void DevicePlatform::save_voice_inbox(const tc::VoiceInboxData &d) {
+  tc::VoiceInboxData *box = voice_box_;
+  if (!box) {
+    box = (tc::VoiceInboxData *)alloc_big(2 * sizeof(tc::VoiceInboxData));
+    if (!box) {
+      elog("voice: no memory to save the inbox");
+      return;
+    }
+    new (&box[0]) tc::VoiceInboxData();
+    new (&box[1]) tc::VoiceInboxData();
+  }
+  taskENTER_CRITICAL(&g_save_mux);
+  voice_box_ = box;
+  voice_box_[0] = d;
+  dirty_ |= kDirtyVoice;
+  taskEXIT_CRITICAL(&g_save_mux);
+}
+
+bool DevicePlatform::load_voice_inbox(tc::VoiceInboxData &d) { return board::load_voice_inbox(d); }
+
 // Called in the LVGL task: queued for the loop task (flush_saves), like write_file.
 void DevicePlatform::append_line(const char *name, const char *header, const char *line) {
   PendingLine l = {};
@@ -255,6 +283,7 @@ void DevicePlatform::flush_saves() {
   if (d & kDirtyPending)
     for (int i = 0; i < npending; i++) pending[i] = pending_[i];
   q = clock_q_;
+  if (d & kDirtyVoice) voice_box_[1] = voice_box_[0];  // set only once voice_box_ exists
   taskEXIT_CRITICAL(&g_save_mux);
   uint32_t t0 = millis();
   if (d & kDirtyOwn) board::save_own(own);
@@ -265,6 +294,7 @@ void DevicePlatform::flush_saves() {
   if (d & kDirtyRequests) board::save_requests(requests);
   if (d & kDirtyPending) board::save_comfort_pending(pending, npending);
   if (d & kDirtyNotes) board::save_notes(notes);
+  if (d & kDirtyVoice) board::save_voice_inbox(voice_box_[1]);
   if (d & kDirtyClock) save_clock_quality(q);
 
   // A flash write stalls both cores' caches; worth seeing next to a sound that went unheard.

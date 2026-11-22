@@ -1,0 +1,690 @@
+# seed 1 --mood 0 --night --skip 20000 --frames 0 --log-beats
+loop=0 seed=1 start tick=0 plan=family=evening arrival=2 setup=1 firewood=1 fire=0 dinner=0 foodbag=0 bear=1 close=0 fillers=stream_listen,birds_on_water majors=pinecone,fish_leap
+loop=0 weather=chill
+tick=0 loop=0 seed=1 beat=build
+tick=325 loop=0 seed=1 beat=arrival
+tick=597 minor=chipmunk_cross
+tick=1102 minor=owl_watch
+tick=1150 loop=0 seed=1 beat=pause
+tick=1400 loop=0 seed=1 beat=setup
+tick=1852 minor=leaf_fall
+tick=2375 loop=0 seed=1 beat=pause
+tick=2575 loop=0 seed=1 beat=still
+tick=2675 loop=0 seed=1 beat=pinecone
+tick=3425 loop=0 seed=1 beat=still
+tick=3625 loop=0 seed=1 beat=firewood
+tick=3903 minor=squirrel_nut
+tick=4596 minor=deer_edge
+tick=4957 minor=bird_chip
+tick=5175 loop=0 seed=1 beat=pause
+tick=5375 loop=0 seed=1 beat=fire
+tick=5691 minor=frog_splash
+tick=6150 loop=0 seed=1 beat=pause
+tick=6300 minor=cloud_animal
+tick=6575 loop=0 seed=1 beat=stream_listen
+tick=6706 minor=bee_visit
+tick=7130 minor=mouse_tent
+tick=7725 loop=0 seed=1 beat=pause
+tick=7875 minor=owl_watch
+tick=8200 loop=0 seed=1 beat=dinner
+tick=9150 loop=0 seed=1 beat=pause
+tick=9306 minor=deer_edge
+tick=9550 loop=0 seed=1 beat=birds_on_water
+tick=10500 loop=0 seed=1 beat=pause
+tick=10650 minor=chipmunk_cross
+tick=10950 loop=0 seed=1 beat=still
+tick=11075 loop=0 seed=1 beat=fish_leap
+tick=11650 loop=0 seed=1 beat=still
+tick=11750 loop=0 seed=1 beat=foodbag
+tick=12127 minor=leaf_fall
+tick=12559 minor=moth_lantern
+tick=12700 loop=0 seed=1 beat=pause
+tick=13075 loop=0 seed=1 beat=bear
+tick=14125 loop=0 seed=1 beat=pause
+tick=14275 minor=squirrel_nut
+tick=14575 loop=0 seed=1 beat=close
+loop=1 seed=3851155901 start tick=15425 plan=family=evening arrival=1 setup=1 firewood=0 fire=0 dinner=1 foodbag=2 bear=0 close=0 fillers=stream_listen majors=raccoon_pack,fishing_log,shadow_theater
+loop=1 weather=chill
+tick=15425 loop=1 seed=3851155901 beat=build
+tick=15750 loop=1 seed=3851155901 beat=arrival
+tick=16061 minor=deer_edge
+tick=16475 loop=1 seed=3851155901 beat=pause
+tick=16625 minor=owl_watch
+tick=16675 loop=1 seed=3851155901 beat=setup
+tick=17342 minor=frog_splash
+tick=17650 loop=1 seed=3851155901 beat=pause
+tick=17800 minor=chipmunk_cross
+tick=17850 loop=1 seed=3851155901 beat=still
+tick=17975 loop=1 seed=3851155901 beat=raccoon_pack
+tick=19425 loop=1 seed=3851155901 beat=still
+tick=19600 loop=1 seed=3851155901 beat=firewood
+tick=19878 minor=bird_chip
+done: 0 frames in ~/AppData/Local/Temp/tmp.fmkmfF2pim, wall 52 ms, skip 51.9 ms, sim+render 0.0 ms, avg 0.000 ms/frame, new loops 0
+# seed 2 --mood 5 --skip 20000 --frames 0 --log-beats
+loop=0 seed=2 start tick=0 plan=family=evening arrival=0 setup=2 firewood=1 fire=0 dinner=2 foodbag=2 bear=0 close=1 fillers=read,mug_sunset majors=fish_leap,bathe
+loop=0 weather=clear
+tick=0 loop=0 seed=2 beat=build
+tick=325 loop=0 seed=2 beat=arrival
+tick=603 minor=bird_chip
+tick=941 minor=chipmunk_cross
+tick=950 loop=0 seed=2 beat=pause
+tick=1150 loop=0 seed=2 beat=setup
+tick=1374 minor=deer_edge
+tick=2025 loop=0 seed=2 beat=pause
+tick=2200 minor=leaf_fall
+tick=2225 loop=0 seed=2 beat=still
+tick=2425 loop=0 seed=2 beat=fish_leap
+tick=3000 loop=0 seed=2 beat=still
+tick=3200 loop=0 seed=2 beat=firewood
+tick=3497 minor=frog_splash
+tick=3891 minor=cloud_animal
+tick=4452 minor=owl_watch
+tick=4750 loop=0 seed=2 beat=pause
+tick=4950 loop=0 seed=2 beat=fire
+tick=5290 minor=bee_visit
+tick=5725 loop=0 seed=2 beat=pause
+tick=5875 minor=chipmunk_cross
+tick=5925 loop=0 seed=2 beat=read
+tick=6602 minor=deer_edge
+tick=7175 loop=0 seed=2 beat=pause
+tick=7325 minor=leaf_fall
+tick=7375 loop=0 seed=2 beat=dinner
+tick=8200 loop=0 seed=2 beat=pause
+tick=8400 loop=0 seed=2 beat=mug_sunset
+tick=8421 minor=squirrel_nut
+tick=9100 minor=bird_chip
+tick=9539 minor=owl_watch
+tick=9575 loop=0 seed=2 beat=pause
+tick=9775 loop=0 seed=2 beat=still
+tick=9900 loop=0 seed=2 beat=bathe
+tick=11250 loop=0 seed=2 beat=still
+tick=11450 loop=0 seed=2 beat=foodbag
+tick=11600 minor=frog_splash
+tick=11995 minor=chipmunk_cross
+tick=12493 minor=moth_lantern
+tick=12625 loop=0 seed=2 beat=pause
+tick=12825 loop=0 seed=2 beat=bear
+tick=14275 loop=0 seed=2 beat=pause
+tick=14425 minor=leaf_fall
+tick=14475 loop=0 seed=2 beat=close
+loop=1 seed=1113558030 start tick=15725 plan=family=evening arrival=0 setup=2 firewood=2 fire=0 dinner=1 foodbag=2 bear=2 close=1 fillers=mug_sunset,skip_stone majors=ranger_ridge,shadow_theater
+loop=1 weather=clear
+tick=15725 loop=1 seed=1113558030 beat=build
+tick=16050 loop=1 seed=1113558030 beat=arrival
+tick=16306 minor=chipmunk_cross
+tick=16656 minor=deer_edge
+tick=16675 loop=1 seed=1113558030 beat=pause
+tick=16975 loop=1 seed=1113558030 beat=setup
+tick=17199 minor=bird_chip
+tick=17702 minor=leaf_fall
+tick=17850 loop=1 seed=1113558030 beat=pause
+tick=18050 loop=1 seed=1113558030 beat=firewood
+tick=18310 minor=frog_splash
+tick=18734 minor=owl_watch
+tick=18925 loop=1 seed=1113558030 beat=pause
+tick=19150 loop=1 seed=1113558030 beat=fire
+tick=19290 minor=bee_visit
+tick=19652 minor=squirrel_nut
+tick=19925 loop=1 seed=1113558030 beat=pause
+done: 0 frames in ~/AppData/Local/Temp/tmp.fmkmfF2pim, wall 53 ms, skip 52.6 ms, sim+render 0.0 ms, avg 0.000 ms/frame, new loops 0
+# seed 3 --mood 3 --skip 20000 --frames 0 --log-beats
+loop=0 seed=3 start tick=0 plan=family=midday return=1 lunch=1 wade=0 nap=0 map=1 afternoon=1 fillers=read,skip_stone majors=pinecone,ranger_ridge,ropes
+loop=0 weather=wind
+tick=0 loop=0 seed=3 beat=build
+tick=325 loop=0 seed=3 beat=return
+tick=1325 loop=0 seed=3 beat=pause
+tick=1475 minor=leaf_fall
+tick=1525 loop=0 seed=3 beat=still
+tick=1625 loop=0 seed=3 beat=pinecone
+tick=2375 loop=0 seed=3 beat=still
+tick=2550 loop=0 seed=3 beat=lunch
+tick=3850 loop=0 seed=3 beat=pause
+tick=4050 minor=deer_edge
+tick=4350 loop=0 seed=3 beat=read
+tick=4584 minor=squirrel_nut
+tick=5355 minor=bee_visit
+tick=5600 loop=0 seed=3 beat=pause
+tick=5800 minor=chipmunk_cross
+tick=5850 loop=0 seed=3 beat=still
+tick=6025 loop=0 seed=3 beat=ranger_ridge
+tick=6825 loop=0 seed=3 beat=still
+tick=6925 loop=0 seed=3 beat=wade
+tick=7950 loop=0 seed=3 beat=pause
+tick=8125 minor=frog_splash
+tick=8425 loop=0 seed=3 beat=still
+tick=8625 loop=0 seed=3 beat=ropes
+tick=10600 loop=0 seed=3 beat=still
+tick=10700 loop=0 seed=3 beat=nap
+tick=12000 loop=0 seed=3 beat=pause
+tick=12200 minor=cloud_animal
+tick=12475 loop=0 seed=3 beat=skip_stone
+tick=12680 minor=bird_chip
+tick=13323 minor=deer_edge
+tick=13375 loop=0 seed=3 beat=pause
+tick=13825 loop=0 seed=3 beat=map
+tick=14575 loop=0 seed=3 beat=pause
+tick=14725 minor=leaf_fall
+tick=14850 loop=0 seed=3 beat=afternoon
+loop=1 seed=2358190239 start tick=16075 plan=family=midday return=0 lunch=0 wade=2 nap=2 map=0 afternoon=0 fillers=stream_listen,birds_on_water,skip_stone majors=boomerang,archery,map_chase
+loop=1 weather=rain
+tick=16075 loop=1 seed=2358190239 beat=build
+tick=16400 loop=1 seed=2358190239 beat=return
+tick=17275 loop=1 seed=2358190239 beat=pause
+tick=17425 minor=cloud_animal
+tick=17475 loop=1 seed=2358190239 beat=still
+tick=17625 loop=1 seed=2358190239 beat=boomerang
+tick=18825 loop=1 seed=2358190239 beat=still
+tick=18950 loop=1 seed=2358190239 beat=lunch
+done: 0 frames in ~/AppData/Local/Temp/tmp.fmkmfF2pim, wall 57 ms, skip 56.9 ms, sim+render 0.0 ms, avg 0.000 ms/frame, new loops 0
+# seed 4 --mood 0 --night --skip 20000 --frames 0 --log-beats
+loop=0 seed=4 start tick=0 plan=family=evening arrival=0 setup=0 firewood=0 fire=0 dinner=2 foodbag=1 bear=2 close=0 fillers=read,mug_sunset majors=map_chase,fish_leap,firefly_jar
+loop=0 weather=rain
+tick=0 loop=0 seed=4 beat=build
+tick=325 loop=0 seed=4 beat=arrival
+tick=588 minor=cloud_animal
+tick=950 loop=0 seed=4 beat=pause
+tick=1100 minor=leaf_fall
+tick=1150 loop=0 seed=4 beat=setup
+tick=1821 minor=bee_visit
+tick=2125 loop=0 seed=4 beat=pause
+tick=2275 minor=frog_splash
+tick=2325 loop=0 seed=4 beat=still
+tick=2525 loop=0 seed=4 beat=map_chase
+tick=3600 loop=0 seed=4 beat=still
+tick=3800 loop=0 seed=4 beat=firewood
+tick=4080 minor=chipmunk_cross
+tick=4650 loop=0 seed=4 beat=pause
+tick=4800 minor=squirrel_nut
+tick=4850 loop=0 seed=4 beat=fire
+tick=5483 minor=deer_edge
+tick=5625 loop=0 seed=4 beat=pause
+tick=5825 loop=0 seed=4 beat=read
+tick=6143 minor=owl_watch
+tick=6704 minor=cloud_animal
+tick=7075 loop=0 seed=4 beat=pause
+tick=7275 loop=0 seed=4 beat=still
+tick=7425 loop=0 seed=4 beat=fish_leap
+tick=8350 loop=0 seed=4 beat=still
+tick=8525 loop=0 seed=4 beat=dinner
+tick=9350 loop=0 seed=4 beat=pause
+tick=9549 minor=leaf_fall
+tick=9550 loop=0 seed=4 beat=mug_sunset
+tick=10140 minor=frog_splash
+tick=10448 minor=chipmunk_cross
+tick=10725 loop=0 seed=4 beat=pause
+tick=10925 loop=0 seed=4 beat=still
+tick=11125 loop=0 seed=4 beat=firefly_jar
+tick=12175 loop=0 seed=4 beat=still
+tick=12275 loop=0 seed=4 beat=foodbag
+tick=12593 minor=mouse_tent
+tick=13154 minor=deer_edge
+tick=13404 minor=moth_lantern
+tick=13475 loop=0 seed=4 beat=pause
+tick=13675 loop=0 seed=4 beat=bear
+tick=15150 loop=0 seed=4 beat=pause
+tick=15300 minor=bird_chip
+tick=15350 loop=0 seed=4 beat=close
+loop=1 seed=4189540536 start tick=16200 plan=family=evening arrival=1 setup=1 firewood=0 fire=2 dinner=0 foodbag=0 bear=0 close=2 fillers=cairn majors=deer_stick,raccoon_pack,shadow_theater
+loop=1 weather=chill
+tick=16200 loop=1 seed=4189540536 beat=build
+tick=16525 loop=1 seed=4189540536 beat=arrival
+tick=16832 minor=owl_watch
+tick=17250 loop=1 seed=4189540536 beat=pause
+tick=17450 loop=1 seed=4189540536 beat=setup
+tick=17549 minor=cloud_animal
+tick=18047 minor=deer_edge
+tick=18425 loop=1 seed=4189540536 beat=pause
+tick=18625 loop=1 seed=4189540536 beat=still
+tick=18800 loop=1 seed=4189540536 beat=deer_stick
+tick=19850 loop=1 seed=4189540536 beat=still
+done: 0 frames in ~/AppData/Local/Temp/tmp.fmkmfF2pim, wall 55 ms, skip 55.2 ms, sim+render 0.0 ms, avg 0.000 ms/frame, new loops 0
+# seed 5 --mood 5 --skip 20000 --frames 0 --log-beats
+loop=0 seed=5 start tick=0 plan=family=evening arrival=0 setup=0 firewood=0 fire=0 dinner=1 foodbag=0 bear=2 close=2 fillers=stream_listen,mug_sunset,birds_on_water majors=fish_leap,fishing_log
+loop=0 weather=clear
+tick=0 loop=0 seed=5 beat=build
+tick=325 loop=0 seed=5 beat=arrival
+tick=685 minor=chipmunk_cross
+tick=950 loop=0 seed=5 beat=pause
+tick=1150 loop=0 seed=5 beat=setup
+tick=1192 minor=leaf_fall
+tick=1645 minor=owl_watch
+tick=2125 loop=0 seed=5 beat=pause
+tick=2313 minor=bee_visit
+tick=2325 loop=0 seed=5 beat=firewood
+tick=3017 minor=bird_chip
+tick=3175 loop=0 seed=5 beat=pause
+tick=3375 loop=0 seed=5 beat=fire
+tick=3440 minor=frog_splash
+tick=4016 minor=cloud_animal
+tick=4150 loop=0 seed=5 beat=pause
+tick=4350 loop=0 seed=5 beat=stream_listen
+tick=4464 minor=chipmunk_cross
+tick=4889 minor=leaf_fall
+tick=5455 minor=owl_watch
+tick=5500 loop=0 seed=5 beat=pause
+tick=5725 loop=0 seed=5 beat=still
+tick=5850 loop=0 seed=5 beat=fish_leap
+tick=6425 loop=0 seed=5 beat=still
+tick=6575 loop=0 seed=5 beat=dinner
+tick=7775 loop=0 seed=5 beat=pause
+tick=7975 loop=0 seed=5 beat=mug_sunset
+tick=8000 minor=bee_visit
+tick=8354 minor=bird_chip
+tick=9024 minor=frog_splash
+tick=9150 loop=0 seed=5 beat=pause
+tick=9400 loop=0 seed=5 beat=birds_on_water
+tick=10350 loop=0 seed=5 beat=pause
+tick=10550 loop=0 seed=5 beat=still
+tick=10725 loop=0 seed=5 beat=fishing_log
+tick=12400 loop=0 seed=5 beat=still
+tick=12500 loop=0 seed=5 beat=foodbag
+tick=12850 minor=cloud_animal
+tick=13256 minor=squirrel_nut
+tick=13450 loop=0 seed=5 beat=pause
+tick=13650 loop=0 seed=5 beat=bear
+tick=15125 loop=0 seed=5 beat=pause
+tick=15275 minor=moth_lantern
+tick=15325 loop=0 seed=5 beat=close
+loop=1 seed=643281748 start tick=16250 plan=family=evening arrival=1 setup=0 firewood=2 fire=2 dinner=2 foodbag=0 bear=2 close=0 fillers=cloud_watch majors=raccoon_pack,bathe
+loop=1 weather=clear
+tick=16250 loop=1 seed=643281748 beat=build
+tick=16575 loop=1 seed=643281748 beat=arrival
+tick=16905 minor=frog_splash
+tick=17300 loop=1 seed=643281748 beat=pause
+tick=17450 minor=leaf_fall
+tick=17500 loop=1 seed=643281748 beat=setup
+tick=18234 minor=deer_edge
+tick=18475 loop=1 seed=643281748 beat=pause
+tick=18668 minor=owl_watch
+tick=18675 loop=1 seed=643281748 beat=still
+tick=18850 loop=1 seed=643281748 beat=raccoon_pack
+done: 0 frames in ~/AppData/Local/Temp/tmp.fmkmfF2pim, wall 53 ms, skip 52.7 ms, sim+render 0.0 ms, avg 0.000 ms/frame, new loops 0
+# seed 6 --mood 3 --skip 20000 --frames 0 --log-beats
+loop=0 seed=6 start tick=0 plan=family=midday return=2 lunch=1 wade=1 nap=2 map=0 afternoon=0 fillers=cloud_watch majors=plink,bathe,slackline
+loop=0 weather=clear
+tick=0 loop=0 seed=6 beat=build
+tick=325 loop=0 seed=6 beat=return
+tick=1225 loop=0 seed=6 beat=pause
+tick=1375 minor=deer_edge
+tick=1425 loop=0 seed=6 beat=still
+tick=1600 loop=0 seed=6 beat=plink
+tick=4525 loop=0 seed=6 beat=still
+tick=4625 loop=0 seed=6 beat=lunch
+tick=5925 loop=0 seed=6 beat=pause
+tick=6075 minor=frog_splash
+tick=6125 loop=0 seed=6 beat=cloud_watch
+tick=6454 minor=mouse_tent
+tick=6822 minor=leaf_fall
+tick=7447 minor=chipmunk_cross
+tick=7575 loop=0 seed=6 beat=pause
+tick=7775 loop=0 seed=6 beat=still
+tick=7875 loop=0 seed=6 beat=bathe
+tick=9225 loop=0 seed=6 beat=still
+tick=9325 loop=0 seed=6 beat=wade
+tick=10125 loop=0 seed=6 beat=pause
+tick=10325 loop=0 seed=6 beat=still
+tick=10475 loop=0 seed=6 beat=slackline
+tick=12075 loop=0 seed=6 beat=still
+tick=12250 loop=0 seed=6 beat=nap
+tick=13425 loop=0 seed=6 beat=pause
+tick=13625 loop=0 seed=6 beat=map
+tick=14475 loop=0 seed=6 beat=pause
+tick=14625 minor=bee_visit
+tick=14675 loop=0 seed=6 beat=afternoon
+loop=1 seed=104503022 start tick=15950 plan=family=midday return=1 lunch=0 wade=0 nap=1 map=0 afternoon=1 fillers=cairn,cloud_watch majors=squirrel_splash,echo,fish_leap
+loop=1 weather=wind
+tick=15950 loop=1 seed=104503022 beat=build
+tick=16275 loop=1 seed=104503022 beat=return
+tick=17275 loop=1 seed=104503022 beat=pause
+tick=17425 minor=chipmunk_cross
+tick=17775 loop=1 seed=104503022 beat=still
+tick=17950 loop=1 seed=104503022 beat=squirrel_splash
+tick=18725 loop=1 seed=104503022 beat=still
+tick=18900 loop=1 seed=104503022 beat=lunch
+done: 0 frames in ~/AppData/Local/Temp/tmp.fmkmfF2pim, wall 58 ms, skip 58.1 ms, sim+render 0.0 ms, avg 0.000 ms/frame, new loops 0
+# seed 7 --mood 0 --night --skip 20000 --frames 0 --log-beats
+loop=0 seed=7 start tick=0 plan=family=evening arrival=0 setup=1 firewood=1 fire=2 dinner=2 foodbag=2 bear=2 close=2 fillers=cloud_watch,skip_stone majors=firefly_jar,squirrel_splash
+loop=0 weather=clear
+tick=0 loop=0 seed=7 beat=build
+tick=325 loop=0 seed=7 beat=arrival
+tick=603 minor=frog_splash
+tick=950 loop=0 seed=7 beat=pause
+tick=1100 minor=deer_edge
+tick=1175 loop=0 seed=7 beat=setup
+tick=1497 minor=leaf_fall
+tick=2150 loop=0 seed=7 beat=pause
+tick=2350 minor=chipmunk_cross
+tick=2600 loop=0 seed=7 beat=still
+tick=2775 loop=0 seed=7 beat=firefly_jar
+tick=3825 loop=0 seed=7 beat=still
+tick=3950 loop=0 seed=7 beat=firewood
+tick=4221 minor=bee_visit
+tick=4719 minor=bird_chip
+tick=5436 minor=owl_watch
+tick=5500 loop=0 seed=7 beat=pause
+tick=5725 loop=0 seed=7 beat=fire
+tick=5991 minor=cloud_animal
+tick=6397 minor=deer_edge
+tick=6650 loop=0 seed=7 beat=pause
+tick=6850 loop=0 seed=7 beat=cloud_watch
+tick=7087 minor=frog_splash
+tick=7453 minor=mouse_tent
+tick=8029 minor=bee_visit
+tick=8300 loop=0 seed=7 beat=pause
+tick=8475 minor=leaf_fall
+tick=8675 loop=0 seed=7 beat=dinner
+tick=9500 loop=0 seed=7 beat=pause
+tick=9732 minor=owl_watch
+tick=9900 loop=0 seed=7 beat=skip_stone
+tick=10288 minor=bird_chip
+tick=10758 minor=chipmunk_cross
+tick=10800 loop=0 seed=7 beat=pause
+tick=11100 loop=0 seed=7 beat=still
+tick=11225 loop=0 seed=7 beat=squirrel_splash
+tick=12000 loop=0 seed=7 beat=still
+tick=12125 loop=0 seed=7 beat=foodbag
+tick=12275 minor=deer_edge
+tick=12702 minor=mouse_tent
+tick=13159 minor=moth_lantern
+tick=13300 loop=0 seed=7 beat=pause
+tick=13500 loop=0 seed=7 beat=bear
+tick=14975 loop=0 seed=7 beat=pause
+tick=15125 minor=leaf_fall
+tick=15325 loop=0 seed=7 beat=close
+loop=1 seed=2356717238 start tick=16250 plan=family=evening arrival=1 setup=1 firewood=2 fire=1 dinner=1 foodbag=2 bear=2 close=1 fillers=read majors=fish_leap,ants_cookie
+loop=1 weather=rain
+tick=16250 loop=1 seed=2356717238 beat=build
+tick=16575 loop=1 seed=2356717238 beat=arrival
+tick=16885 minor=deer_edge
+tick=17300 loop=1 seed=2356717238 beat=pause
+tick=17493 minor=bird_chip
+tick=17500 loop=1 seed=2356717238 beat=setup
+tick=18160 minor=owl_watch
+tick=18650 loop=1 seed=2356717238 beat=pause
+tick=18800 minor=bee_visit
+tick=18850 loop=1 seed=2356717238 beat=still
+tick=19025 loop=1 seed=2356717238 beat=fish_leap
+tick=19950 loop=1 seed=2356717238 beat=still
+done: 0 frames in ~/AppData/Local/Temp/tmp.fmkmfF2pim, wall 52 ms, skip 52.4 ms, sim+render 0.0 ms, avg 0.000 ms/frame, new loops 0
+# seed 8 --mood 5 --skip 20000 --frames 0 --log-beats
+loop=0 seed=8 start tick=0 plan=family=evening arrival=1 setup=1 firewood=0 fire=2 dinner=1 foodbag=2 bear=1 close=1 fillers=birds_on_water majors=firefly_jar,ranger_ridge,shadow_theater
+loop=0 weather=wind
+tick=0 loop=0 seed=8 beat=build
+tick=325 loop=0 seed=8 beat=arrival
+tick=661 minor=owl_watch
+tick=1050 loop=0 seed=8 beat=pause
+tick=1217 minor=deer_edge
+tick=1250 loop=0 seed=8 beat=setup
+tick=1766 minor=chipmunk_cross
+tick=2225 loop=0 seed=8 beat=pause
+tick=2375 minor=frog_splash
+tick=2425 loop=0 seed=8 beat=still
+tick=2550 loop=0 seed=8 beat=firefly_jar
+tick=3600 loop=0 seed=8 beat=still
+tick=3775 loop=0 seed=8 beat=firewood
+tick=4054 minor=leaf_fall
+tick=4625 loop=0 seed=8 beat=pause
+tick=4775 minor=bee_visit
+tick=4825 loop=0 seed=8 beat=fire
+tick=5331 minor=bird_chip
+tick=5750 loop=0 seed=8 beat=pause
+tick=5950 loop=0 seed=8 beat=dinner
+tick=7150 loop=0 seed=8 beat=pause
+tick=7350 loop=0 seed=8 beat=birds_on_water
+tick=8300 loop=0 seed=8 beat=pause
+tick=8475 minor=owl_watch
+tick=8500 loop=0 seed=8 beat=still
+tick=8675 loop=0 seed=8 beat=ranger_ridge
+tick=9475 loop=0 seed=8 beat=still
+tick=9575 loop=0 seed=8 beat=foodbag
+tick=9943 minor=deer_edge
+tick=10512 minor=chipmunk_cross
+tick=10750 loop=0 seed=8 beat=pause
+tick=10900 minor=moth_lantern
+tick=10950 loop=0 seed=8 beat=still
+tick=11050 loop=0 seed=8 beat=shadow_theater
+tick=12150 loop=0 seed=8 beat=still
+tick=12275 loop=0 seed=8 beat=bear
+tick=13325 loop=0 seed=8 beat=pause
+tick=13475 minor=squirrel_nut
+tick=13525 loop=0 seed=8 beat=close
+loop=1 seed=3051407495 start tick=14775 plan=family=evening arrival=0 setup=0 firewood=0 fire=0 dinner=0 foodbag=2 bear=0 close=0 fillers=mug_sunset,skip_stone majors=echo,fishing_small,ants_cookie
+loop=1 weather=chill
+tick=14775 loop=1 seed=3051407495 beat=build
+tick=15100 loop=1 seed=3051407495 beat=arrival
+tick=15503 minor=cloud_animal
+tick=15725 loop=1 seed=3051407495 beat=pause
+tick=15909 minor=leaf_fall
+tick=15925 loop=1 seed=3051407495 beat=setup
+tick=16365 minor=chipmunk_cross
+tick=16831 minor=owl_watch
+tick=16900 loop=1 seed=3051407495 beat=pause
+tick=17100 loop=1 seed=3051407495 beat=still
+tick=17225 loop=1 seed=3051407495 beat=echo
+tick=18075 loop=1 seed=3051407495 beat=still
+tick=18200 loop=1 seed=3051407495 beat=firewood
+tick=18469 minor=deer_edge
+tick=19050 loop=1 seed=3051407495 beat=pause
+tick=19250 loop=1 seed=3051407495 beat=fire
+tick=19315 minor=bee_visit
+done: 0 frames in ~/AppData/Local/Temp/tmp.fmkmfF2pim, wall 53 ms, skip 52.5 ms, sim+render 0.0 ms, avg 0.000 ms/frame, new loops 0
+# seed 9 --mood 3 --skip 20000 --frames 0 --log-beats
+loop=0 seed=9 start tick=0 plan=family=midday return=2 lunch=0 wade=2 nap=0 map=1 afternoon=0 fillers=read,skip_stone majors=ranger_ridge,bike,squirrel_splash
+loop=0 weather=clear
+tick=0 loop=0 seed=9 beat=build
+tick=325 loop=0 seed=9 beat=return
+tick=1225 loop=0 seed=9 beat=pause
+tick=1375 minor=leaf_fall
+tick=1550 loop=0 seed=9 beat=still
+tick=1650 loop=0 seed=9 beat=ranger_ridge
+tick=2450 loop=0 seed=9 beat=still
+tick=2575 loop=0 seed=9 beat=lunch
+tick=3800 loop=0 seed=9 beat=pause
+tick=3950 minor=bee_visit
+tick=4125 loop=0 seed=9 beat=read
+tick=4379 minor=frog_splash
+tick=5047 minor=deer_edge
+tick=5375 loop=0 seed=9 beat=pause
+tick=5550 minor=chipmunk_cross
+tick=5650 loop=0 seed=9 beat=still
+tick=5750 loop=0 seed=9 beat=bike
+tick=7175 loop=0 seed=9 beat=still
+tick=7325 loop=0 seed=9 beat=wade
+tick=8400 loop=0 seed=9 beat=pause
+tick=8875 loop=0 seed=9 beat=still
+tick=8975 loop=0 seed=9 beat=squirrel_splash
+tick=9750 loop=0 seed=9 beat=still
+tick=9925 loop=0 seed=9 beat=nap
+tick=11225 loop=0 seed=9 beat=pause
+tick=11425 minor=cloud_animal
+tick=11575 loop=0 seed=9 beat=skip_stone
+tick=11906 minor=mouse_tent
+tick=12318 minor=leaf_fall
+tick=12475 loop=0 seed=9 beat=pause
+tick=12775 loop=0 seed=9 beat=map
+tick=13525 loop=0 seed=9 beat=pause
+tick=13725 minor=squirrel_nut
+tick=13925 loop=0 seed=9 beat=afternoon
+loop=1 seed=3586268653 start tick=15425 plan=family=midday return=2 lunch=1 wade=1 nap=1 map=0 afternoon=1 fillers=skip_stone,stream_listen majors=slackline,bathe,boomerang
+loop=1 weather=clear
+tick=15425 loop=1 seed=3586268653 beat=build
+tick=15750 loop=1 seed=3586268653 beat=return
+tick=16650 loop=1 seed=3586268653 beat=pause
+tick=16825 minor=cloud_animal
+tick=17125 loop=1 seed=3586268653 beat=still
+tick=17225 loop=1 seed=3586268653 beat=slackline
+tick=18800 loop=1 seed=3586268653 beat=still
+tick=18900 loop=1 seed=3586268653 beat=lunch
+done: 0 frames in ~/AppData/Local/Temp/tmp.fmkmfF2pim, wall 55 ms, skip 55.1 ms, sim+render 0.0 ms, avg 0.000 ms/frame, new loops 0
+# seed 10 --mood 0 --night --skip 20000 --frames 0 --log-beats
+loop=0 seed=10 start tick=0 plan=family=evening arrival=2 setup=2 firewood=1 fire=0 dinner=1 foodbag=1 bear=1 close=2 fillers=skip_stone majors=echo,ranger_ridge,raccoon_pack
+loop=0 weather=clear
+tick=0 loop=0 seed=10 beat=build
+tick=325 loop=0 seed=10 beat=arrival
+tick=673 minor=bee_visit
+tick=1150 loop=0 seed=10 beat=pause
+tick=1300 minor=frog_splash
+tick=1350 loop=0 seed=10 beat=setup
+tick=1821 minor=cloud_animal
+tick=2225 loop=0 seed=10 beat=pause
+tick=2425 loop=0 seed=10 beat=still
+tick=2600 loop=0 seed=10 beat=echo
+tick=3450 loop=0 seed=10 beat=still
+tick=3550 loop=0 seed=10 beat=firewood
+tick=3829 minor=deer_edge
+tick=4257 minor=chipmunk_cross
+tick=4912 minor=leaf_fall
+tick=5100 loop=0 seed=10 beat=pause
+tick=5300 loop=0 seed=10 beat=fire
+tick=5624 minor=owl_watch
+tick=6075 loop=0 seed=10 beat=pause
+tick=6275 loop=0 seed=10 beat=still
+tick=6425 loop=0 seed=10 beat=ranger_ridge
+tick=7225 loop=0 seed=10 beat=still
+tick=7425 loop=0 seed=10 beat=dinner
+tick=8625 loop=0 seed=10 beat=pause
+tick=8800 minor=bee_visit
+tick=8825 loop=0 seed=10 beat=skip_stone
+tick=9568 minor=frog_splash
+tick=9725 loop=0 seed=10 beat=pause
+tick=9925 loop=0 seed=10 beat=still
+tick=10100 loop=0 seed=10 beat=raccoon_pack
+tick=11550 loop=0 seed=10 beat=still
+tick=11750 loop=0 seed=10 beat=foodbag
+tick=11900 minor=cloud_animal
+tick=12658 minor=deer_edge
+tick=12950 loop=0 seed=10 beat=pause
+tick=13150 loop=0 seed=10 beat=bear
+tick=14200 loop=0 seed=10 beat=pause
+tick=14350 minor=moth_lantern
+tick=14400 loop=0 seed=10 beat=close
+loop=1 seed=724293036 start tick=15325 plan=family=evening arrival=1 setup=1 firewood=1 fire=1 dinner=1 foodbag=2 bear=2 close=1 fillers=skip_stone majors=squirrel_splash,fish_leap,ants_cookie
+loop=1 weather=chill
+tick=15325 loop=1 seed=724293036 beat=build
+tick=15650 loop=1 seed=724293036 beat=arrival
+tick=15954 minor=leaf_fall
+tick=16375 loop=1 seed=724293036 beat=pause
+tick=16575 loop=1 seed=724293036 beat=setup
+tick=16634 minor=bird_chip
+tick=17205 minor=cloud_animal
+tick=17550 loop=1 seed=724293036 beat=pause
+tick=17750 loop=1 seed=724293036 beat=still
+tick=17925 loop=1 seed=724293036 beat=squirrel_splash
+tick=18700 loop=1 seed=724293036 beat=still
+tick=18800 loop=1 seed=724293036 beat=firewood
+tick=19072 minor=squirrel_nut
+tick=19741 minor=owl_watch
+done: 0 frames in ~/AppData/Local/Temp/tmp.fmkmfF2pim, wall 54 ms, skip 53.5 ms, sim+render 0.0 ms, avg 0.000 ms/frame, new loops 0
+# seed 11 --mood 5 --skip 20000 --frames 0 --log-beats
+loop=0 seed=11 start tick=0 plan=family=evening arrival=0 setup=2 firewood=1 fire=0 dinner=1 foodbag=1 bear=0 close=1 fillers=cairn majors=deer_stick,echo
+loop=0 weather=clear
+tick=0 loop=0 seed=11 beat=build
+tick=325 loop=0 seed=11 beat=arrival
+tick=580 minor=squirrel_nut
+tick=950 loop=0 seed=11 beat=pause
+tick=1150 loop=0 seed=11 beat=setup
+tick=1374 minor=bird_chip
+tick=1708 minor=chipmunk_cross
+tick=2025 loop=0 seed=11 beat=pause
+tick=2225 loop=0 seed=11 beat=still
+tick=2425 loop=0 seed=11 beat=deer_stick
+tick=3475 loop=0 seed=11 beat=still
+tick=3600 loop=0 seed=11 beat=firewood
+tick=3873 minor=mouse_tent
+tick=4524 minor=owl_watch
+tick=5080 minor=cloud_animal
+tick=5150 loop=0 seed=11 beat=pause
+tick=5350 loop=0 seed=11 beat=fire
+tick=5551 minor=deer_edge
+tick=5966 minor=bee_visit
+tick=6125 loop=0 seed=11 beat=pause
+tick=6325 loop=0 seed=11 beat=still
+tick=6500 loop=0 seed=11 beat=echo
+tick=7350 loop=0 seed=11 beat=still
+tick=7550 loop=0 seed=11 beat=dinner
+tick=8750 loop=0 seed=11 beat=pause
+tick=8925 minor=leaf_fall
+tick=8950 loop=0 seed=11 beat=cairn
+tick=9566 minor=bird_chip
+tick=10324 minor=chipmunk_cross
+tick=10500 loop=0 seed=11 beat=pause
+tick=10700 loop=0 seed=11 beat=foodbag
+tick=11029 minor=owl_watch
+tick=11683 minor=moth_lantern
+tick=11900 loop=0 seed=11 beat=pause
+tick=12100 loop=0 seed=11 beat=bear
+tick=13550 loop=0 seed=11 beat=pause
+tick=13700 minor=frog_splash
+tick=13750 loop=0 seed=11 beat=close
+loop=1 seed=1367548065 start tick=15000 plan=family=evening arrival=0 setup=0 firewood=0 fire=1 dinner=2 foodbag=1 bear=2 close=1 fillers=mug_sunset majors=squirrel_splash,bathe,raccoon_pack
+loop=1 weather=clear
+tick=15000 loop=1 seed=1367548065 beat=build
+tick=15325 loop=1 seed=1367548065 beat=arrival
+tick=15581 minor=leaf_fall
+tick=15950 loop=1 seed=1367548065 beat=pause
+tick=16100 minor=bee_visit
+tick=16150 loop=1 seed=1367548065 beat=setup
+tick=16563 minor=frog_splash
+tick=16942 minor=owl_watch
+tick=17125 loop=1 seed=1367548065 beat=pause
+tick=17325 loop=1 seed=1367548065 beat=still
+tick=17500 loop=1 seed=1367548065 beat=squirrel_splash
+tick=18275 loop=1 seed=1367548065 beat=still
+tick=18425 loop=1 seed=1367548065 beat=firewood
+tick=18699 minor=mouse_tent
+tick=19245 minor=chipmunk_cross
+tick=19275 loop=1 seed=1367548065 beat=pause
+tick=19475 loop=1 seed=1367548065 beat=fire
+tick=19759 minor=cloud_animal
+done: 0 frames in ~/AppData/Local/Temp/tmp.fmkmfF2pim, wall 53 ms, skip 52.6 ms, sim+render 0.0 ms, avg 0.000 ms/frame, new loops 0
+# seed 12 --mood 3 --skip 20000 --frames 0 --log-beats
+loop=0 seed=12 start tick=0 plan=family=midday return=2 lunch=0 wade=0 nap=0 map=1 afternoon=0 fillers=stream_listen,cairn majors=pinecone,bathe,ranger_ridge
+loop=0 weather=clear
+tick=0 loop=0 seed=12 beat=build
+tick=325 loop=0 seed=12 beat=return
+tick=1225 loop=0 seed=12 beat=pause
+tick=1375 minor=leaf_fall
+tick=1600 loop=0 seed=12 beat=still
+tick=1750 loop=0 seed=12 beat=pinecone
+tick=2500 loop=0 seed=12 beat=still
+tick=2675 loop=0 seed=12 beat=lunch
+tick=3900 loop=0 seed=12 beat=pause
+tick=4075 minor=bee_visit
+tick=4400 loop=0 seed=12 beat=stream_listen
+tick=4520 minor=frog_splash
+tick=5112 minor=mouse_tent
+tick=5550 loop=0 seed=12 beat=pause
+tick=5761 minor=cloud_animal
+tick=5900 loop=0 seed=12 beat=still
+tick=6025 loop=0 seed=12 beat=bathe
+tick=7375 loop=0 seed=12 beat=still
+tick=7475 loop=0 seed=12 beat=wade
+tick=8500 loop=0 seed=12 beat=pause
+tick=8675 minor=deer_edge
+tick=8950 loop=0 seed=12 beat=still
+tick=9125 loop=0 seed=12 beat=ranger_ridge
+tick=9925 loop=0 seed=12 beat=still
+tick=10125 loop=0 seed=12 beat=nap
+tick=11425 loop=0 seed=12 beat=pause
+tick=11575 minor=chipmunk_cross
+tick=11725 loop=0 seed=12 beat=cairn
+tick=12236 minor=leaf_fall
+tick=12715 minor=bird_chip
+tick=13114 minor=frog_splash
+tick=13275 loop=0 seed=12 beat=pause
+tick=13505 minor=bee_visit
+tick=13600 loop=0 seed=12 beat=map
+tick=14350 loop=0 seed=12 beat=pause
+tick=14500 minor=cloud_animal
+tick=14750 loop=0 seed=12 beat=afternoon
+loop=1 seed=167463177 start tick=16025 plan=family=midday return=1 lunch=1 wade=0 nap=1 map=0 afternoon=1 fillers=birds_on_water,cloud_watch,stream_listen majors=fish_leap,echo,fishing_small
+loop=1 weather=heat
+tick=16025 loop=1 seed=167463177 beat=build
+tick=16350 loop=1 seed=167463177 beat=return
+tick=17350 loop=1 seed=167463177 beat=pause
+tick=17500 minor=frog_splash
+tick=17550 loop=1 seed=167463177 beat=still
+tick=17700 loop=1 seed=167463177 beat=fish_leap
+tick=18625 loop=1 seed=167463177 beat=still
+tick=18775 loop=1 seed=167463177 beat=lunch
+done: 0 frames in ~/AppData/Local/Temp/tmp.fmkmfF2pim, wall 52 ms, skip 52.2 ms, sim+render 0.0 ms, avg 0.000 ms/frame, new loops 0

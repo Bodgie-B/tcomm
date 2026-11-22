@@ -28,11 +28,25 @@ g++ -std=c++17 -O1 -g -Wall -Wextra -I "$SRC" tests/test_core.cpp "$SRC"/core/*.
   "$SRC"/app/demo.cpp -o "$H/tests.exe"
 "$H/tests.exe" docs/sounds
 
+# The danger-cold icicles drawn strip by strip against the old 800 x 100 picture (memory audit 2026-11-21)
+g++ -std=c++17 -O1 -g -Wall -Wextra -I "$SRC" tests/test_icicles.cpp "$SRC"/ui/art.cpp "$SRC"/ui/board_art.cpp \
+  "$SRC"/ui/theme.cpp "$SRC"/gfx/canvas.cpp "$SRC"/core/*.cpp -o "$H/test_icicles.exe"
+"$H/test_icicles.exe"
+
 # The ESP32-C6 gateway's logic, with the panels' own wire-format code
 g++ -std=c++17 -O1 -g -Wall -Wextra -I "$SRC" -I ../gateway/gateway-c6/src ../gateway/tests/test_gateway.cpp \
   ../gateway/gateway-c6/src/gw/*.cpp "$SRC"/core/protocol.cpp "$SRC"/core/events.cpp "$SRC"/core/civil.cpp \
-  -o "$H/test_gateway.exe"
+  "$SRC"/core/voice_proto.cpp -o "$H/test_gateway.exe"
 "$H/test_gateway.exe"
+
+# Voice notes (docs/voice-notes/DESIGN.md): every tests/test_voice_*.cpp (test_voice_main.cpp runs them),
+# the core files, and the C6's VoiceSession once it exists; then the golden vectors' Python checks
+VS=()
+if [ -f ../gateway/gateway-c6/src/gw/voice_session.cpp ]; then VS=(../gateway/gateway-c6/src/gw/voice_session.cpp); fi
+g++ -std=c++17 -O1 -g -Wall -Wextra -I "$SRC" -I ../gateway/gateway-c6/src tests/test_voice_*.cpp "$SRC"/core/*.cpp \
+  ${VS[@]+"${VS[@]}"} -o "$H/test_voice.exe"
+"$H/test_voice.exe" tests/vectors
+python -I -B -m unittest discover -s tests -p "test_voice_*.py"
 
 # Fonts are C
 for f in "$SRC"/ui/fonts/*.c; do

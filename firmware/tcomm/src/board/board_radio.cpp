@@ -11,10 +11,15 @@
 #include <esp_wifi.h>
 #include <string.h>
 #include "../config/secrets.h"
+#include <atomic>
 #include "../core/protocol.h"
+#include "../core/voice_proto.h"
+#include "../core/voice_tx.h"  // kReachPingTag
+#include "esp_heap_caps.h"
 #include "esp_mac.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "freertos/task.h"
 
 // ESP-NOW keys are exactly 16 bytes; a shorter literal would make memcpy read past it.
 static_assert(sizeof(TCOMM_PMK) == 17, "TCOMM_PMK must be 16 characters");
@@ -38,6 +43,44 @@ static struct {
   uint32_t reached, missed;                           // sends a radio acknowledged, or didn't
 } g_count;
 static uint8_t g_last_unknown[6];
+
+// Voice frames (types 20-30; docs/voice-notes/DESIGN.md 4.6, 4.7): never traced, so a 100-chunk upload
+// (or upstairs relaying one, 34 frames a second each way) never wipes the doorbell's trace ring, and no
+// elog per error. Sent from the mic task, the vrelay task and the LVGL task, so those counts are atomic;
+// the Wi-Fi task alone writes the others.
+static struct {
+  std::atomic<uint32_t> out{0}, err{0}, unset{0};      // radio_send_voice: taken, refused, to a board not set
+  uint32_t in = 0, full = 0;                           // received for this panel, dropped (queue full)
+  uint32_t relay_in = 0, relay_full = 0;               // upstairs: queued for the vrelay task, or dropped
+  std::atomic<uint32_t> relay_out{0}, relay_err{0};    // passed on, or refused by the radio
+  std::atomic<uint32_t> capped{0};                     // refused by the air cap below
+} g_voice;
+// Field fix 2026-11-20: whatever goes wrong above it (a resend loop, a relay loop, a bug), this panel
+// never puts more than tc::kVoicePanelPerS voice frames a second on the air (bursts of kVoicePanelBurst),
+// so the TComm frames and their ACKs always find room. A refused frame is like a radio refusal.
+static tc::VoiceRateCap g_vcap(tc::kVoicePanelPerS, tc::kVoicePanelBurst);
+static portMUX_TYPE g_vcap_lock = portMUX_INITIALIZER_UNLOCKED;
+// Upstairs only: frames downstairs and the gateway send each other through this panel. 32 frames, the
+// storage in PSRAM (about 8 KB), drained by the "vrelay" task (core 0, priority 3) with no LVGL in the
+// path, so a long redraw never drops a relayed frame.
+struct RelayFrame {
+  uint8_t to, len;
+  uint8_t data[tc::kMaxMsg];
+};
+static constexpr int kRelayFrames = 32;
+static QueueHandle_t g_relay = nullptr;
+static StaticQueue_t g_relay_q;
+// The vrelay task's stack (2560 bytes) is in PSRAM too, so the task costs internal RAM only its TCB
+// (field fix 2026-11-20: it was 2.5 KB of internal heap on upstairs, the panel that lost its ACKs).
+// Safe there: this build runs all its code from PSRAM already (CONFIG_SPIRAM_FETCH_INSTRUCTIONS), the
+// sdkconfig allows task stacks in PSRAM (CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM), and the task only
+// takes a queue, a spinlock and esp_now_send: it never writes flash, so it never runs with the cache off.
+static constexpr uint32_t kRelayStack = 2560;
+static StaticTask_t g_vrelay_tcb;
+// The reach test (DESIGN 13.0, piece R): while it runs, the send reports for frames to the gateway, and
+// the VOICE_GOT kind 30 answers to its own pings, are counted here.
+static volatile bool g_reach_on = false;
+static std::atomic<uint32_t> g_reach_ok{0}, g_reach_missed{0}, g_reach_got{0};
 // The last frames in and out (not the ones to a board that isn't set).
 enum TraceResult : int8_t { kOk, kUnknownMac, kWrongSender, kBadLen, kQueueFull, kSendErr };
 struct Trace {
@@ -91,6 +134,32 @@ static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int le
   } else if (data[2] != (uint8_t)who) {
     r = kWrongSender;
     g_count.wrong_sender++;
+  } else if (tc::is_voice_frame(data, (size_t)len)) {
+    // Not traced (check fix C7). On upstairs, what tc::voice_relay_frame says to pass on goes to the
+    // vrelay task and never reaches the controller.
+    if (g_relay) {
+      int to = tc::voice_relay_frame(data, (size_t)len, (uint8_t)who, tc::kSenderUpstairs);
+      if (to >= 0) {
+        RelayFrame rf;
+        rf.to = (uint8_t)to;
+        rf.len = (uint8_t)len;
+        memcpy(rf.data, data, len);
+        if (xQueueSend(g_relay, &rf, 0) == pdTRUE) g_voice.relay_in++;  // the Wi-Fi task must never block
+        else g_voice.relay_full++;
+        return;
+      }
+    }
+    if (g_reach_on && who == tc::kSenderGateway && len == (int)tc::kVoiceGotLen && data[1] == (uint8_t)tc::VType::Got &&
+        data[tc::kVoiceHeader] == (uint8_t)tc::VType::Ping) {
+      uint32_t key = (uint32_t)data[7] | (uint32_t)data[8] << 8 | (uint32_t)data[9] << 16 | (uint32_t)data[10] << 24;
+      if ((key >> 16) == tc::kReachPingTag) g_reach_got++;  // still queued: the controller ignores its nonce
+    }
+    Frame f;
+    f.len = (uint8_t)len;
+    memcpy(f.data, data, len);
+    if (xQueueSend(g_rx, &f, 0) == pdTRUE) g_voice.in++;
+    else g_voice.full++;
+    return;
   } else {
     Frame f;
     f.len = (uint8_t)len;
@@ -106,9 +175,23 @@ static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int le
 
 // Whether a radio acknowledged the frame. The receiver's hardware does that before decrypting, so
 // a board with other keys still counts as reached; its TComm ACK is what says it took the frame.
-static void on_sent(const uint8_t *, esp_now_send_status_t s) {
+static void on_sent(const uint8_t *mac, esp_now_send_status_t s) {
   if (s == ESP_NOW_SEND_SUCCESS) g_count.reached++;
   else g_count.missed++;
+  if (g_reach_on && mac && !memcmp(mac, kMacs[2], 6)) {
+    if (s == ESP_NOW_SEND_SUCCESS) g_reach_ok++;
+    else g_reach_missed++;
+  }
+}
+
+static void vrelay_task(void *) {
+  RelayFrame f;
+  for (;;) {
+    if (xQueueReceive(g_relay, &f, portMAX_DELAY) != pdTRUE) continue;
+    tc::voice_set_sender(f.data, tc::kSenderUpstairs);  // the header's sender is always this hop's device
+    if (radio_send_voice(f.to, f.data, f.len)) g_voice.relay_out++;
+    else g_voice.relay_err++;
+  }
 }
 
 int radio_own_floor() {
@@ -157,6 +240,24 @@ bool radio_begin() {
     memcpy(p.lmk, i == 2 ? TCOMM_LMK_GATEWAY : TCOMM_LMK_PANELS, 16);
     ok &= check(esp_now_add_peer(&p), "add peer");
   }
+  // Upstairs relays downstairs' voice frames to the gateway and back (DESIGN 4.7). Only upstairs needs
+  // the queue, so the downstairs panel keeps its 8 KB of PSRAM.
+  if (me == tc::kSenderUpstairs && !g_relay) {
+    // Both blocks before the queue is published: on_recv is registered already and reads g_relay, so
+    // g_relay is never set and then taken back (a frame could reach xQueueSend with a null queue), and a
+    // failure leaves nothing allocated (review fix 2026-11-20).
+    void *store = heap_caps_malloc(kRelayFrames * sizeof(RelayFrame), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    void *stack = heap_caps_malloc(kRelayStack, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (store && stack) g_relay = xQueueCreateStatic(kRelayFrames, sizeof(RelayFrame), (uint8_t *)store, &g_relay_q);
+    if (!g_relay) {
+      elog("radio: no voice relay (no memory)");  // never queued for: the controller ignores the frames
+      if (store) heap_caps_free(store);
+      if (stack) heap_caps_free(stack);
+    } else if (!xTaskCreateStaticPinnedToCore(vrelay_task, "vrelay", kRelayStack, nullptr, 3, (StackType_t *)stack,
+                                              &g_vrelay_tcb, 0)) {
+      elog("radio: no voice relay task");  // not with both buffers given; the queue stays (frames: full)
+    }
+  }
   return ok;
 }
 
@@ -171,6 +272,88 @@ void radio_send(uint8_t to, const uint8_t *data, size_t len) {
   else g_count.send_err++;
   trace(true, to, data, (int)len, e == ESP_OK ? kOk : kSendErr);
   if (e != ESP_OK) elog("radio: send to %u failed: %s", to, esp_err_to_name(e));
+}
+
+bool radio_send_voice(uint8_t to, const uint8_t *data, size_t len) {
+  if (to > 2 || !data || !len || len > tc::kMaxMsg) return false;
+  if (!memcmp(kMacs[to], kNoMac, 6)) {
+    g_voice.unset++;
+    return false;
+  }
+  portENTER_CRITICAL(&g_vcap_lock);
+  const bool room = g_vcap.take(millis());
+  portEXIT_CRITICAL(&g_vcap_lock);
+  if (!room) {
+    g_voice.capped++;
+    return false;
+  }
+  if (esp_now_send(kMacs[to], data, len) == ESP_OK) {
+    g_voice.out++;
+    return true;
+  }
+  g_voice.err++;  // ESP_ERR_ESPNOW_NO_MEM and the like: the resend logic picks the chunk up
+  return false;
+}
+
+// Serial `reach N [ms]` and `reach ping N [ms]` (DESIGN 13.0, piece R; declared in tcomm.ino, since
+// board.h is frozen). From the loop task, outside the LVGL lock: it blocks the loop for N x ms.
+//  - reach: N frames of type 31 (kVoiceReachType: nothing decodes it, so nothing acts on it), 249 bytes
+//    each, straight to the gateway, and how many a radio acknowledged. MAC-level only: the receiver's
+//    hardware acknowledges before decrypting, so this is not proof the C6 takes this panel's frames.
+//  - reach ping: N VOICE_PINGs (nonce = kReachPingTag << 16 | try), and how many VOICE_GOT kind 30 came
+//    back end to end (needs the C6 0.5; the controller ignores these nonces).
+// The send reports of anything else this panel sends to the gateway meanwhile are counted too (a
+// NOTICE now and then, rare).
+void radio_reach(int n, int gap_ms, bool ping) {
+  if (n < 1) n = 1;
+  if (n > 2000) n = 2000;
+  if (gap_ms < 5) gap_ms = 5;
+  if (gap_ms > 1000) gap_ms = 1000;
+  int me = radio_own_floor();
+  if (me < 0 || !memcmp(kMacs[2], kNoMac, 6)) {
+    Serial.println("reach: this board or the gateway is not in secrets.h");
+    return;
+  }
+  g_reach_ok = 0;
+  g_reach_missed = 0;
+  g_reach_got = 0;
+  g_reach_on = true;
+  uint32_t refused = 0, t0 = millis();
+  size_t flen = 0;
+  uint8_t buf[tc::kMaxMsg];
+  for (int i = 0; i < n; i++) {
+    if (ping) {
+      tc::VoiceMsg m;
+      m.type = tc::VType::Ping;
+      m.sender = (uint8_t)me;
+      m.floor = (uint8_t)me;
+      m.seq = (uint16_t)i;
+      m.u.ping.nonce = ((uint32_t)tc::kReachPingTag << 16) | (uint16_t)(i + 1);
+      flen = tc::voice_encode(m, buf, sizeof(buf));
+    } else {
+      flen = 249;
+      for (size_t k = 0; k < flen; k++) buf[k] = (uint8_t)(k * 7 + i);
+      buf[0] = tc::kProtoVersion;
+      buf[1] = tc::kVoiceReachType;
+      buf[2] = (uint8_t)me;
+      buf[3] = (uint8_t)i;
+      buf[4] = (uint8_t)(i >> 8);
+      buf[5] = (uint8_t)me;
+    }
+    if (!flen || esp_now_send(kMacs[2], buf, flen) != ESP_OK) refused++;
+    delay(gap_ms);
+  }
+  delay(ping ? 400 : 200);  // the last send reports, and the last answers
+  g_reach_on = false;
+  uint32_t ok = g_reach_ok, missed = g_reach_missed, got = g_reach_got;
+  Serial.printf("reach: %d %s of %u bytes to the gateway, one every %d ms (%lu ms): a radio acknowledged %lu (%.1f %%), "
+                "none did for %lu, %lu refused here\n",
+                n, ping ? "VOICE_PINGs" : "frames", (unsigned)flen, gap_ms, (unsigned long)(millis() - t0), (unsigned long)ok,
+                100.0 * ok / n, (unsigned long)missed, (unsigned long)refused);
+  if (ping)
+    Serial.printf("reach: VOICE_GOT kind 30 back end to end: %lu of %d (%.1f %%)\n", (unsigned long)got, n, 100.0 * got / n);
+  Serial.println(ping ? "reach: direct is the default only with 97 % or more both here and in plain reach runs (DESIGN 13.0)"
+                      : "reach: MAC level only; 97 % or more on every run, then reach ping and the C6 hello's down_peer (DESIGN 13.0)");
 }
 
 bool radio_poll(uint8_t *out, size_t *len) {
@@ -219,6 +402,14 @@ void radio_report() {
   Serial.printf("radio: out %lu (a radio acknowledged %lu, none did for %lu), %lu refused, %lu for a board not set\n",
                 (unsigned long)g_count.out, (unsigned long)g_count.reached, (unsigned long)g_count.missed,
                 (unsigned long)g_count.send_err, (unsigned long)g_count.unset);
+  Serial.printf("radio: voice (not traced) in %lu, %lu dropped queue full; out %lu, %lu refused, %lu for a board not set, "
+                "%lu over the air cap\n",
+                (unsigned long)g_voice.in, (unsigned long)g_voice.full, (unsigned long)g_voice.out, (unsigned long)g_voice.err,
+                (unsigned long)g_voice.unset, (unsigned long)g_voice.capped);
+  if (g_relay)
+    Serial.printf("radio: voice relayed for downstairs: %lu in, %lu out, %lu dropped queue full, %lu refused\n",
+                  (unsigned long)g_voice.relay_in, (unsigned long)g_voice.relay_out, (unsigned long)g_voice.relay_full,
+                  (unsigned long)g_voice.relay_err);
   Trace t[kTraces];
   uint32_t n;
   portENTER_CRITICAL(&g_trace_lock);
@@ -247,6 +438,8 @@ namespace board {
 int radio_own_floor() { return -1; }
 bool radio_begin() { return false; }
 void radio_send(uint8_t, const uint8_t *, size_t) {}
+bool radio_send_voice(uint8_t, const uint8_t *, size_t) { return false; }
+void radio_reach(int, int, bool) { Serial.println("reach: radio off in this build"); }
 bool radio_poll(uint8_t *, size_t *) { return false; }
 void radio_report() { Serial.println("radio: off in this build (bash tools/fw.sh radio turns it on)"); }
 }  // namespace board

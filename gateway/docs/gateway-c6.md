@@ -14,17 +14,17 @@ the hardware.
 | Path | What it is |
 |---|---|
 | `gateway/gateway-c6/gateway-c6.ino` | The board: USB serial port, radio, screen |
-| `gateway/gateway-c6/src/gw/` | The logic (requests, checks, retries, ACKs, replies) and a small JSON reader. Plain C++. |
+| `gateway/gateway-c6/src/gw/` | The logic (requests, checks, retries, ACKs, replies), the voice session state (`voice_session.*`, from 0.5) and a small JSON reader. Plain C++. |
 | `gateway/gateway-c6/src/lcd/` | The 1.14 inch ST7789 screen, with a built-in 5 x 7 font. No display library. |
-| `gateway/gateway-c6/src/shared/` | Three one-line files that compile the panels' own `core/protocol.cpp`, `events.cpp` and `civil.cpp` into the gateway. Nothing is copied. |
+| `gateway/gateway-c6/src/shared/` | Four one-line files that compile the panels' own `core/protocol.cpp`, `events.cpp`, `civil.cpp` and (from 0.5) `voice_proto.cpp` into the gateway. Nothing is copied. |
 | `gateway/gateway-c6/listener/` | A stand-in for the upstairs panel, for testing before the panels' ESP-NOW is switched on |
-| `gateway/tests/test_gateway.cpp` | 93 host checks, run by `bash firmware/tools/build_sim.sh` |
+| `gateway/tests/test_gateway.cpp` | 6,552 host checks (156 before 0.5, 1,364 at the start of 0.6, 6,507 at the start of 0.7), run by `bash firmware/tools/build_sim.sh` |
 
 The host tests cover the brief's two OUTSIDE and two LUCY frames byte for byte, the ACK examples,
 ACKs from an unknown MAC or with the wrong sender byte (ignored), the retry times (0, 150, 400,
 750, 1150 ms, failed at 1.5 s), a newer request superseding one in flight, the two types retrying
 independently, exactly one final reply per id, every field check, and (since 2026-11-07) the UPDATE
-line: its frame byte for byte, the busy answer, its ACK, its give-up and its bad ids.
+line: its frame byte for byte, the busy answer, its ACK, its give-up and its bad ids; and (from 0.4) the answer and mail_ack lines, the ring notice and the unsigned knock id.
 
 Capacity, built with the real secrets file: the gateway uses 968,605 bytes of the C6's
 1,310,720-byte app space (73%, nearly all of it the Wi-Fi stack) and 45,700 bytes of static RAM
@@ -94,7 +94,7 @@ Pi's flash command over ssh, all through Mike's untracked `firmware/tools/gatewa
 checks the image and the chip's MAC, saves what's in app0, writes app0 only (never the bootloader,
 the partition table or NVS) and prints the gateway's hello reply. `fw.sh` checks that the reply's
 `fw` matches `kFirmware` in `gateway.h`, so bump that with every gateway change (0.2 is the first
-with the update line, 0.3 the first with the notices). The Pi's side in full, as asked of the WeatherGate session:
+with the update line, 0.3 the first with the notices, 0.4 the first with the phone answer and mail ack lines and the ring notice, 0.7 the first with the rooms line). The Pi's side in full, as asked of the WeatherGate session:
 `firmware/docs/weathergate-remote-brief.md`.
 
 ## The secrets file
@@ -213,7 +213,7 @@ request after the first has been answered is a new update with a new seq.
 A reset loses whatever was in flight, with no final reply for it. When `{"boot":true,...}` arrives,
 treat any request still waiting as failed, and send the Lucy press again.
 
-While the port is closed (the bridge restarting), the C6 keeps the replies it writes in a 2 KB
+While the port is closed (the bridge restarting), the C6 keeps the replies it writes in a 2 KB (4 KB from 0.5)
 buffer, and they come out when the port opens again. Ignore replies for ids this run of the bridge
 didn't send, and send `{"cmd":"hello"}` after opening.
 
@@ -239,7 +239,7 @@ only, to the gateway, with the usual five tries over 1.5 s. The gateway ACKs it 
 frame a panel would send, whenever it arrives, a repeat included (the first ACK may be what was
 lost). Only a NOTICE from the upstairs panel's MAC is taken: any other MAC, the downstairs panel,
 or a frame whose sender byte does not match its MAC is ignored, with no ACK. A frame the gateway
-can't read (a kind outside 1 to 7, a floor over 1, text over 40 bytes) is ignored with no ACK.
+can't read (a kind outside 1 to 8, a floor over 1, text over 40 bytes) is ignored with no ACK.
 Retries of one NOTICE are told apart by the frame's seq (kept for 10 s, as the panels do), so each
 event prints once. If the gateway doesn't answer, the panel drops the notice after those tries and
 shows nothing: it is never "No signal", and it never holds up what the two panels send each other.
@@ -251,9 +251,9 @@ The line is unsolicited (no `id`, nothing to reply to), one per event:
 | Field | Meaning |
 |---|---|
 | `event` | always `"notice"` |
-| `kind` | `knock`, `arrow_urgent`, `arrow_mild`, `mail`, `dog_out`, `status` or `note` (the numbers 1 to 7 on the radio, in that order) |
+| `kind` | `knock`, `arrow_urgent`, `arrow_mild`, `mail`, `dog_out`, `status`, `note` or `ring` (the numbers 1 to 8 on the radio, in that order) |
 | `floor` | `"upstairs"` or `"downstairs"`: who the event is about (see below) |
-| `value` | a whole number, signed (see below) |
+| `value` | a whole number, signed (see below); for `ring` the knock id, unsigned, 1 to 65535 |
 | `time` | UTC seconds since 1970 of the event itself, or 0 when the panel had no clock |
 | `text` | up to 40 printable ASCII characters; `"` and `\` are escaped as in JSON; may be empty |
 
@@ -263,22 +263,107 @@ The line is unsolicited (no `id`, nothing to reply to), one per event:
 | `arrow_urgent` | the tenant sent an urgent heat or cooling request | downstairs | +1 heat, -1 cooling | empty |
 | `arrow_mild` | the tenant sent a mild heat or cooling request | downstairs | +1 heat, -1 cooling | empty |
 | `mail` | mail was marked for downstairs (taking it back says nothing) | downstairs | 1 | empty |
+| `mail` | "no mail" was marked (Mike, 2026-11-18: he went for the mail and there was none; taking it back says nothing) | downstairs | 3 | `NOMAIL` |
 | `dog_out` | a dog passed its out-too-long limit (the same limit as the nudge on the tile) | upstairs (not meaningful) | minutes out | `LUCY`, `COPPER` or `BOTH` |
 | `status` | a floor's status changed (a timer running out counts) | whose status | 0 | the word: `OPEN`, `BUSY`, `PRIVATE`, `SLEEPING` or `AWAY` |
 | `note` | a floor's tile message was set (clearing it says nothing) | whose message | 0 | the message, cut at 40 characters |
+| `ring` | see the phone section below (from 0.4) | the RUNG floor | the knock id, unsigned | `RING` or `ANSWERED` |
 
 Each is raised once per occurrence, from state the upstairs panel already holds (what downstairs does
 reaches upstairs through the normal sync). `time` is the event's own time where the panel knows it (the
 arrow's sent time, the moment mail was marked, when the dog went out, when the message was written),
 so a notice that is raised again after a restart carries the same `(kind, time)`; the Pi should drop
 repeats by that pair. Which kinds are sent is a bitmask in the upstairs panel (bit 0 is kind 1):
-`knock`, `arrow_urgent` and `dog_out` are on to begin with, and a Settings page for the rest is a
-follow-up. A line is at most about 190 bytes, well inside the 512-byte limit, and goes out in one
+`knock`, `arrow_urgent`, `arrow_mild`, `mail`, `dog_out`, `note` and `ring` are on to begin with
+(0xDF; only `status` is off), and a Settings page for the rest is a follow-up. `mail` and `ring`
+drive the phone pushes (Mike, 2026-11-15), so a panel whose saved mask predates them gains both once,
+when its settings are carried forward; without `ring` no phone is ever pushed. `arrow_mild` and
+`note` were added to the starting mask on 2026-11-18 (saved settings version 8) so the tenant's mild
+temperature requests and notes reach Mike's phone; a panel on version 6 or 7 gains both bits once
+(0x44), and a version 8 mask Mike has changed is never touched again. `note` is raised for either
+floor's message, so the Pi must look at `floor` (downstairs is the tenant's). A line is at most about 190 bytes, well inside the 512-byte limit, and goes out in one
 write like every other line.
 
-While the Pi bridge isn't reading the port, these lines wait in the same 2 KB buffer as the replies
+While the Pi bridge isn't reading the port, these lines wait in the same 2 KB (4 KB from 0.5) buffer as the replies
 and come out when the port opens (the Pi should ignore ones older than it cares about, by `time`).
-Nothing here changes the three request types, their replies, a request in flight or the screen.
+Nothing here changes the request types, their replies, a request in flight or the screen.
+
+## Phone answers and the ring notice (Mike, 2026-11-15)
+
+From `gateway-c6 0.4` the phones can answer a ring and acknowledge the mail, through the Pi and
+ntfy. Two more request types, in the same style as the others (one final reply per `id`, the usual
+retries, sent to the upstairs panel; latest wins within `mail_ack`, and within `answer` only among
+answers for the same rung floor):
+
+    {"type":"answer","id":31,"floor":"downstairs","knock":43981,"come_on":1}
+    {"type":"mail_ack","id":32}
+
+- `answer`: `floor` is `"upstairs"` or `"downstairs"` and names the floor that was RUNG, `knock` is
+  that ring's id (1 to 65535, from the `ring` notice's `value`) and `come_on` is 1 for Come on, 0
+  for Not now. It goes out as a PHONE_ANSWER frame (type 18: floor u8, knock id u16, come_on u8).
+  Upstairs applies it, or passes it to downstairs when the rung floor is downstairs, and the rung
+  panel answers its banner as if tapped (the ringer sees "(from phone)").
+- `mail_ack`: needs only the `id`. It goes out as a MAIL_ACK frame (type 19, one reserved byte,
+  always 0), and upstairs clears the mail the way the downstairs panel's acknowledge tap does. Since
+  2026-11-18 it clears whichever is showing, the mail badge or the "no mail" one (the `mail` notice
+  with value 3 and text `NOMAIL`, same gate as a real mail notice: downstairs Open or Busy, upstairs
+  clock valid, outside quiet hours). The same `mail_ack` is the phone's acknowledgement for both; the
+  gateway needs no change, it prints the notice as it comes. The push words for the phones are the
+  Pi's side (a `NOMAIL` notice is value 3 with that text; value 1 with empty text is real mail).
+
+The replies are the same shapes as the other types:
+`{"type":"answer","id":31,"acked":"upstairs","seq":16384,"ms":6}`, `"failed":"upstairs"`,
+`"superseded":true` (an earlier `mail_ack`, or an earlier `answer` for the same rung floor, still
+waiting for its ACK gave way) and
+`{"type":"answer","id":3,"rejected":"knock must be 1 to 65535"}`. The rejection reasons are
+`floor must be upstairs or downstairs`, `knock must be 1 to 65535`, `come_on must be 0 or 1` and,
+for both types, `id must be a positive whole number`. The screen's last-result row reads
+`answer acked 6ms`, `mail failed` and so on (`mail`, not `mail_ack`, so `mail acked 1150ms` still
+fits the 20 characters). Neither type disturbs the others in flight, and an answer for one rung floor
+never cuts off an answer for the other: each floor has its own slot (Mike, 2026-11-15), so an answer
+to an upstairs ring and one to a downstairs ring can both be in flight, up to six requests in all.
+
+The ring notice is a new `kind`, 8, `ring`, raised by the upstairs panel (its `floor` is the RUNG
+floor and its `value` the knock id, printed unsigned so the Pi gets the id itself):
+
+    {"event":"notice","kind":"ring","floor":"downstairs","value":43981,"time":1793000000,"text":"RING"}
+
+`text` `RING` means a ring just went out and that floor's phones should be pushed (the panel has
+already checked the floor is Open or Busy outside quiet hours). `ANSWERED` means the ring was
+answered or dismissed at a panel, so the phones can be told. The other kinds still print `value`
+signed. Like every notice it is ACKed and printed once however many times it is sent.
+
+## Rooms for Apple Home (gateway-c6 0.7, Mike, 2026-11-22)
+
+The upstairs panel sends both floors' indoor readings and upstairs occupancy to the C6; the C6
+prints one line; the Pi shows them in Apple Home as the HomeKit bridge "TComm Rooms" (accessories
+"Upstairs" and "Downstairs"). The panels never join Wi-Fi for this.
+
+On the radio it is a ROOMS frame (type 32; 31 is the `reach` test's, 20 to 30 are voice), 18 bytes:
+the usual header, then `flags u8 | up_temp_tenths_f i16 | up_hum_tenths u16 | down_temp_tenths_f i16 |
+down_hum_tenths u16 | time u32`. Flags: bit 0 upstairs reading valid, bit 1 downstairs reading valid,
+bit 2 occupancy known (sensor fitted upstairs), bit 3 occupied. Decode refuses any other length, a
+flag above bit 3, occupied without known, and a humidity over 100.0.
+
+It works like a NOTICE: sent by the upstairs panel only, five tries over 1.5 s, ACKed every time it
+arrives (ACK type 32, the frame's seq), and printed once per seq (its own 10 s seen-list, so ROOMS
+retries never push a notice out). A ROOMS from the downstairs panel, an unknown MAC or a mismatched
+sender byte is ignored with no ACK. The panel sends at once when occupancy changes, when a temperature
+moves 0.5 F or a humidity 2 points from what it last sent, when a reading's validity changes, and at
+least every 5 minutes; never more than once in 10 s except for occupancy; first about 20 s after
+start-up. A C6 older than 0.7 never ACKs, and the panel just tries again each minute.
+
+    {"event":"rooms","up_t":69.2,"up_h":57.0,"down_t":68.1,"down_h":45.5,"occ":1,"time":1795358600}
+
+| Field | Meaning |
+|---|---|
+| `up_t`, `up_h` | upstairs temperature in F and humidity in %, one decimal, as the tile shows them (offset applied); both `null` when the upstairs reading isn't valid |
+| `down_t`, `down_h` | the same for downstairs (its last READING, if one came in the last 15 minutes); both `null` otherwise |
+| `occ` | 1 occupied, 0 not (upstairs, held for the presence hold time), `null` when no sensor is fitted |
+| `time` | the panel's UTC seconds when it sent it, 0 without a clock |
+
+The decimals are printed with integer math (no float printf on the C6), so -1.5 F is `-1.5` and
+-0.5 F is `-0.5`. A line is at most about 120 bytes.
 
 ## Testing end to end from the laptop
 
@@ -366,3 +451,94 @@ boot; the host tests check the bytes with the brief's own seq values.
 - A `failed` reply and its `gw:` note on real hardware (unplug the panel and send a Lucy press).
 - The listener (not needed now that the panel's radio build works, but untried).
 - Done 2026-10-25: the round trip with the real panel, encryption included (Results, above).
+
+## Voice notes (gateway-c6 0.5, 2026-11-20; mu-law and 255 chunks from 0.6, 2026-11-21)
+
+From `gateway-c6 0.5` the C6 carries the panels' spoken notes to the Pi and the Pi's text back
+(`firmware/docs/voice-notes/DESIGN.md` is the whole design; this is the C6's part). Nothing about the older
+request types, their replies or the notice lines changes.
+
+**Radio.** Frames of types 20 to 30 (`core/voice_proto.h`) have their own codec and never use the
+standard ACK, the 10 s dedup or the retry queue; every confirmation is end to end. The C6 takes
+BEGIN, DATA, END, ABORT, GOT, PUSH and PING from either panel: upstairs' own frames carry floor 0, a
+frame from upstairs with floor 1 is downstairs' frame relayed by upstairs, and a frame from the
+downstairs MAC must carry floor 1. Replies go back the way the floor's last frame came (direct, or
+via upstairs); the C6's own dismiss frames go the way the last frame from downstairs came, via
+upstairs until downstairs has been heard directly. A PING (direct only, from downstairs) is answered
+at once with VOICE_GOT kind 30.
+
+**One session per floor** (`voice_session.*`): xfer, codec, a received map of 255 chunks (sized from `tc::kVoiceMaxChunks`; 128 before 0.6), the route, the
+time of the last frame. A BEGIN for another xfer replaces the floor's session (the Pi gets a
+`voice_abort` with reason `lost` for the old one), a resent BEGIN never starts over. The C6 sends a
+VOICE_ACK after BEGIN, after every 8 new chunks, 80 ms after the last DATA when a gap exists (or a
+chunk came twice, or a chunk filled a gap; 0.6), and on END. That 80 ms is never pushed past 300 ms
+from the first DATA since the last ACK, so a trickle of resends cannot hold it back, and a due ACK with
+nothing to report is dropped (0.6). A session with no frame for 2 s is aborted (a `voice_abort` line, and
+VOICE_ABORT reason 4 to the panel, three times at 0, 100 and 250 ms). The last finished xfer is kept
+per floor, so a resent END gets state 2 again and prints nothing. A BEGIN while no bridge hello has
+said `"voice":1` gets VOICE_ABORT reason 7 (no Pi).
+
+**Cut-through, no clip buffer.** Each DATA chunk becomes one line (about 390 bytes, under the 512
+limit; a mu-law chunk, codec 1, 237 samples, pred and step 0, is the same size, 376 to 378 bytes, but
+a mu-law clip streams at 68 lines a second, 27 KB/s, not 34):
+
+    {"event":"voice_begin","x":7,"f":"down","purpose":"message","codec":2,"cs":474,"via":"direct"}
+    {"event":"voice","x":7,"f":"down","i":12,"p":-311,"s":41,"d":"<316 base64 characters>"}
+    {"event":"voice_end","x":7,"f":"down","n":96,"ns":45504,"sp":1}
+    {"event":"voice_abort","x":7,"f":"down","reason":"user"}
+    {"event":"voice_msg","id":3735928559,"to":"downstairs","from":"upstairs","time":1793000000,"text":"..."}
+
+`f` is `up` or `down`. A chunk counts as received only if its line was written whole.
+
+**The write gate.** The USB send buffer is now 4096 bytes. A chunk line is written only if
+`availableForWrite() >= line + 1100`; begin, end, abort and `voice_msg` lines only if 600 bytes stay
+free; nothing is written for a chunk while a request of the first six kinds waits for its ACK. So a
+notice event (about 110 to 256 bytes) or a request's reply is never cut or lost behind a stream. A
+chunk that was held back is a gap in the next VOICE_ACK, and the panel resends it. If a `voice_end`
+line cannot be written yet, the C6 tries again on every tick and the panel's resent END.
+
+**Requests from the Pi** (each answered once, with the usual retries, 1.5 s give-up, `acked`,
+`failed`, `rejected` or `superseded`; matched by the panel's VOICE_GOT, not by an ACK seq):
+
+    {"type":"voice_text","id":N,"x":7,"floor":"downstairs","status":0,"fl":1,"t0":"<=60 chars","t1":"<=60 chars"}
+    {"type":"voice_ack","id":N,"floor":"downstairs","msg":3735928559}
+
+`voice_text` becomes VOICE_TEXT (t0 and t1 joined; `status` 0 needs text, any other status none;
+`fl` is the flags byte, bit 0 = the first capital is only a sentence start; missing means 0). Latest
+wins per floor: an interim status 6 is answered `superseded` when the final text comes. `voice_ack`
+becomes VOICE_DISMISS (a phone's Got it) and is answered
+`{"type":"voice_ack","id":N,"acked":"downstairs","result":"removed"|"gone","seq":S,"ms":M}`. These
+slots are not latest-wins: while one is waiting for the floor, another `voice_ack` for it is answered
+`{"type":"voice_ack","id":N,"rejected":"busy"}` (not counted as a rejection on the screen), and the
+bridge asks again 1.6 s later. The screen's last-result row shows `vtext` and `vack`.
+
+**VOICE_PUSH** (the receiving panel's message for its phones) prints once as a `voice_msg` line (the
+last 8 ids are remembered), then VOICE_GOT kind 28 goes back by the frame's route: result 0, or
+result 2 (refused) while the bridge has not said `"voice":1`. If the line cannot be written there is
+no GOT, and the panel sends the push again.
+
+**Hello.** The bridge sends `{"cmd":"hello","voice":1}`; the reply (and the boot line) now also
+carry `"voice":1`, `"drops":N` (radio frames the receive queue had to drop since the reset) and
+`"down_peer":true|false` (the downstairs panel is registered as an ESP-NOW peer with its key: false
+means downstairs frames cannot be taken directly at all, the reach test's first condition):
+
+    {"boot":false,"mac":"aa:bb:cc:dd:ee:ff","channel":1,"fw":"gateway-c6 0.6","voice":1,"drops":0,"down_peer":true}
+
+A C6 0.4 ignores the extra field in the bridge's hello. The receive queue holds 48 frames (32 in 0.5, 16
+in 0.4; 0.6 takes 68 DATA frames a second, 77 with a relayed floor). The C6's own air cap is 100 voice
+frames a second with bursts of 25 (50 in 0.5): it only ever sends ACKs, GOTs, TEXT and DISMISS, about
+9 a second per streaming floor.
+The screen shows `DROPS n` on its last row when there have been drops and nothing else needs it.
+
+**Tests** (`gateway/tests/test_gateway.cpp`): sessions from both floors at once, direct and via upstairs; line
+size under 512 and the base64 round trip; the ACK schedule and the gap bitmap; the write gate at the
+exact byte and with a stalled port; the H2 test (a doorbell notice and a Lucy reply arrive whole
+while voice streams, into a backing-up port and into a stopped one); the 2 s abort; voice_text split,
+join, flags and every rejection; voice_ack removed, gone, busy; push dedup and escaping; ping; the old
+types unchanged.
+
+**Capacity (estimates from the host build until measured on the C6).** Code: `gateway.cpp` about
+13 KB, `voice_session.cpp` 1.2 KB and the shared `voice_proto.cpp` 4.3 KB on x86 `-Os`, so about 15
+to 19 KB of flash on the C6 (1.5% of its app space). Static RAM: about +1.2 KB (four more request
+slots of 290 bytes), +0.3 KB of voice state and line buffer. Heap: the receive queue is +4 KB and the
+USB send buffer +2 KB.

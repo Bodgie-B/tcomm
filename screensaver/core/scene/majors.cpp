@@ -19,6 +19,7 @@
 #include <string.h>
 
 #include "../anim/ease.h"
+#include "../mush_patch.h"
 #include "../render/renderer.h"
 #include "../ss_app.h"
 #include "director.h"
@@ -26,8 +27,13 @@
 #include "day_bike.h"
 #include "day_boomerang.h"
 #include "day_kite.h"
+#include "day_longshot.h"
+#include "day_plink.h"
 #include "day_ropes.h"
 #include "day_slackline.h"
+#include "day_taichi.h"
+#include "day_trip.h"
+#include "stage22_switch.h"
 #include "fetch.h"
 #include "landscape.h"
 #include "memory.h"
@@ -147,6 +153,7 @@ float shapeReach(uint8_t sh) {
     case SH_PERCH: return 8.f;
     case SH_CHIP: return 7.f;
     case SH_STICK: return fetchStickReach();
+    case SH_GONG: case SH_FLAG: return longshotShapeReach(sh);   // the long shot's (day_longshot.h)
     default: return 12.f;
   }
 }
@@ -394,6 +401,7 @@ void drawShape(const Glyph& g, Surface& s, const Rect& clip, const Palette& pal)
       break;
     }
     case SH_STICK: fetchStickDraw(g, s, clip, pal); break;
+    case SH_GONG: case SH_FLAG: longshotShapeDraw(g, s, clip, pal); break;   // the long shot's (day_longshot.h)
     case SH_BEAR: {     // round head, two round ears, a snout; the jaw opens by k (a roar)
       drawForearm(s, X, c, clip);
       fillCircle(s, X(0.f, 0.f), 6.f * g.scale, c, clip);
@@ -3667,6 +3675,31 @@ constexpr uint8_t kDay = kEve | kMorn | kMid;
 // 1.5, the kite and the boomerang 1.0). The ropes course is the longest piece (about 100 s) and fits the loop less
 // often, so it weighs a little less.
 constexpr float kBikeW = 1.0f, kArcheryW = 1.0f, kSlackW = 1.0f, kRopesW = 0.8f;
+// The plinking is the longest major (103 to 115 s, a bit over the ropes course's longest), so it weighs a little
+// less than the ropes course (Mike, 2026-11-17).
+constexpr float kPlinkW = 0.7f;
+// Stage 22's weights (INTEGRATION_PLAN 5.6, PROPOSED; Mike, 2026-11-18). The plan block with its gates is
+// written (step C0), but each piece plans only in a build with SS_S22 on (stage22_switch.h) AND once its
+// own serial step has landed: until then majorsPlan zeroes its weight (a zero weight is skipped by
+// Rng::weighted with the same single draw), never forces it, and the herd's pick keeps it out, so a stub
+// major is never planned into an empty beat and every family plans exactly as before. The step that
+// fills a piece in flips its constant here, and only that: C2 kTaichiLanded, C3 kLongshotLanded, C4
+// kHerdLanded (the deer visit is a midday beat, not a major, but its pick is part of this block), C5c
+// kMushroomLanded. The mushroom weighs 0 always: it is forced when ripe.
+constexpr bool kS22PlanBlock = true;
+constexpr bool kS22Live = SS_S22 != 0 && kS22PlanBlock;
+constexpr bool kTaichiLanded = true;      // step C2 (2026-11-19): the tai chi major is in
+constexpr bool kLongshotLanded = true;    // step C3 (2026-11-19): the long shot major is in
+constexpr bool kHerdLanded = true;        // step C4 (2026-11-19): the deer visit is in
+constexpr bool kMushroomLanded = true;    // step C5c
+// Tuned in step C6 (2026-11-19) against the plan's rates (INTEGRATION_PLAN 5.6) in real runs (ss_preview,
+// 400 seeds of 6 loops, memory kept). Tai chi 1.6 -> 2.4: its later morning loops went 17.0 % -> 19.5 %
+// over 6 loops, and 21.0 % -> 23.9 % over a 19-loop morning (25 % once the forced loop is far back): the
+// ring keeps it out of the loop after one and thins the next, so a higher weight buys little more. The
+// long shot 0.6 -> 0.8: 6.6 % -> 8.1 % of the dry, dog-free midday loops (the plan's 7 to 9 %), the
+// fetch unchanged.
+constexpr float kTaichiW = 2.4f;
+constexpr float kLongshotW = 0.8f;
 
 struct MajorDef {
   const char* name;
@@ -3727,8 +3760,17 @@ const MajorDef kMajors[MJ_COUNT] = {
     {"archery", {60, 60}, kArcheryW, kOut, kMid, archeryMajorBegin, archeryMajorTick, {nullptr, nullptr}, {0, 0}},
     {"slackline", {80, 80}, kSlackW, kOut, kMid, slackMajorBegin, slackMajorTick, {nullptr, nullptr}, {0, 0}},
     {"ropes", {90, 90}, kRopesW, kOut, kMid, ropesMajorBegin, ropesMajorTick, {nullptr, nullptr}, {0, 0}},
+    // plink (day_plink.cpp): three variants and a no-show flag in the byte; the script and the seconds come from
+    // plinkScript and plinkSeconds, the script slots here are unused. Midday only, never with a dog out.
+    {"plink", {103, 103}, kPlinkW, kOut, kMid, plinkMajorBegin, plinkMajorTick, {nullptr, nullptr}, {0, 0}},
+    // Stage 22 (day_taichi.cpp, day_longshot.cpp, day_trip.cpp): the scripts and the seconds come from their
+    // own functions, the script slots here are unused. taichi: morning, after the wake only. longshot: midday,
+    // on the plinking's rifle. mushroom: midday after lunch or the wade, weight 0 (forced when ripe).
+    {"taichi", {143, 143}, kTaichiW, 1, kMorn, taichiMajorBegin, taichiMajorTick, {nullptr, nullptr}, {0, 0}},
+    {"longshot", {109, 109}, kLongshotW, kOut, kMid, longshotMajorBegin, longshotMajorTick, {nullptr, nullptr}, {0, 0}},
+    {"mushroom", {201, 201}, 0.f, 2 | 4, kMid, tripMajorBegin, tripMajorTick, {nullptr, nullptr}, {0, 0}},
 };
-static_assert(MJ_COUNT == 24, "a row per major");
+static_assert(MJ_COUNT == 28, "a row per major");
 
 // The script for a major and variant (stargaze: one table per star count).
 void scriptOf(int id, int var, const Step*& s, uint8_t& n) {
@@ -3766,6 +3808,22 @@ void scriptOf(int id, int var, const Step*& s, uint8_t& n) {
   }
   if (id == MJ_ROPES) {
     s = ropesScript((uint8_t)var, n);
+    return;
+  }
+  if (id == MJ_PLINK) {
+    s = plinkScript((uint8_t)var, n);
+    return;
+  }
+  if (id == MJ_TAICHI) {   // stage 22: each from its own day_*.h
+    s = taichiScript((uint8_t)var, n);
+    return;
+  }
+  if (id == MJ_LONGSHOT) {
+    s = longshotScript((uint8_t)var, n);
+    return;
+  }
+  if (id == MJ_MUSHROOM) {
+    s = tripScript((uint8_t)var, n);
     return;
   }
   const int v = var == 1 ? 1 : 0;
@@ -3856,6 +3914,10 @@ void majorEnd(SceneCtx& ctx) {
   else if (m.id == MJ_ARCHERY) archeryMajorEnd(w);
   else if (m.id == MJ_SLACKLINE) slackMajorEnd(w);
   else if (m.id == MJ_ROPES) ropesMajorEnd(w);
+  else if (m.id == MJ_PLINK) plinkMajorEnd(w);        // the bag hung again and out of his hands, the day union zero
+  else if (m.id == MJ_TAICHI) taichiMajorEnd(w);      // stage 22: each puts back what it took, the day union zero
+  else if (m.id == MJ_LONGSHOT) longshotMajorEnd(w);
+  else if (m.id == MJ_MUSHROOM) tripMajorEnd(w);
   if (w.hiker.carry == CARRY_ROD) hikerCarry(w.hiker, CARRY_NONE);
   m.on = false;
   w.busy = false;
@@ -3885,10 +3947,29 @@ int majorSeconds(int id, int var) {
   if (id == MJ_ARCHERY) return archerySeconds((uint8_t)var);
   if (id == MJ_SLACKLINE) return slackSeconds((uint8_t)var);
   if (id == MJ_ROPES) return ropesSeconds((uint8_t)var);
+  if (id == MJ_PLINK) return plinkSeconds((uint8_t)var);
+  if (id == MJ_TAICHI) return taichiSeconds((uint8_t)var);
+  if (id == MJ_LONGSHOT) return longshotSeconds((uint8_t)var);
+  if (id == MJ_MUSHROOM) return tripSeconds((uint8_t)var);
   return kMajors[id].seconds[var == 1 ? 1 : 0];
 }
 
-bool majorKept(int id, int var) { return id == MJ_FETCH && ((uint8_t)var & FETCH_FORCED) != 0; }
+// A forced fetch, tai chi and the mushroom (INTEGRATION_PLAN 3.1 point 11): the fit never drops them. Tai chi
+// and the mushroom are only ever planned with SS_S22 on.
+bool majorKept(int id, int var) {
+  if (id == MJ_TAICHI || id == MJ_MUSHROOM) return true;
+  return id == MJ_FETCH && ((uint8_t)var & FETCH_FORCED) != 0;
+}
+
+uint8_t majorsS22Plans(const Memory& mem) {
+  if (!kS22Live) return 0;
+  uint8_t m = 0;
+  if (s22Plans(S22_TAICHI, kTaichiLanded, mem.s22_preview)) m = (uint8_t)(m | S22_TAICHI);
+  if (s22Plans(S22_LONGSHOT, kLongshotLanded, mem.s22_preview)) m = (uint8_t)(m | S22_LONGSHOT);
+  if (s22Plans(S22_MUSHROOM, kMushroomLanded, mem.s22_preview)) m = (uint8_t)(m | S22_MUSHROOM);
+  if (s22Plans(S22_HERD, kHerdLanded, mem.s22_preview)) m = (uint8_t)(m | S22_HERD);
+  return m;
+}
 
 Beat majorBeat(const LoopPlan& p, int i) {
   const int id = p.major[i];
@@ -3897,7 +3978,24 @@ Beat majorBeat(const LoopPlan& p, int i) {
 
 namespace {
 bool isFishing(int id) { return id == MJ_FISHING_SMALL || id == MJ_FISHING_LOG || id == MJ_FISHING_GOOD; }
+// The plinking, the long shot and ranger_ridge all happen on the hills: at most one a loop (INTEGRATION_PLAN
+// 3.1 point 9; the rule is the long shot's, so it holds once the long shot plans).
+bool isHillside(int id) { return id == MJ_PLINK || id == MJ_LONGSHOT || id == MJ_RANGER_RIDGE; }
+// Night as majorsPlan reads it: the stars are out (mood within half a step of 0 / 6) or night mode.
+bool planNight(const Inputs& in) {
+  const float mood = in.mood - 6.f * floorf(in.mood / 6.f);
+  const float dn = mood < 3.f ? mood : 6.f - mood;
+  return in.night_mode || dn < 0.5f;
+}
+// The weather the OUTSIDE data says is there (a random weather is drawn after the plan: clear to the plan).
+uint8_t dataKind(const Inputs& in) { return in.have_outside ? weatherKindForCode(in.weather_code) : (uint8_t)WX_CLEAR; }
+bool wetKind(uint8_t wk) { return wk == WX_RAIN || wk == WX_SNOW || wk == WX_STORM; }
 }  // namespace
+
+bool majorsMushroomPlays(const Inputs& in, const Memory& mem, uint8_t family) {
+  if ((majorsS22Plans(mem) & S22_MUSHROOM) == 0) return false;
+  return mushWillPlay(mem.mush, family == SF_MIDDAY, planNight(in), wetKind(dataKind(in)));
+}
 
 void majorsPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem, const MajorSlots& slots) {
   // Night: the stars are out (mood within half a step of 0 / 6) or night mode.
@@ -3924,8 +4022,24 @@ void majorsPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem, const Majo
     // The bike, the archery, the slackline and the ropes course: the same gate as the kite (a random weather that turns
     // up after the plan sends them to their no-show script, like the kite's: day.h dayNoShowScript).
     if (night || wk == WX_RAIN || wk == WX_SNOW || wk == WX_STORM)
-      base[MJ_BIKE] = base[MJ_ARCHERY] = base[MJ_SLACKLINE] = base[MJ_ROPES] = 0.f;
+      base[MJ_BIKE] = base[MJ_ARCHERY] = base[MJ_SLACKLINE] = base[MJ_ROPES] = base[MJ_PLINK] = 0.f;
+    // The plinking is also out while a house dog is out (Mike, 2026-11-17: no shooting with Lucy or Copper about).
+    if (in.dog_out != 0) base[MJ_PLINK] = 0.f;
   }
+  // Stage 22's gates (step C0, INTEGRATION_PLAN 3.1 point 9). A piece that does not plan in this build
+  // (stage22_switch.h; majorsS22Plans) weighs 0 and is never forced. Tai chi: by day, not in the data's
+  // rain, snow or storm. The long shot: by day, not in rain, snow, storm or fog, never with a house dog
+  // out. A loop the deer visit (LoopPlan::herd, middayPlan's pick) has no deer_stick, plinking or long shot.
+  const uint8_t s22 = majorsS22Plans(mem);
+  const uint8_t wk22 = dataKind(in);
+  const bool herd = p.herd != 0 && (s22 & S22_HERD) != 0;
+  if ((s22 & S22_TAICHI) == 0 || night || wetKind(wk22)) base[MJ_TAICHI] = 0.f;
+  if ((s22 & S22_LONGSHOT) == 0 || night || wetKind(wk22) || wk22 == WX_FOG || in.dog_out != 0) base[MJ_LONGSHOT] = 0.f;
+  base[MJ_MUSHROOM] = 0.f;   // forced when ripe, never drawn
+  if (herd) base[MJ_DEER_STICK] = base[MJ_PLINK] = base[MJ_LONGSHOT] = 0.f;
+  const bool hill_rule = (s22 & S22_LONGSHOT) != 0;
+  // The ripe patch plays this loop (mush_patch.h mushWillPlay; never with SS_S22 off).
+  const bool ripe = (s22 & S22_MUSHROOM) != 0 && mushWillPlay(mem.mush, slots.family == SF_MIDDAY, night, wetKind(wk22));
   // Midday (the heat of the day, a stream to hand): bathing comes up more often.
   if (slots.family == SF_MIDDAY) base[MJ_BATHE] *= 2.5f;
   // The ring buffer: anything picked in the last MEMORY_RING picks is much
@@ -3937,6 +4051,8 @@ void majorsPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem, const Majo
   // nothing to bring now) it may raid the tent side; that one is not held
   // back by the ring (it never could follow its own return otherwise).
   const bool sequel = mem.shoe_back && !mem.shoe_taken;
+  // Tai chi's weight after its gates and before the ring: a forced tai chi ignores the ring, as the fetch does.
+  const float base0_taichi = base[MJ_TAICHI];
   for (int i = 0; i < MJ_COUNT; ++i) {
     const int age = memoryMajorAge(mem, (uint8_t)i);
     if (age < 0 || (sequel && i == MJ_RACCOON_PACK)) continue;
@@ -3944,9 +4060,13 @@ void majorsPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem, const Majo
     base[i] *= age < (int)mem.last_n ? 1e-4f : 0.5f * k * k;
   }
 
-  // How many: 2 to 4 (mostly 3). One rng call per statement throughout.
+  // How many: 2 to 4 (mostly 3). One rng call per statement throughout. The draw is the same whatever
+  // follows: a deer visit caps the loop at two majors, the ripe patch plays alone (after the fetch when a
+  // dog is out), and tai chi counts as two (below).
   static const float kHowMany[3] = {0.3f, 0.45f, 0.25f};
-  const int want = 2 + rng.weighted(kHowMany, 3);
+  int want = 2 + rng.weighted(kHowMany, 3);
+  if (herd && want > 2) want = 2;
+  if (ripe) want = in.dog_out != 0 ? 2 : 1;
   uint8_t free_slots = slots.open;
   int n = 0;
   MajorSet have = 0;
@@ -3967,6 +4087,7 @@ void majorsPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem, const Majo
       for (int j = 0; j < n; ++j) {
         if (pick[j] == i) wt[i] = 0.f;
         if (isFishing(pick[j]) && isFishing(i)) wt[i] = 0.f;   // one rod: at most one fishing major a loop
+        if (hill_rule && isHillside(pick[j]) && isHillside(i)) wt[i] = 0.f;   // one hillside major a loop
       }
       // A set of majors one of the last loops played (so far, as a prefix) only if nothing else fits.
       // rain_shelter is in the rule like the rest (its bit is 1u << 16; MajorSet is 32 bits wide).
@@ -3980,15 +4101,27 @@ void majorsPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem, const Majo
     // A dog is out (the house's badge, read at loop start like the rest of the inputs): a midday loop
     // plays the fetch, first among its picks. The draws above are taken as always; only the pick moves.
     const bool house_dog = k == 0 && in.dog_out != 0 && slots.family == SF_MIDDAY;
+    // Tai chi in the day's first morning loop (Memory::taichi_next bit 2 clear: no form finished this
+    // morning; taichiMajorEnd sets it, spinePlan clears it outside the morning), when its gates pass.
+    const bool tai_first = k == 0 && slots.family == SF_MORNING && base0_taichi > 0.f && (mem.taichi_next & 4u) == 0;
+    // The ripe patch: the first pick, or the second after a dog's fetch.
+    const bool ripe_pick = ripe && k == (in.dog_out != 0 ? 1 : 0);
     if (house_dog) id = MJ_FETCH;
-    if (k >= want || (sum <= 0.f && !house_dog)) continue;
+    else if (tai_first) id = MJ_TAICHI;
+    else if (ripe_pick) id = MJ_MUSHROOM;
+    const bool forced = house_dog || tai_first || ripe_pick;
+    if (k >= want || (sum <= 0.f && !forced)) continue;
     // Past the first two, a pick is optional: never one held back by the ring
     // or the recent sets (only that one was left, say for S4).
-    if (k >= 2 && wt[id] < 1e-3f) continue;
+    if (k >= 2 && !forced && wt[id] < 1e-3f) continue;
     uint8_t allowed = kMajors[id].slots & free_slots;
     if (id == MJ_RACCOON_PACK && mem.shoe_taken) allowed &= kOut;
     if (id == MJ_RACCOON_PACK && sequel) allowed &= kTent;
     if (id == MJ_RAIN_SHELTER && slots.family == SF_MORNING) allowed &= 2u;
+    // A ripe loop with a dog out: the fetch plays first, then the mushroom (INTEGRATION_PLAN 4.7, MUSHROOM_PLAN
+    // 5.6; step C6). The mushroom takes slot 1 or 2, so the fetch keeps to slot 0 or 1 (no draw added: the same
+    // r_slot picks among two). Before this the order came out mushroom first in about 3 ripe dog loops in 10.
+    if (house_dog && ripe) allowed &= 1u | 2u;
     int cnt = 0;
     for (int b = 0; b < 4; ++b) cnt += (allowed >> b) & 1;
     if (cnt == 0) continue;
@@ -4001,6 +4134,7 @@ void majorsPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem, const Majo
       }
     }
     free_slots = (uint8_t)(free_slots & ~(1u << s));
+    if (id == MJ_TAICHI && want > 2) --want;   // the longest morning piece counts as two
     uint8_t v = 0;
     if (id == MJ_FISH_LEAP) v = (r_var % 5u) < 2u ? 1 : 0;   // into the fire pit 2 times in 5
     if (id == MJ_RACCOON_PACK) v = s == 3 ? 1 : 0;           // in the tent: he is asleep
@@ -4014,7 +4148,11 @@ void majorsPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem, const Majo
     if (id == MJ_BIKE) v = bikePlanVar(r_var);                           // through the stream, the rock, the wheelie
     if (id == MJ_ARCHERY) v = archeryPlanVar(r_var);                     // two misses and a bullseye, into the tree, the split arrow
     if (id == MJ_SLACKLINE) v = slackPlanVar(r_var);                     // falls and tries again, across
+    if (id == MJ_PLINK) v = plinkPlanVar(r_var);                         // the clean run, the can that will not fall, the food bag
     if (id == MJ_ROPES) v = ropesPlanVar(r_var);                         // all three, the bridge and the swing, the swing and the net
+    if (id == MJ_TAICHI) v = taichiPlanVar(r_var, mem, in.dog_out);      // the chapter, a gag, the guests (day_taichi.h)
+    if (id == MJ_LONGSHOT) v = longshotPlanVar(r_var);                   // day_longshot.h
+    if (id == MJ_MUSHROOM) v = tripPlanVar(r_var);                       // day_trip.h
     pick[n] = (uint8_t)id;
     have = (MajorSet)(have | (1u << id));
     slot[n] = (uint8_t)s;

@@ -4,6 +4,7 @@
 #include "../app/controller.h"
 #include "../app/demo.h"
 #include "../core/outside_log.h"  // kOutsideNameLen: the outside day files' names
+#include "board.h"                 // the voice capture hooks
 
 namespace board {
 
@@ -32,10 +33,26 @@ class DevicePlatform : public tc::Platform {
   void set_csv_field(const char *name, uint32_t n, int column, const char *value) override;
   void *alloc_big(size_t n) override;
   void free_big(void *p) override { free(p); }  // heap_caps memory too
+  // The controller's Store (about 3.7 KB): PSRAM like alloc_big (field fix 2026-11-20). Called while
+  // g_ctrl is constructed, before setup(); ESP-IDF adds PSRAM to the heap before the constructors run.
+  void *alloc_state(size_t n) override { return DevicePlatform::alloc_big(n); }
+  void free_state(void *p) override { free(p); }
   uint8_t *read_file(const char *name, size_t &len) override;
   void write_file(const char *name, uint8_t *buf, size_t len) override;
   uint32_t random32() override;
   void log(const char *line) override;
+  // Voice notes (docs/voice-notes/DESIGN.md; piece B): ESP-NOW voice frames (never through the demo
+  // loopback), the capture handoff (board_audio.cpp, piece A) and the arrival inbox (NVS, via flush_saves).
+  bool radio_send_voice(uint8_t to, const uint8_t *data, size_t len) override;
+  bool voice_rec_begin(tc::VoiceRec *rec) override { return board::voice_rec_begin(rec); }
+  void voice_rec_stop(tc::VoiceRec *rec, tc::VoiceStop why) override { board::voice_rec_stop(rec, why); }
+  bool voice_rec_release(tc::VoiceRec *rec) override { return board::voice_rec_release(rec); }
+  bool mic_meter(float &peak_db) override {
+    float rms = -99.0f;
+    return board::audio_mic_recent(200, peak_db, rms);
+  }
+  void save_voice_inbox(const tc::VoiceInboxData &d) override;
+  bool load_voice_inbox(tc::VoiceInboxData &d) override;
 
   // The presence sensor (core/presence.h). The loop task reads the input and calls set_presence with
   // the debounced state (and the raw pin level, -1 when not read); the controller asks presence() from
@@ -66,10 +83,14 @@ class DevicePlatform : public tc::Platform {
     kDirtyComfort = 32,
     kDirtyRequests = 64,
     kDirtyPending = 128,  // the comfort outbox (Mike, 2026-11-07)
-    kDirtyNotes = 256     // the tile messages (note.h, Mike 2026-11-07)
+    kDirtyNotes = 256,    // the tile messages (note.h, Mike 2026-11-07)
+    kDirtyVoice = 512     // the voice-message inbox (voice_inbox.h)
   };
   volatile uint16_t dirty_ = 0;
   tc::NoteState notes_[2] = {};  // [0] upstairs, [1] downstairs
+  // The voice inbox: [0] waiting for flush_saves, [1] its copy outside the lock. About 1.1 KB, made in
+  // PSRAM at the first save (field fix 2026-11-20: no longer in internal RAM).
+  tc::VoiceInboxData *voice_box_ = nullptr;
   tc::OwnState own_;
   tc::DogState dog_;
   tc::MailState mail_;

@@ -264,6 +264,26 @@ void mail(Canvas &c, bool solid, Color fg, Color bg) {
   c.line(m, yf, x1, y0, w, ink);
 }
 
+void nomail(Canvas &c, Color ink, Color gap, const Color *disc) {
+  float s = (float)c.width(), m = s / 2;
+  c.clear(ink, 0);
+  if (disc) c.fill_circle(m, m, m, *disc);
+  c.ring(m, m, m, m - s * 0.06f, ink);
+  // The envelope as on the mail badge.
+  float x0 = s * 0.265f, x1 = s * 0.735f, y0 = s * 0.33f, y1 = s * 0.67f, yf = s * 0.53f, w = s * 0.055f;
+  c.line(x0, y0, x1, y0, w, ink);
+  c.line(x1, y0, x1, y1, w, ink);
+  c.line(x1, y1, x0, y1, w, ink);
+  c.line(x0, y1, x0, y0, w, ink);
+  c.line(x0, y0, m, yf, w, ink);
+  c.line(m, yf, x1, y0, w, ink);
+  // The slash, top left to bottom right as on a "no" sign: a gap-coloured stroke first, kept inside the
+  // ring, then the ink one out to the ring's inner edge.
+  const float k = 0.7071f, r_gap = m * 0.64f, r_ink = m * 0.90f;
+  c.line(m - r_gap * k, m - r_gap * k, m + r_gap * k, m + r_gap * k, s * 0.125f, gap);
+  c.line(m - r_ink * k, m - r_ink * k, m + r_ink * k, m + r_ink * k, s * 0.085f, ink);
+}
+
 void badge(Canvas &c, int st, Color fg, Color bg) {
   static const boardart::Group *const kBadges[6] = {&boardart::kBadgeOpen,     &boardart::kBadgeBusy,
                                                     &boardart::kBadgePrivate,  &boardart::kBadgeSleeping,
@@ -313,51 +333,68 @@ void heat_sun(Canvas &c, bool rays, Color sun) {
 // each a pale body in a deeper ice-blue rim (so it shows over the pale sky too) with a white
 // streak down it; then the whole layer at 50 percent. The pattern is fixed (no randomness), as
 // WeatherGate's is: it never shimmers.
+//
+// The screen draws any strip of rows on its own (icicles_cols), so each shape is cut down to the
+// part of its outline that crosses the strip: the same edges, so the same crossings and the same
+// pixels, without the outline's other points.
 
-// One side of an icicle at t (0 at the ledge, 1 at the tip): how far it is from the middle.
-static float ice_half(float w, float t) { return 0.5f * w * powf(1 - t, 0.85f); }
+// One side of an icicle at t (0 at the ledge, 1 at the tip) is 0.5 w (1 - t)^0.85 from the
+// middle. The power at the 17 points of an outline running to t = 1 and to t = 0.92, made once.
+static const float *ice_pow(bool short_body) {
+  static float tab[2][17];
+  static bool made = false;
+  if (!made) {
+    for (int i = 0; i <= 16; i++) {
+      tab[0][i] = powf(1 - 1.0f * i / 16, 0.85f);
+      tab[1][i] = powf(1 - 0.92f * i / 16, 0.85f);
+    }
+    made = true;
+  }
+  return tab[short_body ? 1 : 0];
+}
 
-static void ice_shape(Canvas &c, float x, float w, float len, float lean, float inset, float top, float upto, Color col) {
+static void ice_shape(Canvas &c, float x, float w, float len, float lean, float inset, float top, float upto, Color col,
+                      int ylo, int yhi) {
   const int kN = 16;
+  const float *pw = upto < 1 ? ice_pow(true) : ice_pow(false);
+  // The outline's rows: point i is at top + (len - top - inset) * t, rising with i. Only the
+  // points from the last one at or above the strip to the first one at or below it matter.
+  auto row_at = [&](int i) { return top + (len - top - inset) * (upto * i / kN); };
+  if (row_at(kN) <= ylo || row_at(0) >= yhi) return;
+  int ia = 0, ib = kN;
+  while (ia < kN && row_at(ia + 1) <= ylo) ia++;
+  while (ib > ia + 1 && row_at(ib - 1) >= yhi) ib--;
   gfx::Pt pts[2 * kN + 2];
   int n = 0;
   for (int side = -1; side <= 1; side += 2)
-    for (int k = 0; k <= kN; k++) {
-      int i = side < 0 ? k : kN - k;
-      float t = upto * i / kN, half = ice_half(w, t) - inset, cx = x + lean * t * t;
+    for (int k = ia; k <= ib; k++) {
+      int i = side < 0 ? k : ib + ia - k;
+      float t = upto * i / kN, half = 0.5f * w * pw[i] - inset, cx = x + lean * t * t;
       if (half < 0) half = 0;
       pts[n++] = gfx::Pt{cx + side * half, top + (len - top - inset) * t};
     }
   c.fill_polygon(pts, n, col);
 }
 
-static void icicle(Canvas &c, float x, float w, float len, float lean, Color rim, Color body, Color shine) {
-  ice_shape(c, x, w, len, lean, 0, 0, 1, rim);
-  c.fill_circle(x + lean, len - 1.2f, 1.6f, rim);  // a rounded tip
-  ice_shape(c, x, w, len, lean, 1.5f, 0, 0.92f, body);
+static void icicle(Canvas &c, const Icicle &e, Color rim, Color body, Color shine, int ylo, int yhi) {
+  const float x = e.x, w = e.w, len = e.len, lean = e.lean;
+  ice_shape(c, x, w, len, lean, 0, 0, 1, rim, ylo, yhi);
+  if (len + 1 > ylo) c.fill_circle(x + lean, len - 1.2f, 1.6f, rim);  // a rounded tip
+  ice_shape(c, x, w, len, lean, 1.5f, 0, 0.92f, body, ylo, yhi);
   // The streak: left of the middle, two thirds of the way down.
-  ice_shape(c, x - 0.2f * w, 0.28f * w, len * 0.7f, lean * 0.5f, 0, 3, 1, shine);
+  ice_shape(c, x - 0.2f * w, 0.28f * w, len * 0.7f, lean * 0.5f, 0, 3, 1, shine, ylo, yhi);
 }
 
-void icicles(Canvas &c) {
-  const Color rim = hex(0x8CC0DC), body = hex(0xDDF1FA), shine = hex(0xFFFFFF);
-  c.clear(body, 0);
-  // The ledge: 6 px with a gently wavy lower edge, rimmed like the icicles.
-  for (int pass = 0; pass < 2; pass++) {
-    gfx::Pt band[2 + 81];
-    int n = 0;
-    band[n++] = gfx::Pt{0, 0};
-    for (int i = 0; i <= 80; i++) {
-      float x = kScreenW * i / 80.0f;
-      band[n++] = gfx::Pt{x, (pass ? 4.5f : 6.0f) + 1.2f * sinf(x / 23.0f) + 0.8f * sinf(x / 9.0f)};
-    }
-    band[n++] = gfx::Pt{(float)kScreenW, 0};
-    c.fill_polygon(band, n, pass ? body : rim);
-  }
+int icicle_layout(Icicle *out, int max) {
   // Icicles grow in clusters, so the rhythm along the edge is uneven: a main icicle 10 to 18 px
   // wide with up to two smaller ones close beside it, then a gap, mostly short, now and then
   // long. Main icicles mostly 16 to 50 px long, about one in five longer, and the longest (up to
   // 92 px, and broader) over the upstairs tile's status side, x 150 to 380, reaching its top.
+  int n = 0;
+  auto put = [&](float x, float w, float len, float lean) {
+    if (n < max) out[n] = Icicle{x, w, len, lean};
+    n++;
+  };
   uint32_t h = 2166136261u;
   auto next = [&h]() {
     h = (h ^ 0x9E3779B9u) * 16777619u;
@@ -376,13 +413,56 @@ void icicles(Canvas &c) {
     float side = next() < 0.5f ? -1.0f : 1.0f;
     for (int k = 0; k < small; k++, side = -side) {
       float sw = 5 + 4 * next(), sl = 10 + (0.2f + 0.3f * next()) * len;
-      icicle(c, x + side * (0.5f * w + 0.3f * sw + 2 * next()), sw, sl, lean * 0.5f, rim, body, shine);
+      float sx = x + side * (0.5f * w + 0.3f * sw + 2 * next());
+      put(sx, sw, sl, lean * 0.5f);
     }
-    icicle(c, x, w, len, lean, rim, body, shine);
+    put(x, w, len, lean);
     float gap = next();
     x += 0.5f * w + 10 + (gap < 0.7f ? 16 * next() : 28 + 26 * next());
   }
-  c.multiply_alpha(0.5f);
+  return n;
+}
+
+void icicles_cols(Canvas &c, const Icicle *ice, int n, int xa, int xb) {
+  const Color rim = hex(0x8CC0DC), body = hex(0xDDF1FA), shine = hex(0xFFFFFF);
+  // The rows this canvas can draw now: an open strip's, or all of them.
+  const int ylo = c.draw_y0(), yhi = c.draw_y1();
+  c.clear_cols(xa, xb, body, 0);
+  // The ledge: 6 px with a gently wavy lower edge, rimmed like the icicles (rows 0 to 8). Its
+  // lower edge has a point every 10 px; only those from a little left of the columns to a little
+  // right of them are needed, closed along the top.
+  if (ylo < 9) {
+    int i0 = xa / 10 - 2, i1 = xb / 10 + 3;
+    if (i0 < 0) i0 = 0;
+    if (i1 > 80) i1 = 80;
+    for (int pass = 0; pass < 2; pass++) {
+      gfx::Pt band[2 + 81];
+      int k = 0;
+      band[k++] = gfx::Pt{i0 ? kScreenW * i0 / 80.0f : 0, 0};
+      for (int i = i0; i <= i1; i++) {
+        float x = kScreenW * i / 80.0f;
+        band[k++] = gfx::Pt{x, (pass ? 4.5f : 6.0f) + 1.2f * sinf(x / 23.0f) + 0.8f * sinf(x / 9.0f)};
+      }
+      band[k++] = gfx::Pt{i1 < 80 ? kScreenW * i1 / 80.0f : (float)kScreenW, 0};
+      c.fill_polygon(band, k, pass ? body : rim);
+    }
+  }
+  for (int i = 0; i < n; i++) {
+    const Icicle &e = ice[i];
+    // Its reach: the outline leans by up to lean, its streak by half that, the tip by 1.6 px; and
+    // a pixel or two for the smoothing. Wholly outside the columns or the rows, it changes nothing.
+    float reach = 0.5f * e.w + fabsf(e.lean) + 3;
+    if (e.x + reach < xa || e.x - reach > xb + 1 || e.len + 1 <= ylo) continue;
+    icicle(c, e, rim, body, shine, ylo, yhi);
+  }
+}
+
+void icicles(Canvas &c) {
+  Icicle ice[kIciclesMax];
+  int n = icicle_layout(ice, kIciclesMax);
+  if (n > kIciclesMax) n = kIciclesMax;
+  icicles_cols(c, ice, n, 0, c.width() - 1);
+  c.multiply_alpha(kIciclesOpa / 256.0f);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -517,6 +597,23 @@ void cal_icon(Canvas &c, CalIcon i, Color col) {
       const float w = (float)c.width(), h = (float)c.height(), sw = w / 7;
       c.line(w * 0.2f, h / 2, w * 0.8f, h / 2, sw, col);
       if (i == CalIcon::Plus) c.line(w / 2, h * 0.2f, w / 2, h * 0.8f, sw, col);
+      break;
+    }
+    case CalIcon::Mic: {
+      // Voice notes (DESIGN 2.1), on 22 x 22: an 8 x 12 capsule, the U of the stand under it, the stem
+      // and the base line.
+      const float w = (float)c.width(), cx = w / 2;
+      c.fill_rrect(RRect{cx - 4, 1.5f, cx + 4, 13.5f, 4, 4, 4, 4}, col);
+      const float r = 6.5f, cy = 9.5f, sw = 1.8f;
+      float px = cx + r, py = cy;
+      for (int k = 1; k <= 10; k++) {  // the lower half circle, right to left
+        float a = kPi * k / 10, qx = cx + r * cosf(a), qy = cy + r * sinf(a);
+        c.line(px, py, qx, qy, sw, col);
+        px = qx;
+        py = qy;
+      }
+      c.line(cx, cy + r, cx, 19.5f, sw, col);
+      c.line(cx - 4.5f, 20, cx + 4.5f, 20, sw, col);
       break;
     }
   }

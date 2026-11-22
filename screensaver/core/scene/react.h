@@ -26,7 +26,12 @@ constexpr int kReactTicks = 85;         // kReactSeconds at SS_TICK_HZ, counted 
 // The wave to a passer-by (stage 14, Inputs::passer_by): the same hold on the story, shorter, with
 // no jump, no turn and no point; he lifts his head to the viewer and waves the near arm. Only with
 // his hands empty and no major's key moment (World::busy) or fire-and-ice hurry on.
-constexpr int kWaveTicks = 65;          // 2.6 s, PROPOSED
+// Mike, 2026-11-16: livelier and happier (arm well overhead, big fast swings, a few small bounces,
+// the far arm lifting too), so longer than before (it was 65 ticks, 2.6 s).
+constexpr int kWaveTicks = 95;          // 3.8 s
+// Mike, 2026-11-16: when his hands are busy at the moment someone arrives, he keeps trying for up to
+// a few seconds, even after they have gone, and waves as soon as he can; after that he lets it go.
+constexpr int kPasserWaitTicks = 8 * SS_TICK_HZ;   // 8 s
 
 // He can react now: in the scene and in frame, not a Lookout loop, not faded out; during fire and
 // ice only in a mild spell while he stands still with nothing in his hands (fireIceWaveOk).

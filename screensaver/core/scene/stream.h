@@ -110,6 +110,10 @@ struct StreamVisit {
   Vec2 to;           // and where it goes (out)
   int16_t ring_x, ring_y;   // a ring on the water (the heron's strike, the deer's drinking)
   float ring_t;      // its age, seconds; < 0 none
+  // Tai chi's guest (day_taichi.cpp, stage 22): while set the hiker does not send the heron up (dogs still
+  // do) and its stay is not counted. Bit 0: it is his guest; bit 1: asked to mirror White Crane.
+  uint8_t guest;
+  float mirror;      // 0 .. 1: one leg lifted, the neck up, a wing half open (eased here)
 };
 
 struct StreamLife {
@@ -154,6 +158,23 @@ bool streamActorY(const World& w, int16_t& y);
 // A visitor a house dog would go for (housedogs.cpp HA_CHASE): the heron landing or standing in the
 // shallows, the deer in sight on the bank, not already leaving; `at` where it is.
 bool streamGuestAt(const World& w, Vec2& at);
+// A small stick put on the water where `at` lies (the reeds' tossed stem, stage 22): a free floater slot at the
+// nearest place along the stream, drifting off like any stick. False when both slots are afloat or `at` is not
+// on the water. Draws nothing from the stream's random stream.
+bool streamAddStick(World& w, Vec2 at);
+// Tai chi's guest (day_taichi.cpp; TAICHI_PLAN 6.1, Mike 2026-11-18). streamHeronGuest: the loop's heron
+// comes now and stands in the near shallows at x (clamped to its own range), facing `facing`; one already
+// standing there is simply taken. False: this loop's visitor is the deer, the heron has come and gone, or
+// the moment is not quiet (one visitor a loop stays the rule). streamHeronMirror: a leg up, the neck up
+// and a wing half open, eased in over 2.5 s once it stands calm, out over 1.5 s. streamHeronRelease: it
+// leaves now, unhurried. streamHeronHandBack: it is the stream's own again where it stands (its own rules
+// then send it up: a dog, or the hiker near). None of these draws from the stream's random streams.
+bool streamHeronGuest(World& w, float x, int facing);
+void streamHeronMirror(World& w, bool on);
+void streamHeronRelease(World& w);
+void streamHeronHandBack(World& w);
+bool streamHeronIsGuest(const World& w);
+float streamHeronMirrorNow(const World& w);   // 0 .. 1 (tests)
 // The heron as a ground actor (ACT_STREAM idx 1): its feet y standing, the front while it flies.
 bool streamVisitY(const World& w, int16_t& y);
 

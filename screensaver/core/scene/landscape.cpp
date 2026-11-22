@@ -8,6 +8,8 @@
 #include <math.h>
 
 #include "../anim/ease.h"
+#include "patch.h"
+#include "reeds.h"
 #include "stream.h"
 
 namespace ss {
@@ -297,14 +299,39 @@ const BodySeg kBody[8] = {
     {5.5f, 6.0f, 640.f, 300.f, 16.f, 640.f, 110.f, 16.f},   // moon rises
 };
 
-void drawSkyBody(const Landscape& ls, Surface& s, const Palette& pal, float mood, const Rect& clip) {
+// Where the parked body is at a mood. Returns its segment: 1 to 6 the sun, 0 and 7 the moon.
+int parkedBody(float mood, Vec2& c, float& r) {
   const float m = mood - 6.f * floorf(mood / 6.f);   // wrap into [0, 6)
   int k = 0;
   while (k < 7 && m >= kBody[k].m1) ++k;
   const BodySeg& g = kBody[k];
   const float f = clamp01((m - g.m0) / (g.m1 - g.m0));
-  const Vec2 c{lerp(g.x0, g.x1, f), lerp(g.y0, g.y1, f)};
-  const float r = lerp(g.r0, g.r1, f);
+  c = Vec2{lerp(g.x0, g.x1, f), lerp(g.y0, g.y1, f)};
+  r = lerp(g.r0, g.r1, f);
+  return k;
+}
+
+// The parked sun as the mushroom trip's halo needs it (skytrip.h): on while it is the sun, above the
+// ground line and not behind a cloud deck.
+SkyTripSun parkedSun(float mood, const Palette& pal, const SkyDraw* sky) {
+  SkyTripSun out = {};
+  Vec2 c;
+  float r;
+  const int k = parkedBody(mood, c, r);
+  if (k < 1 || k > 6 || c.y - r >= fl(LS_GROUND_Y) || (sky && sky->cover >= 4)) return out;
+  out.on = true;
+  out.x = c.x;
+  out.y = c.y;
+  out.r = r;
+  out.col = pal[SUN];
+  return out;
+}
+
+void drawSkyBody(const Landscape& ls, Surface& s, const Palette& pal, float mood, const Rect& clip) {
+  const float m = mood - 6.f * floorf(mood / 6.f);   // wrap into [0, 6)
+  Vec2 c;
+  float r;
+  parkedBody(mood, c, r);
 
   // Stars fade with distance from night: full at mood 0 / 6, gone at 0.5 / 5.5.
   const float dn = m < 3.f ? m : 6.f - m;
@@ -346,16 +373,40 @@ float nightness(float mood) {
 
 inline int skyBand(int y) { return y < 58 ? 0 : (y < 118 ? 1 : (y < 178 ? 2 : (y < 228 ? 3 : 4))); }
 
-Vec2 skyPoint(float az, float alt) {
+// The x of a body at compass bearing `az`: due south is the middle of the frame. Shared by the sun
+// and the moon so the two can never drift apart sideways.
+float skyX(float az) {
   float d = az - 180.f;
   d -= 360.f * floorf((d + 180.f) / 360.f);   // -180..180: how far west of south
-  float x = 400.f + d * (400.f / kSkyAzSpan);
-  x = x < 40.f ? 40.f : (x > 760.f ? 760.f : x);   // a body that is up is never off the frame
+  const float x = 400.f + d * (400.f / kSkyAzSpan);
+  return x < 40.f ? 40.f : (x > 760.f ? 760.f : x);   // a body that is up is never off the frame
+}
+
+Vec2 skyPoint(float az, float alt) {
   const float kRad = 3.14159265f / 180.f;
   const float y = alt >= 0.f ? kSkyHorizonY - kSkyRise * powf(sinf(alt * kRad), 0.6f)
                              : kSkyHorizonY - alt * kSkyBelowPxPerDeg;
-  return Vec2{x, y};
+  return Vec2{skyX(az), y};
 }
+
+// The sun's own arc (Mike, 2026-11-17: it should climb higher in the sky by day; the moon stays on
+// its low track, skyPoint). Same x as the moon, same line under the horizon (so it rises and sets
+// behind the ridges as before), and above it a table of heights by altitude, joined by straight
+// lines. Near the ridges it is almost the old curve; through the middle of the day it stands
+// 15 to 30 px higher. Overhead is y 42, so the disc (radius 30) stays inside the frame.
+constexpr int kSunKnots = 9;
+constexpr float kSunKnotAlt[kSunKnots] = {0.f, 5.f, 10.f, 20.f, 30.f, 45.f, 60.f, 75.f, 90.f};
+constexpr float kSunKnotY[kSunKnots] = {268.f, 213.f, 180.f, 132.f, 98.f, 70.f, 52.f, 45.f, 42.f};
+
+float sunY(float alt) {
+  if (alt <= 0.f) return kSkyHorizonY - alt * kSkyBelowPxPerDeg;
+  int k = 0;
+  while (k < kSunKnots - 2 && alt > kSunKnotAlt[k + 1]) ++k;
+  const float f = clamp01((alt - kSunKnotAlt[k]) / (kSunKnotAlt[k + 1] - kSunKnotAlt[k]));
+  return lerp(kSunKnotY[k], kSunKnotY[k + 1], f);
+}
+
+Vec2 sunPoint(float az, float alt) { return Vec2{skyX(az), sunY(alt)}; }
 
 inline uint32_t mix32(uint32_t h) {
   h ^= h >> 16;
@@ -414,7 +465,7 @@ void drawSkyReal(const Landscape& ls, Surface& s, const Palette& pal, float mood
       }
     }
   }
-  if (sky.sun) fillCircle(s, Vec2{fl(sky.sun_x), fl(sky.sun_y)}, fl(sky.sun_r), pal[SUN], clip);
+  if (sky.sun) fillCircle(s, Vec2{fl(sky.sun_x), fl(sky.sun_y)}, fl(sky.sun_r), landscapeSunColor(sky, pal), clip);
   if (sky.moon) {
     // By day a pale disc, part sky; at night the palette's moon colour (the SUN slot, as before).
     const Pixel pale = mixRGB(pal[(Slot)(SKY0 + skyBand(sky.moon_y))], pal[STAR], 0.5f);
@@ -459,12 +510,14 @@ void drawCloudCover(const Landscape& ls, Surface& s, const Palette& pal, int cov
 
 // `drop` 0..1 sinks the ridge until its highest point is just under the ground
 // line (build-up); 0 is in place.
-void drawRidge(const Landscape& ls, Surface& s, int layer, Pixel col, const Rect& clip, float drop) {
-  float dy = 0.f;
+// `lift` px raises it (the mushroom trip's far ridge breathes, skytrip.h); 0 always otherwise.
+void drawRidge(const Landscape& ls, Surface& s, int layer, Pixel col, const Rect& clip, float drop,
+               float lift = 0.f) {
+  float dy = -lift;
   if (drop > 0.f) {
     float top = ls.crest[layer][0];
     for (int i = 1; i < LS_CREST_N; ++i) top = minf(top, ls.crest[layer][i]);
-    dy = drop * (fl(LS_GROUND_Y) + 2.f - top);
+    dy += drop * (fl(LS_GROUND_Y) + 2.f - top);
     if (dy >= fl(LS_GROUND_Y) + 2.f - top) return;   // fully hidden behind the ground
   }
   Vec2 p[LS_CREST_N + 2];
@@ -798,14 +851,41 @@ void drawSky(const Landscape& ls, Surface& frame, const Palette& pal0, float moo
     }
   }
   static const int kBand[6] = {0, 58, 118, 178, 228, LS_GROUND_Y};
-  for (int b = 0; b < 5; ++b) {
-    fillRect(frame, Rect{0, kBand[b], SS_WIDTH, kBand[b + 1]}, pal[(Slot)(SKY0 + b)], clip);
+  if (!skyTripOn(ls.trip)) {   // always, but for the 104 s of the mushroom trip: the sky as it ever was
+    for (int b = 0; b < 5; ++b) {
+      fillRect(frame, Rect{0, kBand[b], SS_WIDTH, kBand[b + 1]}, pal[(Slot)(SKY0 + b)], clip);
+    }
+    if (sky && sky->real) drawSkyReal(ls, frame, pal, mood, *sky, clip);
+    else drawSkyBody(ls, frame, pal, mood, clip);
+    // Over the sun and moon: they go behind the deck. (The high clouds of cover 2-3 and the two
+    // ordinary ones are drawn after the cache, worldDrawDynamic: in front of them too.)
+    if (sky) drawCloudCover(ls, frame, pal, sky->cover, clip);
+    return;
   }
-  if (sky && sky->real) drawSkyReal(ls, frame, pal, mood, *sky, clip);
-  else drawSkyBody(ls, frame, pal, mood, clip);
-  // Over the sun and moon: they go behind the deck. (The high clouds of cover 2-3 and the two
-  // ordinary ones are drawn after the cache, worldDrawDynamic: in front of them too.)
-  if (sky) drawCloudCover(ls, frame, pal, sky->cover, clip);
+  // The mushroom trip (skytrip.h; Mike, 2026-11-18): each cache band of 32 rows is drawn from its own
+  // latched sky clock, with the clip cut to the band, so every pixel is a pure function of the state
+  // and a full rebuild gives what the rolling repaint gave. A band at clock 0 is the old sky exactly.
+  const SkyTripSun sun = (sky && sky->real) ? skyTripSunOf(*sky, pal) : parkedSun(mood, pal, sky);
+  for (int i = 0; i <= SKYTRIP_BANDS; ++i) {   // the ten bands, then any rows under them (none are sky today)
+    const Rect rows = i < SKYTRIP_BANDS ? Rect{0, SKYTRIP_BAND_ROWS * i, SS_WIDTH, SKYTRIP_BAND_ROWS * (i + 1)}
+                                        : Rect{0, SKYTRIP_BAND_ROWS * SKYTRIP_BANDS, SS_WIDTH, SS_HEIGHT};
+    const Rect bc = clip.clipped(rows);
+    if (bc.empty()) continue;
+    const uint16_t tq = i < SKYTRIP_BANDS ? ls.trip.tq[i] : (uint16_t)0;
+    Palette deck = pal;
+    if (tq == 0) {
+      for (int b = 0; b < 5; ++b) {
+        fillRect(frame, Rect{0, kBand[b], SS_WIDTH, kBand[b + 1]}, pal[(Slot)(SKY0 + b)], bc);
+      }
+    } else {
+      const float t = skyTripSeconds(tq);
+      skyTripBand(ls, frame, pal, sun, t, bc);
+      if (sky && sky->cover >= 4) skyTripDeckPal(pal, t, deck);
+    }
+    if (sky && sky->real) drawSkyReal(ls, frame, pal, mood, *sky, bc);
+    else drawSkyBody(ls, frame, pal, mood, bc);
+    if (sky) drawCloudCover(ls, frame, deck, sky->cover, bc);
+  }
 }
 
 // Rock scaled about its base center (build-up pop).
@@ -875,7 +955,22 @@ void drawLayer(const Landscape& ls, int layer, Surface& s, const Palette& pal, f
       drawSky(ls, s, pal, mood, buildSkyFade(b), clip, sky);
       break;
     case BL_RIDGES:
-      for (int k = 0; k < 3; ++k) drawRidge(ls, s, k, pal[(Slot)(RIDGE_FAR + k)], clip, buildRidgeDrop(b, k));
+      for (int k = 0; k < 3; ++k) {
+        if (k == 0 && skyTripOn(ls.trip)) {
+          // The far ridge breathes with the trip's sky, band by band from each band's own clock.
+          for (int i = 0; i <= SKYTRIP_BANDS; ++i) {
+            const Rect rows = i < SKYTRIP_BANDS
+                                  ? Rect{0, SKYTRIP_BAND_ROWS * i, SS_WIDTH, SKYTRIP_BAND_ROWS * (i + 1)}
+                                  : Rect{0, SKYTRIP_BAND_ROWS * SKYTRIP_BANDS, SS_WIDTH, SS_HEIGHT};
+            const Rect bc = clip.clipped(rows);
+            if (bc.empty()) continue;
+            const uint16_t tq = i < SKYTRIP_BANDS ? ls.trip.tq[i] : (uint16_t)0;
+            drawRidge(ls, s, 0, pal[RIDGE_FAR], bc, buildRidgeDrop(b, 0), tq ? skyTripRidgeLift(skyTripSeconds(tq)) : 0.f);
+          }
+          continue;
+        }
+        drawRidge(ls, s, k, pal[(Slot)(RIDGE_FAR + k)], clip, buildRidgeDrop(b, k));
+      }
       break;
     case BL_FAR_TREES:
       drawFarTrees(ls, s, pal[TREES_FAR], clip, b);
@@ -921,9 +1016,11 @@ void drawLayer(const Landscape& ls, int layer, Surface& s, const Palette& pal, f
         if (t.dyn) continue;   // the swaying ones are drawn by ambient.cpp
         drawTuft(t, s, pal[GRASS], clip, buildPlantScale(b, fl(t.x), fl(t.y)));
       }
+      reedsDrawStatic(ls, s, pal, clip, b);   // the sedge fringe along the stream (reeds.h; nothing until it is laid out)
       break;
     case BL_MUSHROOM:
       drawMushroom(ls, s, pal, clip, buildMushroomT(b));
+      patchDrawStatic(ls, s, pal, clip, buildMushroomT(b));   // the patch after rain round the mother (patch.h; none at stage 0)
       break;
     default:
       break;
@@ -944,7 +1041,7 @@ SkyDraw landscapeSky(const SkyInputs& in, float mood, float cover) {
   // The sun: drawn until it is well under the ridges, and never once the night's colours have
   // begun (the SUN slot is the moon's by then). Low in the west it swells a little, as before.
   if (in.sun_alt > -6.f && night <= 0.f) {
-    const Vec2 p = skyPoint(in.sun_az, in.sun_alt);
+    const Vec2 p = sunPoint(in.sun_az, in.sun_alt);
     const float low = clamp01((12.f - in.sun_alt) / 12.f);
     const float west = in.sun_az - 360.f * floorf(in.sun_az / 360.f) > 180.f ? 1.f : 0.f;
     s.sun = true;
@@ -964,6 +1061,19 @@ SkyDraw landscapeSky(const SkyInputs& in, float mood, float cover) {
   }
   s.dark = night > 0.f && !(in.moon_alt > 0.f && lit >= kMoonMinLit);
   return s;
+}
+
+// Mike, 2026-11-17: the sun gets whiter the higher it climbs. A function of its height on screen and
+// the cloud cover only (both already in SkyDraw), so nothing is stored and the repaint tests that
+// compare SkyDraws already see every change. The warm SUN slot low down; from about 55 degrees up a
+// warm white (STAR halfway to white, never pure white); a hazy day's sun stays softer.
+Pixel landscapeSunColor(const SkyDraw& s, const Palette& pal) {
+  const float y8 = sunY(8.f), y55 = sunY(55.f);
+  float k = clamp01((y8 - fl(s.sun_y)) / (y8 - y55));
+  k = k * k * (3.f - 2.f * k);
+  Pixel high = mixRGB(pal[STAR], (Pixel)0xFFFF, 0.5f);
+  if (s.cover == 2 || s.cover == 3) high = mixRGB(high, pal[SKY2], 0.3f);
+  return mixRGB(pal[SUN], high, k);
 }
 
 bool landscapeSkySame(const SkyDraw& a, const SkyDraw& b) {

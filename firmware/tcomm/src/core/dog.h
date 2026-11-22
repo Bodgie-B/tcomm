@@ -21,6 +21,26 @@ struct DogState {
 };
 
 inline int dog_index(Dog d) { return d == Dog::Copper ? 1 : 0; }
+// How long a dog may be out (Mike, 2026-11-22), by the "feels like" temperature outside:
+//   feels like     Lucy     Copper
+//   105 F and up   15 min   15 min
+//   100 to 104     25       30
+//   95 to 99       40       45
+//   90 to 94       60       60
+//   45 to 89       no warning
+//   35 to 44       60       60
+//   25 to 34       30       30
+//   15 to 24       20       20
+//   5 to 14        10       10
+//   below 5        5        5
+// feels_like_tenths: the National Weather Service heat index from the temperature and humidity
+// when it's warm enough to matter, otherwise the air temperature itself (there's no wind reading
+// for a wind chill). Tenths of a degree F in and out.
+int16_t feels_like_tenths(int16_t temp_tenths_f, uint8_t hum_pct);
+// Minutes for this dog (dog_index: 0 Lucy, 1 Copper) at this feels-like temperature, rounded to
+// the whole degree for the bands above; 0 means no warning at all.
+int dog_limit_min(int dog, int16_t feels_tenths_f);
+
 inline bool operator==(const DogOne &a, const DogOne &b) { return a.out == b.out && a.since == b.since && a.ver == b.ver; }
 
 class DogModel {

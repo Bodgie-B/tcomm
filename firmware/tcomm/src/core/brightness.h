@@ -12,6 +12,9 @@ struct BacklightInputs {
   bool touched_recently = false;   // within Settings::touch_wake_ms
   bool doorbell_wake = false;      // a doorbell banner is showing
   bool mail_wake = false;          // new mail came for this panel a moment ago (downstairs)
+  // A voice message came for this panel a moment ago and the ding rules allowed a wake (Open or Busy,
+  // outside quiet hours and the dark hours; docs/voice-notes/DESIGN.md 2.3). Lights it like mail_wake.
+  bool voice_wake = false;
   bool clean_screen = false;       // glass-wiping mode keeps the screen lit
   bool clock_unknown = false;      // no time of day: be as dim as night (a power cut is often at night)
   int minute_of_day = -1;          // local time, 0-1439; -1 without a clock (then never dark: dim)
@@ -28,7 +31,7 @@ inline uint8_t backlight_for(const Settings &s, const BacklightInputs &in) {
   // The dark hours go by the clock, whatever the sky (in summer 6 AM can be after dawn). A touch
   // lights it as usual; a doorbell or mail wakes it at the level of the moment.
   if (s.screen_off_overnight && in.minute_of_day >= 0 && in_screen_off_hours(s, in.minute_of_day) && !lit &&
-      !in.doorbell_wake && !in.mail_wake) {
+      !in.doorbell_wake && !in.mail_wake && !in.voice_wake) {
     // Someone walking past: the night level, not the sky's (in summer the dark hours can run past dawn).
     return in.presence_wake ? night_backlight(s.night_level) : kBacklightOff;
   }

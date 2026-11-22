@@ -39,7 +39,8 @@ struct Reader {
 
 bool latest_wins(MsgType t) {
   return t == MsgType::State || t == MsgType::DogMsg || t == MsgType::Reading || t == MsgType::Outside ||
-         t == MsgType::EventSum || t == MsgType::Mail || t == MsgType::Requests || t == MsgType::Note || t == MsgType::Notice;
+         t == MsgType::EventSum || t == MsgType::Mail || t == MsgType::Requests || t == MsgType::Note || t == MsgType::Notice ||
+         t == MsgType::Rooms;
 }
 
 }  // namespace
@@ -56,7 +57,11 @@ size_t encode(const Msg &m, uint8_t *out, size_t cap) {
       w.u8(m.u.state.fallback); w.u32(m.u.state.clock); w.u8(m.u.state.clock_quality);
       break;
     case MsgType::Knock: w.u16(m.u.knock.id); break;
-    case MsgType::Reply: w.u16(m.u.reply.id); w.u8(m.u.reply.come_on ? 1 : 0); break;
+    case MsgType::Reply:
+      if (m.u.reply.dismissed && (m.u.reply.come_on || m.u.reply.phone)) return 0;  // a dismiss is no answer
+      w.u16(m.u.reply.id);
+      w.u8((uint8_t)(m.u.reply.dismissed ? 4 : (m.u.reply.come_on ? 1 : 0) | (m.u.reply.phone ? 2 : 0)));
+      break;
     case MsgType::Ack: w.u16(m.u.ack.seq); w.u8(m.u.ack.type); break;
     case MsgType::DogMsg:
       for (int i = 0; i < 2; i++) { w.u8(m.u.dog.out[i]); w.u32(m.u.dog.since[i]); w.u32(m.u.dog.ver[i]); }
@@ -76,7 +81,7 @@ size_t encode(const Msg &m, uint8_t *out, size_t cap) {
       w.bytes(m.u.event.data, m.u.event.len);
       break;
     case MsgType::EventSum: w.u16(m.u.sum.count); w.u32(m.u.sum.digest); w.u8(m.u.sum.flags); break;
-    case MsgType::Mail: w.u8(m.u.mail.waiting ? 1 : 0); w.u32(m.u.mail.since); w.u32(m.u.mail.ver); break;
+    case MsgType::Mail: w.u8(m.u.mail.waiting == 2 ? 2 : m.u.mail.waiting ? 1 : 0); w.u32(m.u.mail.since); w.u32(m.u.mail.ver); break;
     case MsgType::Comfort: {
       const ComfortAnswer &c = m.u.comfort;
       w.u32(c.n); w.u32(c.utc); w.u32((uint32_t)c.offset);
@@ -89,11 +94,24 @@ size_t encode(const Msg &m, uint8_t *out, size_t cap) {
       w.u32(m.u.comfort_del.n); w.u32(m.u.comfort_del.removed); w.u32((uint32_t)m.u.comfort_del.offset);
       break;
     case MsgType::Update: w.u8(0); break;  // one reserved byte
+    case MsgType::MailAck: w.u8(0); break;  // one reserved byte
+    case MsgType::PhoneAnswer:
+      if (m.u.phone.floor > 1 || m.u.phone.id == 0) return 0;
+      w.u8(m.u.phone.floor); w.u16(m.u.phone.id); w.u8(m.u.phone.come_on ? 1 : 0);
+      break;
     case MsgType::Notice: {
       const auto &n = m.u.notice;
       if (n.kind < 1 || n.kind > kNoticeKinds || n.floor > 1) return 0;
       size_t len = strnlen(n.text, kNoticeTextMax);
       w.u8(n.kind); w.u8(n.floor); w.u16((uint16_t)n.value); w.u32(n.time); w.u8((uint8_t)len); w.bytes(n.text, len);
+      break;
+    }
+    case MsgType::Rooms: {
+      const auto &r = m.u.rooms;
+      if ((r.flags & ~kRoomsFlagsAll) || ((r.flags & kRoomsOccupied) && !(r.flags & kRoomsOccKnown)) || r.up_h > 1000 ||
+          r.down_h > 1000)
+        return 0;
+      w.u8(r.flags); w.u16((uint16_t)r.up_t); w.u16(r.up_h); w.u16((uint16_t)r.down_t); w.u16(r.down_h); w.u32(r.time);
       break;
     }
     case MsgType::Note: {
@@ -139,9 +157,13 @@ bool decode(const uint8_t *in, size_t len, Msg &m) {
     }
     case MsgType::Knock: m.u.knock.id = r.u16(); if (m.u.knock.id == 0) return false; break;
     case MsgType::Reply:
-      m.u.reply.id = r.u16(); m.u.reply.come_on = r.u8();
-      if (m.u.reply.come_on > 1 || m.u.reply.id == 0) return false;
+    {
+      m.u.reply.id = r.u16();
+      uint8_t a = r.u8();
+      if ((a > 3 && a != 4) || m.u.reply.id == 0) return false;  // 4 alone: dismissed (2026-11-15)
+      m.u.reply.come_on = a & 1; m.u.reply.phone = (a >> 1) & 1; m.u.reply.dismissed = (a >> 2) & 1;
       break;
+    }
     case MsgType::Ack: m.u.ack.seq = r.u16(); m.u.ack.type = r.u8(); break;
     case MsgType::DogMsg:
       for (int i = 0; i < 2; i++) {
@@ -182,7 +204,7 @@ bool decode(const uint8_t *in, size_t len, Msg &m) {
       break;
     case MsgType::Mail:
       m.u.mail.waiting = r.u8(); m.u.mail.since = r.u32(); m.u.mail.ver = r.u32();
-      if (m.u.mail.waiting > 1) return false;
+      if (m.u.mail.waiting > 2) return false;  // 2 = no mail (Mike, 2026-11-18)
       break;
     case MsgType::Comfort: {
       ComfortAnswer &c = m.u.comfort;
@@ -224,8 +246,22 @@ bool decode(const uint8_t *in, size_t len, Msg &m) {
       n.text[n.text_len] = 0;
       break;
     }
+    case MsgType::Rooms: {
+      auto &o = m.u.rooms;
+      o.flags = r.u8(); o.up_t = (int16_t)r.u16(); o.up_h = r.u16(); o.down_t = (int16_t)r.u16(); o.down_h = r.u16();
+      o.time = r.u32();
+      if ((o.flags & ~kRoomsFlagsAll) || ((o.flags & kRoomsOccupied) && !(o.flags & kRoomsOccKnown)) || o.up_h > 1000 ||
+          o.down_h > 1000)
+        return false;
+      break;
+    }
     case MsgType::Update:
+    case MsgType::MailAck:
       r.u8();  // the reserved byte: any value is accepted, so a later use can't break this version
+      break;
+    case MsgType::PhoneAnswer:
+      m.u.phone.floor = r.u8(); m.u.phone.id = r.u16(); m.u.phone.come_on = r.u8();
+      if (m.u.phone.floor > 1 || m.u.phone.id == 0 || m.u.phone.come_on > 1) return false;
       break;
     case MsgType::Requests: {
       RequestState &q = m.u.req;
@@ -301,11 +337,13 @@ uint32_t RetryQueue::next_at(const Slot &s) {
 }
 
 const RetryQueue::Frame *RetryQueue::due(uint32_t mono_ms) {
-  // Two passes: panel traffic first, and a NOTICE only when none of that is due.
-  for (int pass = 0; pass < 2; pass++) {
+  // Three passes: panel traffic first, a NOTICE only when none of that is due, and a ROOMS (Mike,
+  // 2026-11-22) only when no NOTICE is due either.
+  for (int pass = 0; pass < 3; pass++) {
     const Slot *best = nullptr;
     for (const auto &s : s_) {
-      if (!s.used || s.tries >= kTries || (s.f.type == MsgType::Notice) != (pass == 1)) continue;
+      const int lane = s.f.type == MsgType::Rooms ? 2 : s.f.type == MsgType::Notice ? 1 : 0;
+      if (!s.used || s.tries >= kTries || lane != pass) continue;
       uint32_t at = next_at(s);
       if (!ms_reached(mono_ms, at)) continue;
       if (!best || ms_diff(at, next_at(*best)) < 0) best = &s;
@@ -350,7 +388,7 @@ bool RetryQueue::expired(uint32_t mono_ms, Result &r) {
 
 int RetryQueue::pending() const {
   int n = 0;
-  for (const auto &s : s_) n += s.used && s.f.type != MsgType::Notice;
+  for (const auto &s : s_) n += s.used && !for_gateway(s.f.type);
   return n;
 }
 
@@ -379,6 +417,9 @@ const char *msg_name(MsgType t) {
     case MsgType::Update: return "UPDATE";
     case MsgType::Note: return "NOTE";
     case MsgType::Notice: return "NOTICE";
+    case MsgType::PhoneAnswer: return "PHONE_ANSWER";
+    case MsgType::MailAck: return "MAIL_ACK";
+    case MsgType::Rooms: return "ROOMS";
   }
   return "?";
 }

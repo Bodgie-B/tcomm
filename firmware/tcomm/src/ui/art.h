@@ -43,6 +43,11 @@ void icon(gfx::Canvas &c, Icon i, gfx::Color fg);
 // disc in fg with the envelope in bg.
 constexpr int kMail = 34;
 void mail(gfx::Canvas &c, bool solid, gfx::Color fg, gfx::Color bg);
+// The "no mail" badge (Mike, 2026-11-18), the same kMail size: the mail badge's envelope inside a ring
+// with a diagonal slash through both, all in ink. A thin gap in `gap` (the tile's colour, or the disc's)
+// keeps the slash clear of the envelope. With a disc colour the badge sits on a filled disc of it,
+// which is how the red one stays readable on any tile colour.
+void nomail(gfx::Canvas &c, gfx::Color ink, gfx::Color gap, const gfx::Color *disc);
 void badge(gfx::Canvas &c, int status_or_nosignal, gfx::Color fg, gfx::Color bg);  // 80 x 80
 // A heat or cooling arrow (requests.h), filling a square canvas of any size (kArrow on the tile,
 // larger on the survey). The tenant's: a dark plum disc with the arrow in its colour (mild heat
@@ -60,7 +65,24 @@ void forecast(gfx::Canvas &c, tc::Forecast f, bool night, gfx::Color ink);
 // (88 x 88 each), so the rays can pulse over the disc.
 void heat_sun(gfx::Canvas &c, bool rays, gfx::Color c_sun);
 // WeatherGate's danger cold: icicles hanging from the top of the screen, at 50 percent
-// (800 x kIciclesH).
+// (800 x kIciclesH). The screen draws them straight into each area it redraws, a strip of rows at
+// a time, from a small list of their shapes (memory audit 2026-11-21: about 14 KB in place of an
+// 800 x 100 picture, 240,000 bytes).
+// One icicle: its middle at the ledge, its width there, its length and its lean (how far its tip
+// is to the side). icicle_layout() lists them in drawing order (each cluster's small ones, then its
+// main one), at most max of them, and returns how many the layout has (icicle_layout(nullptr, 0)
+// just counts). The pattern is fixed, as WeatherGate's is, so it never shimmers.
+struct Icicle {
+  float x, w, len, lean;
+};
+constexpr int kIciclesMax = 128;  // the layout has 47
+int icicle_layout(Icicle *out, int max);
+// The rows canvas c can draw (the open strip's, or all of them), columns xa..xb only: those columns
+// cleared, then the ledge and every icicle that reaches them, solid. Shown at kIciclesOpa. Strip by
+// strip it makes exactly the pixels icicles() makes in those columns (before the opacity).
+constexpr uint8_t kIciclesOpa = 128;  // 50 percent, as multiply_alpha(0.5f) has it
+void icicles_cols(gfx::Canvas &c, const Icicle *ice, int n, int xa, int xb);
+// The whole layer in one go, at 50 percent: tests and previews (the screen uses icicles_cols).
 void icicles(gfx::Canvas &c);
 
 // ---- Calendar (calendar roll-down spec, section 4) ----
@@ -81,8 +103,9 @@ void cal_add_button(gfx::Canvas &c, bool up, float size, gfx::Color fill, gfx::C
 void cal_pill(gfx::Canvas &c, gfx::Color fill, gfx::Color border, float border_w, float radius, bool round_left,
               bool round_right);
 // Calendar icons, drawn to fill the canvas: chevrons 18 x 18 (stroke 3), trash 16 x 16, shift
-// 22 x 22, backspace 26 x 22, repeat (two arrows chasing round) 18 x 18, minus and plus any size.
-enum class CalIcon { Prev, Next, Up, Down, Trash, Shift, Backspace, Repeat, Minus, Plus };
+// 22 x 22, backspace 26 x 22, repeat (two arrows chasing round) 18 x 18, minus and plus any size, and
+// the keyboard's microphone 22 x 22 (voice notes: a capsule, the U under it, a stem and a base).
+enum class CalIcon { Prev, Next, Up, Down, Trash, Shift, Backspace, Repeat, Minus, Plus, Mic };
 void cal_icon(gfx::Canvas &c, CalIcon i, gfx::Color col);
 
 }  // namespace art

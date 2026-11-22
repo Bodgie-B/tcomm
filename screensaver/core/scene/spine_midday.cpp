@@ -32,6 +32,7 @@
 
 #include "../anim/ease.h"
 #include "../ss_app.h"
+#include "day_herd.h"
 #include "director.h"
 #include "script.h"
 #include "spine_family.h"
@@ -1393,12 +1394,23 @@ void holdTick(World& w) {
 #define RETURN_IN doit(doEnter), walk(AT_FORD0, kStroll), walk(AT_FORD1, kWade)
 // The stick down behind where he will sit.
 #define STICK_DOWN face(LEFT), pose(POSE_CROUCH, 0.5f, 0.2f), doit(doStickDown), pose(POSE_STAND, 0.5f, 0.1f)
+// After the deer's visit (day_herd.h; stage 22, Mike 2026-11-18: "a little later the hiker walks back in").
+// Both pieces are skipped in the tick they are met when the visit left no sign, so a loop without the herd
+// runs these scripts exactly as before. HERD_LOOK, on the camp bank at the ford (4 s): he stops and looks
+// over the camp (the open flap), then down at the ground in front of him. (Standing, not DEER_PLAN 3.3's
+// POSE_LOOK_AROUND: that lifts the walking stick to his shoulder, which read as a rifle in a loop the deer
+// walked through; C4 review, 2026-11-19.) HERD_DOOR (returns a and c, 12 s):
+// to the tent's door, down, the flap zipped, up, a look down at the prints and a scratch of his head.
+#define HERD_LOOK   skipUnless(herdSigns, 4), pose(POSE_STAND, 0.5f, 1.9f), act(herdActLookDown, 1.2f), pose(POSE_STAND, 0.3f, 0.1f),       doit(herdDoLooked)
+#define HERD_DOOR                                                                                               skipUnless(herdFlapAjar, 9), go(AT_DOOR, kStroll), face(LEFT), pose(POSE_CROUCH, 0.6f, 0.3f),                     act(herdActZip, 1.0f), pose(POSE_STAND, 0.5f, 0.1f), act(herdActLookDown, 1.2f),                              pose(POSE_SCRATCH_HEAD, 0.5f, 1.4f), pose(POSE_STAND, 0.4f, 0.1f), doit(herdDoSeen)
 
 // Return a: drops onto his seat by the pit; the hat off, a long fan, back on.
 const Step kReturnA[] = {
     RETURN_IN,
+    HERD_LOOK,
     go(AT_FAM0, kStroll),
     STICK_DOWN,
+    HERD_DOOR,
     go(AT_SIT, 30.f),
     face(TO_FIRE),
     pose(POSE_SIT, 0.55f, 0.6f),
@@ -1411,6 +1423,7 @@ const Step kReturnA[] = {
 // Return b: limps in; sits; the boot off, a stone shaken out of it, on again.
 const Step kReturnB[] = {
     RETURN_IN,
+    HERD_LOOK,
     doit(doLimpStart),
     act(actLimp, 0.5f),
     repeatWhile(walking, 1),
@@ -1427,8 +1440,10 @@ const Step kReturnB[] = {
 // Return c: burrs all over him: picked off his sleeve, his trousers, his hat.
 const Step kReturnC[] = {
     RETURN_IN,
+    HERD_LOOK,
     go(AT_FAM0, kStroll),
     STICK_DOWN,
+    HERD_DOOR,
     act(actPickSleeve, kSleeveS),
     act(actPickLegs, kLegsS),
     act(actPickHat, kPickHatS),
@@ -1668,6 +1683,8 @@ const Step kAfternoonB[] = {
 #undef PACK_CROUCH
 #undef RETURN_IN
 #undef STICK_DOWN
+#undef HERD_LOOK
+#undef HERD_DOOR
 #undef LUNCH_START
 #undef LUNCH_END
 #undef WADE_START
@@ -1723,7 +1740,9 @@ bool hasRead(const LoopPlan& p) {
 int beatSeconds(const LoopPlan& p, int b) { return 120 + 0 * kDurations[b][p.fvar[b]] + 0 * kBookS * (int)hasRead(p); }
 #else
 int beatSeconds(const LoopPlan& p, int b) {
-  return kDurations[b][p.fvar[b]] + (b == MD_AFTERNOON && hasRead(p) ? kBookS : 0);
+  // After the deer's visit the return is longer: he looks, and zips the flap (day_herd.h).
+  return kDurations[b][p.fvar[b]] + (b == MD_AFTERNOON && hasRead(p) ? kBookS : 0) +
+         (b == MD_RETURN ? herdReturnExtra(p.herd, p.fvar[b]) : 0);
 }
 #endif
 
@@ -1924,7 +1943,7 @@ constexpr int kAimMin = SS_LOOP_MIN_SECONDS + 10;
 constexpr uint8_t kPauseMin = 8, kPauseMax = 20;
 
 int busySeconds(const LoopPlan& p) {
-  int s = (int)(SS_BUILD_SECONDS + 0.5f);
+  int s = (int)(SS_BUILD_SECONDS + 0.5f) + herdSeconds(p.herd);   // the deer's visit while he is away (day_herd.h)
   for (int b = 0; b < MD_COUNT; ++b) s += beatSeconds(p, b);
   for (int i = 0; i < p.n_fillers; ++i) s += spineFillerSeconds(p, p.filler[i]);
   for (int i = 0; i < p.n_majors; ++i)
@@ -1959,6 +1978,10 @@ int middayVariantCount(int beat) {
 }
 
 void middayPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
+  // The deer visit first, before any loop draw: its own stream from the loop rng's state (day_herd.h; 0
+  // while the herd does not plan). majorsPlan reads it (a herd loop has at most two majors and none of
+  // deer_stick, plink, longshot).
+  p.herd = herdPlanPick(rng, in, mem, majorsMushroomPlays(in, mem, SF_MIDDAY));
   // One rng call per statement: argument evaluation order differs between
   // compilers, and the board must replay the PC preview.
   // Variants: a variant the last midday played is a quarter as likely.
@@ -2077,6 +2100,9 @@ void middayLayout(World& w) {
 
 void middayBuildTimeline(Timeline& tl, const LoopPlan& p) {
   tl.add(kMiddayBuild);
+  // The deer visit the standing, empty camp before he is back (stage 22; not a MiddayBeatId: no variants
+  // table, no pause after it).
+  if (p.herd) tl.add(Beat{"herd", (float)herdSeconds(p.herd), herdBeatBegin, herdBeatUpdate, herdBeatEnd});
   for (int b = 0; b < MD_COUNT; ++b) {
     tl.add(Beat{kBeatNames[b], (float)beatSeconds(p, b), kBegin[b], b == MD_AFTERNOON ? afternoonUpdate : beatUpdate,
                 beatEnd});
@@ -2113,6 +2139,10 @@ int middayFormatPlan(const LoopPlan& p, char* buf, size_t n) {
   char tmp[24];
   for (int b = 0; b < MD_COUNT; ++b) {
     snprintf(tmp, sizeof tmp, " %s=%d", kBeatNames[b], (int)p.fvar[b]);
+    put(tmp);
+  }
+  if (p.herd) {   // only in a loop the deer visit, so every other loop's line is what it was
+    snprintf(tmp, sizeof tmp, " herd=%d", (int)p.herd);
     put(tmp);
   }
   put(" fillers=");

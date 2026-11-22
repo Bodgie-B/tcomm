@@ -39,7 +39,9 @@ struct Renderer;
 
 enum MinorId : uint8_t {
   MN_CHIPMUNK_CROSS = 0, MN_SQUIRREL_NUT, MN_FROG_SPLASH, MN_BIRD_CHIP, MN_DEER_EDGE, MN_OWL_WATCH,
-  MN_MOUSE_TENT, MN_LEAF_FALL, MN_MOTH_LANTERN, MN_BEE_VISIT, MN_CLOUD_ANIMAL, MN_COUNT,
+  MN_MOUSE_TENT, MN_LEAF_FALL, MN_MOTH_LANTERN, MN_BEE_VISIT, MN_CLOUD_ANIMAL,
+  MN_REED_BIRD,   // stage 22 (reeds.h): the red-winged blackbird rides a cattail; plays only with SS_S22 on
+  MN_COUNT,
   MN_NONE = 0xFF
 };
 

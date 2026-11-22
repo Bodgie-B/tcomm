@@ -175,6 +175,7 @@ bool hikerFree(const World& w, float need, bool quiet) {
   if (h.walking || h.blending || (h.target != POSE_SIT && h.target != POSE_STAND)) return false;
   if (w.minors.cur != MN_NONE || w.minors.fx_head || w.minors.fx_arm) return false;
   if (quiet && directorCount(w) > 0) return false;   // (the minors wait for a hat or fan gag: minors.cpp)
+  if (reedsPickActive(w)) return false;   // the reed pick has him (reeds.h): the two overlays exclude each other
   return true;
 }
 
@@ -782,6 +783,8 @@ float weatherSwayMul(const World& w) {
   const float base = x.kind == WX_WIND || x.kind == WX_STORM ? 0.35f : 0.f;
   return minf(2.2f, 1.f + 1.5f * fabsf(x.wind) * (base + (1.f - base) * x.gust));   // tuft bounds allow ~16 px of tip
 }
+
+float weatherBreeze(const World& w) { return clamp01(0.18f + 0.42f * (weatherSwayMul(w) - 1.f)); }
 
 float weatherSmokeMul(const World& w) { return w.weather.smoke_mul; }
 float weatherFireCap(const World& w) { return w.weather.rain > 0.05f ? lerp(1.f, 0.5f, w.weather.rain) : 1.f; }

@@ -24,6 +24,7 @@
 #include "director.h"
 #include "script.h"
 #include "spine_family.h"
+#include "stage22_switch.h"
 #include "world.h"
 
 namespace ss {
@@ -2739,8 +2740,10 @@ int spinePauseSeconds(const LoopPlan& p, int beat_pauses) {
 void spineFitLength(LoopPlan& p, Memory& mem, const FitSpec& f) {
   // Loop length policy. Squeeze the pauses (round robin, a second at a time,
   // down to 8 s); while still too long, drop fillers down to one, majors down
-  // to two, the last filler, then shorten the still beats round the majors;
-  // then stretch the pauses (up to 20 s) until the loop is long enough.
+  // to two (one when the plan holds tai chi or the mushroom: INTEGRATION_PLAN
+  // 3.1 point 11), the last filler, then shorten the still beats round the
+  // majors; then stretch the pauses (up to 20 s) until the loop is long enough.
+  // A major majorKept names is never dropped, even below the floor's count.
   f.filler_slots(p);
   auto total = [&p, &f]() { return f.busy(p) + spinePauseSeconds(p, f.beat_pauses); };
   uint8_t* slot[SB_COUNT + SPINE_FILLER_MAX];
@@ -2755,7 +2758,10 @@ void spineFitLength(LoopPlan& p, Memory& mem, const FitSpec& f) {
     f.filler_slots(p);
   };
   while (total() > kAimMax && p.n_fillers > 1) dropFiller();
-  while (total() > kAimMax && p.n_majors > 2) {
+  int floor_n = 2;
+  for (int i = 0; i < p.n_majors; ++i)
+    if (p.major[i] == MJ_TAICHI || p.major[i] == MJ_MUSHROOM) floor_n = 1;
+  while (total() > kAimMax && p.n_majors > floor_n) {
     // Drop the last major, or an earlier one if that leaves a set of majors
     // one of the last loops played (memory) and another choice does not.
     uint32_t all = 0;
@@ -2764,6 +2770,7 @@ void spineFitLength(LoopPlan& p, Memory& mem, const FitSpec& f) {
     auto kept = [&p](int i) { return p.major[i] == MJ_FISHING_GOOD || majorKept(p.major[i], p.major_var[i]); };
     int drop = p.n_majors - 1;
     while (drop > 0 && kept(drop)) --drop;
+    if (kept(drop)) break;   // every major left is kept (REVIEW_FIXES F26: a forced fetch and the mushroom)
     for (int i = p.n_majors - 1; i >= 0; --i)
       if (!kept(i) && !memoryRecentSet(mem, (uint32_t)(all & ~(1u << p.major[i])))) {
         drop = i;
@@ -2798,6 +2805,12 @@ void spineFitLength(LoopPlan& p, Memory& mem, const FitSpec& f) {
 }
 
 void spinePlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
+  p.herd = 0;   // the deer visit is the midday's (middayPlan); every other family plans none
+  // Tai chi's "done this morning" (Memory::taichi_next bit 2) lasts until the first evening or midday loop
+  // (INTEGRATION_PLAN 3.1 point 7), and only while tai chi plans (stage22_switch.h).
+  const bool camp_not_morning = p.family != SF_MORNING && p.family != SF_LOOKOUT && p.family != SF_SUNRISE;
+  if (camp_not_morning && (majorsS22Plans(mem) & S22_TAICHI) != 0)
+    mem.taichi_next = (uint8_t)(mem.taichi_next & ~4u);
   if (p.family == SF_MORNING) {
     morningPlan(p, rng, in, mem);
   } else if (p.family == SF_MIDDAY) {

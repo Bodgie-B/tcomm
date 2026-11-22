@@ -23,6 +23,16 @@ if(SS_XMAS)
 else()
   target_compile_definitions(ss_core PUBLIC SS_XMAS=0)
 endif()
+# Stage 22's plan switch (core/scene/stage22_switch.h; Mike, 2026-11-18): off keeps every plan as it was
+# (the proof that nothing else moved), on lets the new pieces into the plans. It changes no struct, so
+# both settings have the same World. ON by default since the stage went live (step C7, 2026-11-19), as the
+# header's own default is for the panel; build-s22-off passes -DSS_S22=OFF.
+option(SS_S22 "Let stage 22's new pieces into the plans" ON)
+if(SS_S22)
+  target_compile_definitions(ss_core PUBLIC SS_S22=1)
+else()
+  target_compile_definitions(ss_core PUBLIC SS_S22=0)
+endif()
 target_compile_options(ss_core PRIVATE
   -fno-exceptions -fno-rtti
   -Wall -Wextra -Wconversion -Wdouble-promotion -Wshadow -Werror

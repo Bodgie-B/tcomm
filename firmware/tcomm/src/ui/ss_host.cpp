@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include <house_weather.h>
+#include <mush_patch.h>
 #include <set_piece_day.h>
 #include <ss_app.h>
 
@@ -129,6 +130,15 @@ float g_mood = 3.f;
 // scene's old parked sun and moon) with no clock, or while a phase is forced for testing.
 ss::SkyInputs g_sky = {};
 uint8_t g_month = 0;                // the local month 1-12 for the scene's leaves (Inputs::month); 0 with no clock
+// Stage 22's carry word (ss_app.h Inputs::carry; Mike, 2026-11-19): what one run hands the next, so the
+// mushrooms ripen across runs and tai chi keeps its chapter and plays once a morning. Low byte the
+// mushroom patch (mush_patch.h), high byte tai chi (scene/memory.h taichi_next). RAM only: a restart
+// starts it at 0, which is a bare bank and chapter 1.
+uint16_t g_carry = 0;
+uint32_t g_taichi_at = 0;           // nowMs when "tai chi done this morning" was set, for the 6-hour rule
+uint32_t g_mush_at = 0;             // nowMs the patch last grew while stopped; minutes since then carry over
+constexpr uint16_t kTaichiDoneBit = 1u << 10;           // taichi_next bit 2: tai chi has played this morning
+constexpr uint32_t kTaichiDoneMs = 6u * 3600u * 1000u;  // cleared 6 hours after it was stored (INTEGRATION_PLAN 3.1 point 6)
 bool g_mood_known = false;
 int g_phase_seen = -1;              // the sky phase the mood was last worked out in
 uint32_t g_mood_at = 0, g_inputs_at = 0;
@@ -147,6 +157,7 @@ struct Stats {
 Stats g_st;
 
 void refreshInputsSoon();
+void storeCarry(uint16_t c, uint32_t now);
 
 // The tenant's mail icon (Mike, 2026-11-07): while mail waits on the DOWNSTAIRS panel, the solid mail
 // badge sits in the top-right corner of every frame, steady. It is a small sprite built once (a cream
@@ -346,6 +357,7 @@ ss::Inputs buildInputs(const tc::View &v) {
   in.mood = g_mood_override >= 0.f ? g_mood_override : g_mood;
   if (g_mood_override < 0.f) in.sky = g_sky;
   in.month = g_month;
+  in.carry = g_carry;
   ss::OutsideReading r;
   r.valid = v.outside.valid;
   r.forecast = (int)v.outside.code;
@@ -552,6 +564,9 @@ void endRun() {
     lv_timer_del(g_timer);
     g_timer = nullptr;
   }
+  const uint16_t carry = ss::appCarry(g_app);   // what this run hands the next, read before the App goes
+  storeCarry(carry, nowMs());
+  g_mush_at = nowMs();   // the patch grew by loops while it ran; by the clock from here
   const ss::HostAlloc a = hostAlloc();
   ss::appStop(g_app, a);   // frees the cache (and the fast block when core took it from PSRAM): the spare goes home
   g_app = nullptr;
@@ -725,6 +740,48 @@ void frame(lv_timer_t *) {
 
 void refreshInputsSoon() { g_inputs_at = nowMs() - kInputsMs; }
 
+// A new carry word; the 6-hour clock starts when "tai chi done" goes on (the patch changes the word
+// every 10 minutes while it grows, so the word's own changes can't time it).
+void storeCarry(uint16_t c, uint32_t now) {
+  if ((c & kTaichiDoneBit) && !(g_carry & kTaichiDoneBit)) g_taichi_at = now;
+  g_carry = c;
+}
+
+// The carry word, once a service call. While a run is on it follows the run (appCarry changes at loop
+// ends). While none is: the mushroom patch grows by the clock as it would by loops (mush_patch.h,
+// one step per 10 dry minutes; rain from the outside reading counts as a wet loop), and "tai chi done
+// this morning" goes 6 hours after it was stored, so the next morning's first loop opens with it.
+void serviceCarry(uint32_t now) {
+  if (g_app) {
+    storeCarry(ss::appCarry(g_app), now);
+    g_mush_at = now;
+    return;
+  }
+  uint16_t c = g_carry;
+  if ((c & kTaichiDoneBit) && now - g_taichi_at >= kTaichiDoneMs) c = (uint16_t)(c & ~kTaichiDoneBit);
+  const uint32_t since = now - g_mush_at;
+  if (since >= 60000u) {
+    // The real reading only: a weather set by hand (ss weather) is for testing and grows nothing.
+    const bool raining = g_in_ready && g_weather_set < 0 && g_in.have_outside &&
+                         (g_in.weather_code == 1 || g_in.weather_code == 7);
+    const uint8_t b = (uint8_t)(c & 0xFFu);
+    uint8_t nb = b;
+    if (raining) {
+      nb = ss::mushAfterMinutes(b, 0, true);
+      g_mush_at = now;
+    } else {
+      const uint32_t mins = since / 60000u;
+      const uint32_t steps = mins / ss::MUSH_MINUTES_PER_STEP;
+      if (steps) {
+        nb = ss::mushAfterMinutes(b, mins, false);
+        g_mush_at += steps * ss::MUSH_MINUTES_PER_STEP * 60000u;   // the remainder counts toward the next step
+      }
+    }
+    c = (uint16_t)((c & 0xFF00u) | nb);
+  }
+  storeCarry(c, now);
+}
+
 }  // namespace
 
 void screensaver_set_frame_buffer(void *fb) { g_fb = fb; }
@@ -738,6 +795,7 @@ bool screensaver_start(uint32_t seed) {
     g_in.mood = 3.f;
     g_in.chip = true;
   }
+  g_in.carry = g_carry;   // what the last run left (the inputs may not have been rebuilt since)
   g_mem = psramAlloc(SS_APP_BYTES);
   if (!g_mem) return false;
   lv_disp_t *d = lv_disp_get_default();
@@ -799,6 +857,7 @@ void screensaver_service(const tc::View &v, const tc::Settings &s, const tc::Wal
                          uint32_t idle_ms) {
   const uint32_t now = nowMs();
   g_idle_now = idle_ms;
+  serviceCarry(now);
   g_mail_want = v.me == tc::Floor::Downstairs && v.mail.show;
   g_idle_ms = g_idle_set_ms ? g_idle_set_ms : (uint32_t)s.screensaver_min * 60000u;
   // A new ring from the other floor: BellView::shakes counts rings both ways, and an incoming one
@@ -943,6 +1002,14 @@ int screensaver_stats(char *buf, size_t n) {
                   spare_lent() ? "lent" : "home", (unsigned long)spare_refused(),
                   (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
                   (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
+}
+
+uint16_t screensaver_carry() { return g_carry; }
+
+void screensaver_set_carry(uint16_t word) {
+  g_carry = word;
+  g_taichi_at = g_mush_at = nowMs();
+  refreshInputsSoon();
 }
 
 int screensaver_inputs(char *buf, size_t n) {

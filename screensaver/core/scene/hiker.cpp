@@ -29,6 +29,14 @@ constexpr float kTorsoW = 0.15f, kThighW = 0.095f, kShinW = 0.075f, kFootW = 0.0
 constexpr float kUpperW = 0.065f, kForeW = 0.055f;
 constexpr float kHeel = 0.02f, kToe = 0.07f;
 constexpr float kFootFollow = 0.75f;  // how much the foot pitches with the shin (flat in stance, toes up lying)
+// Tai chi's turn (Hiker::foot_turn; Mike, 2026-11-18): at 1 the feet are end-on, heel and toe both this
+// long. The two lengths below return exactly kHeel and kToe at 0, so every existing frame is unchanged.
+constexpr float kTurnFoot = 0.035f;
+inline float heelLen(const Hiker& h) { return kHeel + (kTurnFoot - kHeel) * h.foot_turn; }
+inline float toeLen(const Hiker& h) { return kToe + (kTurnFoot - kToe) * h.foot_turn; }
+// Where his mouth sits on the head circle, in head radii: forward along the face and down from the
+// centre (PROPOSED; the reeds' mouth-stem stills, prone included, are the check).
+constexpr float kMouthFwd = 0.85f, kMouthDown = 0.35f;
 
 // Hat: brim is a capsule across the head, crown a dented trapezoid on top.
 constexpr float kBrimUp = 0.035f, kBrimBack = 0.095f, kBrimFront = 0.14f, kBrimW = 0.035f;
@@ -397,8 +405,8 @@ void build(const Hiker& h, Prims& ps, Vec2* rod_tip = nullptr, RimAxis* rim_out 
     const float shin = P.thigh[i] - P.knee[i];
     ankle[i] = add(knee[i], mul(dirA(shin), kShin * H));
     const Vec2 fd = dirA(0.5f * kPi + kFootFollow * shin);
-    heel[i] = sub(ankle[i], mul(fd, kHeel * H));
-    toe[i] = add(ankle[i], mul(fd, kToe * H));
+    heel[i] = sub(ankle[i], mul(fd, heelLen(h) * H));
+    toe[i] = add(ankle[i], mul(fd, toeLen(h) * H));
     elbow[i] = add(shoulder, mul(dirA(P.shoulder[i]), kUpper * H));
     hand[i] = add(elbow[i], mul(dirA(P.shoulder[i] + P.elbow[i]), kFore * H));
   }
@@ -567,6 +575,7 @@ void hikerInit(Hiker& h, Vec2 feet, int facing) {
   h.carry = CARRY_NONE;
   h.breath_phase = 0.f;
   h.breath_rate = h.breath_scale = 1.f;
+  h.foot_turn = 0.f;
 }
 
 void hikerApplyClimb(Hiker& h, float w) {
@@ -796,8 +805,8 @@ Vec2 hikerHandPos(const Hiker& h, int which) {
     const float shin = P.thigh[i] - P.knee[i];
     const Vec2 ankle = add(knee, mul(dirA(shin), kShin * H));
     const Vec2 fd = dirA(0.5f * kPi + kFootFollow * shin);
-    const Vec2 heel = sub(ankle, mul(fd, kHeel * H));
-    const Vec2 toe = add(ankle, mul(fd, kToe * H));
+    const Vec2 heel = sub(ankle, mul(fd, heelLen(h) * H));
+    const Vec2 toe = add(ankle, mul(fd, toeLen(h) * H));
     low = maxf(low, knee.y + 0.5f * kShinW * H);
     low = maxf(low, maxf(heel.y, maxf(toe.y, ankle.y)) + 0.5f * kFootW * H);
     if (i == (which ? 1 : 0)) {
@@ -830,8 +839,8 @@ Vec2 hikerHeadPos(const Hiker& h, float* radius) {
     const float shin = P.thigh[i] - P.knee[i];
     const Vec2 ankle = add(knee, mul(dirA(shin), kShin * H));
     const Vec2 fd = dirA(0.5f * kPi + kFootFollow * shin);
-    const Vec2 heel = sub(ankle, mul(fd, kHeel * H));
-    const Vec2 toe = add(ankle, mul(fd, kToe * H));
+    const Vec2 heel = sub(ankle, mul(fd, heelLen(h) * H));
+    const Vec2 toe = add(ankle, mul(fd, toeLen(h) * H));
     low = maxf(low, knee.y + 0.5f * kShinW * H);
     low = maxf(low, maxf(heel.y, maxf(toe.y, ankle.y)) + 0.5f * kFootW * H);
   }
@@ -839,6 +848,17 @@ Vec2 hikerHeadPos(const Hiker& h, float* radius) {
   if (radius) *radius = kHeadR * H;
   const float sx = h.facing < 0 ? -1.f : 1.f;
   return Vec2{h.feet.x + sx * head.x, h.feet.y - low - P.lift * H + head.y};
+}
+
+Vec2 hikerMouthPos(const Hiker& h) {
+  float r = 0.f;
+  const Vec2 c = hikerHeadPos(h, &r);
+  // The head's own axes as hikerHeadPos turns them (lean plus head tilt), mirrored with his facing.
+  const float ht = (h.pose.lean + h.pose.head) * kInvTwoPi;
+  const float sx = h.facing < 0 ? -1.f : 1.f;
+  const Vec2 hu{sx * sinT(ht), -cosT(ht)};   // up through the crown
+  const Vec2 hf{sx * cosT(ht), sinT(ht)};    // out through the face
+  return add(c, add(mul(hf, kMouthFwd * r), mul(hu, -kMouthDown * r)));
 }
 
 Vec2 hikerRodTip(const Hiker& h) {

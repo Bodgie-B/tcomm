@@ -71,6 +71,9 @@ static Inputs inputsFor(int family, float mood, bool night = false, int weather 
   in.have_outside = true;
   in.weather_code = weather;
   in.spine_force = (uint8_t)(1 + family);
+  // Stage 22: tai chi is forced into the day's first morning loop and he then practises beside the heron's
+  // shallows. These runs test the stream alone: the carry word says the morning has had its tai chi.
+  in.carry = (uint16_t)(0x84u << 8);
   in.night_mode = night;
   in.weather.night_dim = night ? 1.f : 0.f;
   return in;

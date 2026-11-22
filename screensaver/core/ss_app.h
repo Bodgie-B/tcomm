@@ -58,6 +58,11 @@ struct Inputs {
   // leaves follow it (scene/stream.h: green and few in spring and summer, many and coloured in
   // autumn, a few brown ones in winter); 0 keeps the year-round mix.
   uint8_t month;
+  // What one screensaver run hands the next (stage 22; Mike, 2026-11-18): appStart copies it into the
+  // new loop memory, the host keeps appCarry's word between runs. Low byte: the mushroom patch
+  // (mush_patch.h). High byte: tai chi's next chapter and "done this morning" (scene/memory.h
+  // taichi_next). Zeroed: nothing carried, as before.
+  uint16_t carry;
 };
 
 #define SS_REQ_PREDICTED 0x10
@@ -156,6 +161,9 @@ bool appCritterRect(const App* app, int slot, Rect* out, int* kind);
 // Loop memory (stage 6 adds the rest): the raccoon has the shoe; loops started.
 bool appMemoryShoeTaken(const App* app);
 uint32_t appMemoryLoopCount(const App* app);
+// The word to hand the next run as Inputs::carry (the mushroom patch, tai chi's chapter): read it
+// after each loop and when a run ends.
+uint16_t appCarry(const App* app);
 // All of the loop memory (scene/memory.h), e.g. "loop=3 cairn=4 shoe=0
 // stolen=mug hole=0 brave=deer,squirrel ring=echo,pinecone". Returns snprintf's count.
 int appMemory(const App* app, char* buf, size_t n);

@@ -7,10 +7,24 @@
 #include "theme.h"
 #include "ui.h"
 #include <atomic>
+#include <new>
+#include <stdlib.h>
 #include <string.h>
 
 namespace ui {
 namespace detail {
+
+// One object for the life of the firmware, made where it is first named, in the LVGL heap: PSRAM on the
+// panel (lv_conf.h), malloc on the PC. For interface state too big for internal RAM, which the Wi-Fi
+// driver needs (field fix 2026-11-20). As a namespace-scope reference it is made while the statics are
+// constructed: ESP-IDF has added PSRAM to the heap by then. Internal RAM only if PSRAM has no room.
+template <class T>
+T &ui_keep() {
+  void *m = lv_mem_alloc(sizeof(T));
+  if (!m) m = malloc(sizeof(T));
+  if (!m) abort();
+  return *new (m) T();
+}
 
 extern Actions *g_act;
 extern Frame g_f;
@@ -109,6 +123,9 @@ bool settings_family_open();
 void open_status_sheet();
 void open_comfort_survey();  // the downstairs tenant's "how does it feel?" column (ui_comfort.cpp)
 void open_comfort_chart();   // the comfort chart (ui_chart.cpp), on either panel
+// For the simulator: the view the chart's plot shows (t0, t1, g0, g1: degrees F across, gr/lb up) and
+// whether it is at rest (0), on its opening hold (1) or gliding (2). Mike, 2026-11-18: the zoom.
+int comfort_chart_peek(float view[4]);
 void open_note_editor();     // this panel's tile message: the keyboard (ui_note.cpp)
 void open_outside_chart();   // the outside history chart (ui_outside.cpp), on either panel
 void comfort_refresh();      // its live reading, and its idle close (called from render)
@@ -130,8 +147,14 @@ bool zambretti_preview(tc::OutsideView &ov, bool &night);
 // tile message editor (ui_note.cpp, Mike 2026-11-07). The owner gives three callbacks and keeps the
 // field the text goes to: on_char gets the character already in its case and says whether it took it
 // (shift only clears after a letter that went in), on_back removes one, on_done is the Done key.
-// keypad_build makes the keys as children of `parent` at y (192 px shown); free it by deleting
+// keypad_build makes the keys as children of `parent` at y (kKpShown px shown); free it by deleting
 // kp.obj, and set kp.nkeys = 0 and kp.obj = nullptr.
+// Its geometry (Mike, 2026-11-21: layout B, taller keys): 58 px keys, 5 px between the rows, 8 px over
+// the first and 9 under the last, so 264 px shown, its top at screen y 216 (was 40 px keys at 288).
+constexpr int kKeyH = 58;
+constexpr int kKeyGap = 5;
+constexpr int kKpShown = 8 + 4 * kKeyH + 3 * kKeyGap + 9;  // 264
+constexpr int kKpTop = 480 - kKpShown;                     // 216
 struct Keypad;
 struct KeypadKey {
   uint8_t kind;
@@ -142,19 +165,38 @@ struct KeypadKey {
 };
 struct Keypad {
   lv_obj_t *obj = nullptr;
-  KeypadKey keys[34] = {};
+  KeypadKey keys[34] = {};  // 33 keys, 34 with the mic key (kp_build's static_assert)
   int nkeys = 0;
   bool shift = false, sym = false;
   tc::Mode mode = tc::Mode::Day;
   bool (*on_char)(char ch) = nullptr;
   void (*on_back)() = nullptr;
   void (*on_done)() = nullptr;
+  // Voice notes (docs/voice-notes/DESIGN.md 2.1): set before keypad_build to get the blue mic key in
+  // row 4. It returns the text of the field the keys go to (the voice text is inserted at its end
+  // until tap-to-place-cursor lands), or null when no field takes text now. Null: no mic key.
+  const char *(*on_mic)() = nullptr;
+  int mic = -1;  // the mic key's index in keys, or -1 (kp_build)
 };
 void keypad_build(Keypad &kp, lv_obj_t *parent, int32_t y, tc::Mode mode);
 void keypad_refresh(Keypad &kp);  // after the owner changes kp.shift or kp.sym
 
+// Voice notes (ui_voice.cpp; docs/voice-notes/DESIGN.md 2). The Controller does the work through
+// Actions::voice_*; View::voice says what to show.
+// Called from render(): the badge recorder (Sheet::Voice), the keyboard's voice strip and the arrival
+// dialog over the sender's tile.
+void voice_render(const tc::View &v, uint32_t mono_ms, bool mode_changed);
+void voice_badge_long(lv_event_t *e);   // the own badge's touch area: LONG_PRESSED opens the recorder
+void open_voice_recorder();             // Sheet::Voice as the view stands (open_sheet, the simulator)
+void voice_sheet_closing(Sheet s);      // close_sheet's hook, before the sheet s goes
+void voice_key_event(lv_event_t *e);    // the keyboard's mic key (user data: its KeypadKey)
+// An owner hides its keyboard (the calendar's Done or a picker): a voice job on it is cancelled and
+// the strip goes. Deleting the keyboard does the same by itself.
+void voice_keypad_gone(Keypad &kp);
+bool voice_offered();                   // this panel can record now (View::voice.capable)
+
 // The calendar roll-down (ui_calendar.cpp)
-bool cal_is_open();
+bool cal_is_open();  // rolled down at all (the arrival dialog waits while it is)
 bool cal_covering();  // rolled all the way down: the tiles are hidden under it
 void cal_open(bool animate);
 void cal_close(bool animate);

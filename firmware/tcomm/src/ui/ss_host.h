@@ -63,6 +63,11 @@ void screensaver_set_scene(int family);    // the next loop's: 0 its own pick, 1
 // the tint such a reading brings; -1 back to the outside reading. The loop's weather is planned at
 // its start, so start a new one (ss seed N) to see it.
 void screensaver_set_weather(int code);
+// Stage 22's carry word (ss_app.h Inputs::carry): what the next run starts from. Low byte the mushroom
+// patch, high byte tai chi's chapter and "done this morning" (bit 10). Set by hand it applies from the
+// next start (serial: ss carry, ss carry N). RAM only.
+uint16_t screensaver_carry();
+void screensaver_set_carry(uint16_t word);
 // The night scene's brightness (palette.h WeatherTint::night_gain): 1.6 to begin with; 0 is the PC
 // preview's look (0.55), which on the panel's night backlight leaves only the stream readable.
 void screensaver_set_night_gain(float gain);

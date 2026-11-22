@@ -59,6 +59,11 @@ class Canvas {
   // w * h * (alpha ? 3 : 2) bytes, row scanline_bytes(w). Cleared, like a new canvas; destroy()
   // leaves both.
   void view(uint8_t *data, float *row, int w, int h, bool alpha);
+  // A canvas with no picture at all, for strip drawing only (begin_strip; drawing with no strip
+  // open is not allowed): row is its scanline scratch, scanline_bytes(w), which it doesn't own.
+  // end_strip() then copies nothing; destroy() leaves row. The danger-cold icicles draw this way
+  // straight into each area the screen redraws (memory audit 2026-11-21).
+  void strips_only(float *row, int w, int h, bool alpha);
   static size_t scanline_bytes(int w);
   // Trades pixel memory with another block of the same size (the sky and its spare).
   void trade_pixels(uint8_t *&other) {
@@ -80,8 +85,13 @@ class Canvas {
   // drawn from scratch, so the drawing must paint every pixel (start with clear()).
   void begin_strip(uint8_t *buf, int y0, int n);
   void end_strip();
+  // The rows drawing touches now, draw_y0() .. draw_y1() - 1: the open strip's, or all of them.
+  int draw_y0() const { return y_lo(); }
+  int draw_y1() const { return y_hi(); }
 
   void clear(Color c, uint8_t a = 255);
+  // As clear(), over columns x0..x1 only.
+  void clear_cols(int x0, int x1, Color c, uint8_t a = 255);
   // Optional clip: everything drawn is multiplied by this shape's coverage.
   void set_clip(const RRect *r);
   // Paint only where the canvas already has alpha (source-atop): decorations stay inside a tile.

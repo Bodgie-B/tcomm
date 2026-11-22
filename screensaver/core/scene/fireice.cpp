@@ -7,6 +7,7 @@
 #include "../render/renderer.h"
 #include "../ss_app.h"
 #include "ambient.h"
+#include "day_herd.h"
 #include "director.h"
 #include "script.h"
 #include "world.h"
@@ -776,7 +777,12 @@ bool fireIceCalm(const World& w) {
   if (h.target != POSE_STAND && h.target != POSE_SIT && h.target != POSE_LOOK_AROUND && h.target != POSE_HANDS_ON_HIPS &&
       h.target != POSE_SCRATCH_HEAD && h.target != POSE_CROUCH)
     return false;
-  if (w.busy || w.react.active || w.major.on || w.day.kind != DAY_NONE) return false;
+  // A day play holds the union; the deer herd's signs alone (the flap, the hoof prints, after its beat) do
+  // not: the prints' fade just waits meanwhile (REVIEW_FIXES F25, DEER_PLAN 6.2).
+  if (w.busy || w.react.active || w.major.on || (w.day.kind != DAY_NONE && !herdOnlySigns(w))) return false;
+  // The reed pick is a pose overlay that writes none of the fields tested below, so ask it (REVIEW_FIXES
+  // F16; Mike, 2026-11-18): this also keeps the visiting couple from starting (visitorsCanStart).
+  if (reedsPickActive(w)) return false;
   // A minor may be under way only if it holds nothing that would hang in mid-air meanwhile (a critter,
   // a falling leaf) and leaves him alone.
   const Minors& mn = w.minors;

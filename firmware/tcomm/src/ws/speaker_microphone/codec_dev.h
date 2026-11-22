@@ -46,6 +46,9 @@ esp_err_t speaker_codec_volume_set(int volume, int *volume_set);
 
 // TComm: read one ES8311 register (0 when it worked), for the log when a sound goes unheard.
 int speaker_codec_read_reg(int reg, int *val);
+// TComm (2026-11-21): one ES7210 (microphone ADC) register, and the gain last set, for serial "mic raw".
+int microphone_codec_read_reg(int reg, int *val);
+int microphone_codec_gain_get(void);
 
 /**
  * @brief Microphone set gain.

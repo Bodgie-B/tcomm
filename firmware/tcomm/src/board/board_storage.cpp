@@ -22,16 +22,20 @@ static Preferences g_prefs;
 static bool g_open = false;
 // 2, 3: ringtones renumbered (sci-fi, then Water drops removed); 4: screensaver_min added; 5: the screen's
 // dark hours (screen_off_start_min, screen_off_end_min) added; 6: the presence sensor's three fields and the
-// notice mask added (Mike, 2026-11-11). The older layouts are read by tc::settings_from_old
-// (core/settings_migrate.h, checked by the host tests), so an update keeps everything saved.
-static constexpr uint16_t kSettingsVersion = 6;
+// notice mask added (Mike, 2026-11-11); 7: the same layout, and a saved mask gains the mail and ring
+// kinds once (Mike, 2026-11-15, for the phones); 8: the same layout again, and a saved mask gains the
+// mild arrow and note kinds once (Mike, 2026-11-18, for his phone). The older layouts are read by
+// tc::settings_from_old (core/settings_migrate.h, checked by the host tests), so an update keeps
+// everything saved.
+static constexpr uint16_t kSettingsVersion = 8;
 static constexpr uint16_t kOwnVersion = 1;
 static constexpr uint16_t kDogVersion = 3;  // 2: change counter added; 3: each dog on its own
-static constexpr uint16_t kMailVersion = 1;
+static constexpr uint16_t kMailVersion = 2;  // 2: the no-mail flag added (Mike, 2026-11-18); 1 is read below
 static constexpr uint16_t kComfortVersion = 1;
 static constexpr uint16_t kRequestsVersion = 1;
 static constexpr uint16_t kComfortPendingVersion = 1;
 static constexpr uint16_t kNotesVersion = 1;
+static constexpr uint16_t kVoiceInboxVersion = 1;  // tc::VoiceInboxData (voice_proto.h), with its own version byte too
 
 void storage_begin() { g_open = g_prefs.begin("tcomm", false); }
 
@@ -70,7 +74,7 @@ static bool settings_ok(const tc::Settings &s) {
   if (s.screensaver_min < tc::kScreensaverMinLeast || s.screensaver_min > tc::kScreensaverMinMost) return false;
   if (s.screen_off_start_min >= 1440 || s.screen_off_end_min >= 1440) return false;
   if (s.presence_hold_s < tc::kPresenceHoldLeast || s.presence_hold_s > tc::kPresenceHoldMost) return false;
-  if (s.notice_mask > 0x7F) return false;
+  // notice_mask: with eight kinds (Mike, 2026-11-15) every value is a valid mask.
   for (const tc::KnockRule &r : s.knock)
     if ((uint8_t)r.chime > 2) return false;
   return true;
@@ -94,7 +98,7 @@ bool load_settings(tc::Settings &s) {
   tc::Settings tmp;
   // Versions 1 and 2 had the same layout; only the ringtone numbers moved. A ringtone that has
   // been removed since it was saved becomes Westminster, and the other settings stay. Versions 4,
-  // 5 and 6 added fields at the end.
+  // 5 and 6 added fields at the end; 7 and 8 only widened the notice mask.
   uint16_t version = load_blob("settings", kSettingsVersion, tmp) ? kSettingsVersion : load_settings_old(tmp);
   if (!version) return false;
   tmp.ringtone = tc::ringtone_from_saved(version, tmp.ringtone);
@@ -143,10 +147,29 @@ void save_dog(const tc::DogState &d) { save_blob("dog", kDogVersion, d); }
 
 bool load_mail(tc::MailState &m) {
   tc::MailState tmp;
-  if (!load_blob("mail", kMailVersion, tmp)) return false;
+  if (load_blob("mail", kMailVersion, tmp)) {
+    uint8_t b, n;
+    memcpy(&b, &tmp.waiting, 1);
+    memcpy(&n, &tmp.none, 1);
+    if (b > 1 || n > 1 || (b && n)) return false;
+    m = tmp;
+    return true;
+  }
+  // Version 1: the same three fields without the no-mail flag, so an update keeps the mail badge
+  // and its change counter. The version 1 struct is spelled out here, as the dog's version 2 is.
+  struct V1 {
+    bool waiting;
+    uint32_t since;
+    uint32_t ver;
+  } old;
+  if (!load_blob("mail", 1, old)) return false;
   uint8_t b;
-  memcpy(&b, &tmp.waiting, 1);
+  memcpy(&b, &old.waiting, 1);
   if (b > 1) return false;
+  tmp = tc::MailState();
+  tmp.waiting = b != 0;
+  tmp.since = old.since;
+  tmp.ver = old.ver;
   m = tmp;
   return true;
 }
@@ -233,6 +256,17 @@ void save_notes(const tc::NoteState *notes2) {
   blob.n[1] = notes2[1];
   save_blob("notes", kNotesVersion, blob);
 }
+
+// The voice-message inbox and its last 8 ids (docs/voice-notes/DESIGN.md 2.3, piece B): one blob, used
+// only if tc::voice_inbox_valid takes it (counts, ids, NUL-terminated printable text).
+bool load_voice_inbox(tc::VoiceInboxData &d) {
+  tc::VoiceInboxData tmp;
+  if (!load_blob("vinbox", kVoiceInboxVersion, tmp) || !tc::voice_inbox_valid(tmp)) return false;
+  d = tmp;
+  return true;
+}
+
+void save_voice_inbox(const tc::VoiceInboxData &d) { save_blob("vinbox", kVoiceInboxVersion, d); }
 
 // No saved quality means we don't know where the RTC's time came from: rank it lowest.
 uint8_t load_clock_quality() {

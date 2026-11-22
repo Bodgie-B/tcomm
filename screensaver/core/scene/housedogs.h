@@ -117,7 +117,9 @@ const char* houseDogActName(int act);
 // the busy one), so the game can drive it (directorWalk, critterSetAction) while its wag runs on.
 // Returns its slot, or -1. While lent its own activities wait; if it goes in meanwhile it is given
 // back and trots off. houseDogsGiveBack hands it back to its own life.
-int houseDogsLend(World& w);
+// `first`: the dog asked for first (stage 22: the mushroom trip asks for Lucy, tai chi's bump for
+// Copper; Mike, 2026-11-18); the other is tried after it. The default keeps the visitors' order.
+int houseDogsLend(World& w, int first = HD_COPPER);
 void houseDogsGiveBack(World& w);
 
 }  // namespace ss

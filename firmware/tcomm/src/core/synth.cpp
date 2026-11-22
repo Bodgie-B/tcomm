@@ -341,6 +341,9 @@ void build(Song &s, Sound sound, uint8_t ringtone) {
     case Sound::DogAlert:  // a dog out too long: five quick dings on one note, like no doorbell here
       for (int i = 0; i < 5; i++) strike(s, G6, 0.26f * i, i == 4 ? 0.9f : 0.45f, kBar);
       break;
+    case Sound::Ding:  // a voice message arrived: one bar strike on G5, an octave under the dog alert's G6
+      strike(s, G5, 0.0f, 0.7f, kBar);
+      break;
     default: break;
   }
 }
@@ -602,9 +605,13 @@ bool synth(Sound s, uint8_t ringtone, int16_t *out, size_t frames, void (*yield)
   // Two passes: the first finds the peak, the second writes at -3.5 dBFS. Holding the whole mix
   // as floats instead would take twice the memory of the sound itself. The same sound always comes
   // out the same, so its gain is kept, and the next time it takes one pass.
-  static float s_gain[4][32];
-  int slot = s == Sound::Chime ? ringtone : 0;
-  float *known = (int)s < 4 && slot < 32 ? &s_gain[(int)s][slot] : nullptr;
+  // Only the chime has a gain per ringtone; every other Sound has one (Ding included: it is rendered on
+  // demand, again and again). 152 bytes of internal RAM, not a 6 x 32 table's 768 (field fix 2026-11-20).
+  static float s_gain_chime[32];
+  static float s_gain[(int)Sound::Count];
+  float *known = nullptr;
+  if (s == Sound::Chime) known = ringtone < 32 ? &s_gain_chime[ringtone] : nullptr;
+  else if ((int)s < (int)Sound::Count) known = &s_gain[(int)s];
   float gain = known ? *known : 0;
   for (int pass = gain > 0 ? 1 : 0; pass < 2; pass++) {
     for (int i = 0; i < n; i++) reset(v[i], st[i]);

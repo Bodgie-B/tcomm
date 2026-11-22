@@ -73,15 +73,17 @@ void Demo::tick() {
     banner_pending_ = false;
   }
 
-  // A simulated tenant takes the mail in 20 s, unless the other floor's answers are off.
-  bool mail = peer_->settings().floor == Floor::Downstairs && peer_->mail().waiting;
+  // A simulated tenant takes the mail in 20 s, unless the other floor's answers are off. The same for
+  // a "no mail" mark (Mike, 2026-11-18): it is acknowledged the same way, with its own tap.
+  bool mail = peer_->settings().floor == Floor::Downstairs && (peer_->mail().waiting || peer_->mail().none);
   if (mail && !mail_pending_) {
     mail_pending_ = true;
     mail_seen_ = now;
   }
   if (!mail) mail_pending_ = false;
   if (mail_pending_ && auto_ != AutoAnswer::Off && ms_diff(now, mail_seen_) >= 20000) {
-    peer_->tap_mail();
+    if (peer_->mail().none) peer_->tap_nomail();
+    else peer_->tap_mail();
     mail_pending_ = false;
   }
 }
@@ -110,6 +112,10 @@ void Demo::peer_toggle_dog() {
 
 void Demo::peer_tap_mail() {
   if (!cut_) peer_->tap_mail();
+}
+
+void Demo::peer_tap_nomail() {
+  if (!cut_) peer_->tap_nomail();
 }
 
 void Demo::gateway_send(Msg m) {

@@ -90,6 +90,76 @@ is cream rather than dark, so it shows on the dark sheet. A removal reaches upst
 answer still on its way, one message at a time; if the downstairs panel restarts while a removal is
 still waiting to reach upstairs, upstairs keeps that dot until it's removed again.
 
+### The zoom (Mike, 2026-11-18)
+
+Mike: the chart is large and the group of dots is small. So the chart opens whole, exactly as
+before (55 to 85 °F, 0 to 120 gr/lb as built), holds for one second, then zooms in smoothly over
+1.4 seconds to the dots. Every open starts over: whole chart, hold, zoom.
+
+- Where it stops: the box round the dots now shown (not removed, and of the chosen part of the
+  day), made 1.5 times as wide and 1.5 times as tall about its middle ("50% greater than the
+  extents"). It never goes closer than 6 °F across and 24 gr/lb up, so one dot or a tight cluster
+  still has labelled lines round it, it's moved to stay inside the whole chart, and it's never
+  larger than the whole chart. With no dots to show it doesn't zoom. The two axes zoom by their own
+  amounts, so the dots fill the plot whatever shape their group is.
+- The pace: it starts gently from rest, is fastest a little before halfway, and slows over a long
+  tail (at three quarters of the time 92% of the way is done). The formula is 1 - (1 - u²)³ for
+  the share u of the time gone. A plain ease-in-out is the same at both ends; this one spends less
+  on the start and more on the settle, which is what reads as polished. The view is worked out
+  from the clock, not from a count of frames, so it ends on time however fast the panel draws.
+  The span shrinks by equal ratios, which keeps one point of the chart still on the screen for
+  the whole move.
+- Choosing a chip or removing a dot glides from the view shown to the view for the new set of
+  dots, with the same pace and no hold. If that's the view already showing, nothing moves.
+- Taps while it moves: a tap on the plot is ignored while the view is gliding, because the dots
+  are on the move and it would pick from where one was a moment ago. Chips and the X work at any
+  time. A dot can be picked during the opening hold; the chart then stays whole until its card is
+  closed, and zooms after that.
+- Labels: the lines keep their labels at the same edges and in the same type. The step between
+  labelled lines is the largest of 1, 2, 5, 10, 20 that gives at least 4 steps across the view,
+  so 4 to 10 lines an axis: the whole chart has 5 °F and 20 gr/lb as before, and the closest view
+  has every 1 °F and every 5 gr/lb. During the glide the labels ride on their lines. Where the
+  step changes, a line in both sets stays solid all the way; the lines only in the old set fade
+  out over the first half and the lines only in the new set fade in over the second half, so the
+  two sets are never crowded together. A label within 20 px of the plot's edge is fainter in the
+  middle of the glide, so none pops in or out at the edge.
+- Humidity curves: each is labelled where it leaves the view, by the top or near the right edge.
+  If fewer than two of the 20% curves would cross the view, the 10% curves are drawn too (then 5%,
+  2%, 1%). Their labels are fainter in the middle of the glide, because a label can change places
+  as the view moves.
+- The comfort zones are cut at the plot's edges by working out each pixel row's span, with no
+  mask, and the zone names stay inside the plot while their zone is in view.
+- The "now" marker: if the reading is outside the zoomed view, its pill stays at the plot's edge
+  nearest the reading, so it can still be read.
+- Dots, rings and text stay the same size.
+
+Speed, as measured in the simulator and worked out for the panel (not measured on the panel): each
+frame of the zoom redraws the plot and its two strips of labels and nothing else, about 235,000
+pixels (231,000 to 245,000 with the simulator's dots). At the panel's 1.3 pixels a microsecond that
+is about 180 ms a frame, **5 to 6 frames a second, so 7 or 8 frames in the 1.4 s**. That is under
+the 8 a second that looks smooth. The whole plot changes in a zoom, so there is no smaller area to
+redraw; what would raise it is a smaller plot, a zoom drawn by scaling a kept picture of the plot
+(768 KB of PSRAM it doesn't have to spare), or drawing only the thin shapes that moved, which needs
+more than the 32 redraw areas LVGL keeps. What was done to keep each frame cheap: the zone fills
+are plain rows instead of masked polygons, long slanted lines are drawn in short pieces, the
+humidity curves are worked out once a view (not once for each band the panel draws), each dot's
+moisture is worked out once at load, and the title, chips, legend and card edges are left alone.
+A pick now redraws only the dot's ring and its card, and a chip redraws the plot, the legend and
+the count rather than the whole card.
+
+With the whole chart showing, the picture is the same as before except about 170 pixels along the
+zone edges by day (208 at night), each a faint change (at most 16 levels of 255 by day, 33 at
+night): the zone fills no longer have a soft edge under their outlines. Everything else lands on
+the same pixels.
+
+Capacity: 4 bytes more of PSRAM for each answer while the chart is open, and 4.2 KB for the kept
+curves, all freed when it closes. No new buffer the size of the screen.
+
+Simulator shots: `59`, `61`, `62` and `63` are taken during the opening hold and still show the
+whole chart; `60` waits for the glide to the morning's dots. `88` to `96` are the zoom: the moment
+it opens, a quarter, half and three quarters of the way, the end, a chip chosen, a dot picked, one
+dot only, and by night.
+
 Answers are kept forever on the SD card, like past calendar events. Each panel keeps its own copy
 so either can draw the chart; a new answer or a removal goes to upstairs over the radio with the
 usual retries.

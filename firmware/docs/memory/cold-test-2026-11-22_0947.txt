@@ -1,0 +1,23 @@
+Danger-cold memory test, 2026-11-22 09:47, upstairs panel on COM5 (build 2,540,974 B, cold test command)
+Summary written by hand from cold-test-2026-11-22_0947.log (the script's own summary failed on a
+formatting bug, fixed afterwards). Ringtone held: Wind chimes.
+
+state                                      PSRAM free    largest  internal   icicles  redraws  draw ms  slowest
+1. main screen, no cold (63 s)                1180888    1146868     41144         0        3       20       10
+2a. cold just shown (15 s)                    1166292    1146868     41144     14360        2      182      174
+2b. main screen, cold (63 s)                  1166292    1146868     41144     14360        4      488      374
+3. screensaver running, cold                   365444     352244     41144     14360
+4. cold off again (29 s)                      1180888    1146868     41144         0        4      436      372
+5. screensaver running, no cold                380040     352244     41144         0
+6. after 5 cold on/off cycles                 1180888    1146868     41144         0
+
+screensaver (62 s, seed 4242)     fps   draw ms  worst ms PSRAM free    largest
+3. with cold                     11.5     65.80     113.6     365444     352244
+5. without cold                  11.5     65.87     111.8     380040     352244
+
+Icicles cost: 14,596 bytes of PSRAM on the main screen and the same with the screensaver running
+(they needed 240,000 and didn't fit with the screensaver before).
+Cold off: back to the baseline to the byte. Leak check over 5 cycles: 0 bytes.
+Redraw cost: the minute's full-screen redraw is about 372-374 ms while the icicles show, against
+252 ms without (the baseline window above happened to miss its full redraw).
+Screensaver speed: no difference with or without cold.

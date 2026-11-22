@@ -738,6 +738,20 @@ bool threatNear(const World& w, Vec2 p, float r, Vec2& from) {
   return false;
 }
 
+// A house dog too close to `p`, or running at it: what still sends tai chi's guest heron up.
+bool dogNear(const World& w, Vec2 p, Vec2& from) {
+  for (int k = 0; k < HD_COUNT; ++k) {
+    const HouseDog& d = w.dogs.d[k];
+    const int s = d.slot;
+    if (s < 0 || !w.crit[s].in_use || !w.critters[s].visible) continue;
+    if ((d.act == HA_CHASE && d.step >= 1) || dist(w.critters[s].feet, p) < kDogSpook) {
+      from = w.critters[s].feet;
+      return true;
+    }
+  }
+  return false;
+}
+
 // A quiet moment to come in: a pause or a calm filler, no minor running, no other story critter, nobody
 // near the spot, time left.
 bool mayStart(const World& w, Vec2 spot) {
@@ -764,6 +778,7 @@ struct HPose {
   bool back;        // looking back over its shoulder
   float lift[2];    // a leg lifted (a step), 0..1
   float wing;       // flying: the wings' beat, -1 down .. 1 up
+  float spread;     // standing: the near wing half open, 0 .. 1 (tai chi's guest mirrors White Crane)
 };
 
 enum HCol : uint8_t { HC_GREY = 0, HC_DARK, HC_PALE, HC_BILL, HC_LEG, HC_BLACK, HC_RIPPLE, HC_WATER, HC_REFL };
@@ -845,6 +860,10 @@ void heronStand(HSink& k, const HPose& P) {
   hpoly(k, P, kHBack, down, HC_DARK);
   if (P.mode == 3) {   // the wings half open, ready to go
     const float wv[4][2] = {{-9.f, -27.f}, {6.f, -29.f}, {2.f, -40.f}, {-12.f, -37.f}};
+    hpoly(k, P, wv, down, HC_DARK);
+  } else if (P.spread > 0.02f) {   // one wing lifted off its back and half open
+    const float sp = P.spread;
+    const float wv[4][2] = {{-9.f, -27.f}, {6.f, -29.f}, {lerp(6.f, 1.f, sp), -29.f - 13.f * sp}, {lerp(-9.f, -13.f, sp), -27.f - 12.f * sp}};
     hpoly(k, P, wv, down, HC_DARK);
   }
   k.cap(hp(P, -11.f, -23.f + down), hp(P, -16.f, -19.f + down), 2.2f, HC_DARK);   // the tail
@@ -960,6 +979,12 @@ bool heronPose(const World& w, HPose& P) {
       break;
     default: break;
   }
+  if (V.mirror > 0.f) {   // his guest, mirroring the crane: the near leg tucked up, the neck up, a wing half open
+    const float m = easeInOut(clamp01(V.mirror));
+    P.spread = m;
+    P.lift[1] = P.lift[1] > 2.f * m ? P.lift[1] : 2.f * m;
+    P.ext = P.ext > 0.8f * m ? P.ext : 0.8f * m;
+  }
   return true;
 }
 
@@ -1027,6 +1052,8 @@ void heronLeave(World& w, bool hurry, Vec2 away_from) {
   StreamVisit& V = w.stream.visit;
   V.stage = GS_OUT;
   V.t = 0.f;
+  V.guest = 0;
+  V.mirror = 0.f;
   V.spooked = hurry ? 1 : 0;
   const float side = hurry ? (away_from.x < V.spot.x ? 1.f : -1.f) : (float)V.dir;
   V.to = Vec2{side > 0.f ? 860.f : -60.f, 150.f};
@@ -1046,13 +1073,25 @@ void heronStep(World& w) {
       }
       break;
     case GS_STAY: {
-      if (threatNear(w, V.spot, kHeronSpook, from)) {
+      // Tai chi's guest stays while he moves beside it (he is slow and calm); a dog still sends it up.
+      if (V.guest ? dogNear(w, V.spot, from) : threatNear(w, V.spot, kHeronSpook, from)) {
         heronLeave(w, true, from);
         break;
       }
+      if (V.guest) V.t = 0.f;   // its stay is not counted while it is his guest
       if (!quietNow(w, true) || V.t >= V.stay) {
         heronLeave(w, false, V.spot);
         break;
+      }
+      // The mirror: it finishes what it was at (an alert look is cut short), then lifts a leg and a wing
+      // and holds; no new small action until it has folded again.
+      const bool want = (V.guest & 2) != 0;
+      const bool hold = want || V.mirror > 0.f;
+      if (want && V.act == HA_ALERT && V.act_len > V.act_t + 0.6f) V.act_len = V.act_t + 0.6f;
+      if (V.act == HA_IDLE) {
+        if (want) V.mirror = V.mirror + dt / 2.5f < 1.f ? V.mirror + dt / 2.5f : 1.f;
+        else if (V.mirror > 0.f) V.mirror = V.mirror - dt / 1.5f > 0.f ? V.mirror - dt / 1.5f : 0.f;
+        if (hold) break;
       }
       const float t0 = V.act_t;
       V.act_t += dt;
@@ -1060,7 +1099,13 @@ void heronStep(World& w) {
         ring(V, V.spot.x + (float)V.dir * 27.f * kHeronS, V.spot.y - 1.f);
       if (V.act_t >= V.act_len) {
         if (V.act == HA_STEP) V.spot.x = floorf(V.spot.x + (float)V.dir * 7.f * kHeronS + 0.5f);
-        heronNextAct(V, w.stream.vrng);
+        if (hold) {   // stands calm for the mirror (no draw from its random stream)
+          V.act = HA_IDLE;
+          V.act_t = 0.f;
+          V.act_len = 3.f;
+        } else {
+          heronNextAct(V, w.stream.vrng);
+        }
       }
       break;
     }
@@ -1278,6 +1323,57 @@ bool streamGuestAt(const World& w, Vec2& at) {
   return false;
 }
 
+bool streamHeronGuest(World& w, float x, int facing) {
+  StreamLife& L = w.stream;
+  StreamVisit& V = L.visit;
+  if (!buildDone(w.build) || L.night) return false;
+  if (!V.planned) visitPlan(w);
+  if (V.kind == SV_DEER) return false;   // one visitor a loop
+  if (V.kind == SV_HERON && (V.stage == GS_IN || V.stage == GS_STAY)) {   // already here: taken as the guest
+    V.guest = 1;
+    return true;
+  }
+  if (V.kind == SV_HERON && V.stage != GS_WAIT) return false;   // come and gone
+  if (!quietNow(w, true)) return false;
+  if (V.kind != SV_HERON) V.stay = kHeronStayMin;
+  V.kind = SV_HERON;
+  V.dir = (int8_t)(facing < 0 ? -1 : 1);
+  V.spooked = 0;
+  V.mirror = 0.f;
+  V.guest = 1;
+  const float hx = x < kHeronX0 ? kHeronX0 : (x > kHeronX1 ? kHeronX1 : x);
+  float cy, half;
+  if (!landscapeStreamSpan(w.land, hx, cy, half)) cy = 430.f, half = 27.f;
+  V.spot = Vec2{floorf(hx + 0.5f), floorf(cy - kHeronLane * half / 1.06f + 0.5f)};
+  V.from = Vec2{860.f, 205.f};   // from upstream, the way he faces: high over the chip's corner, then down
+  visitBegin(w);
+  return true;
+}
+
+void streamHeronMirror(World& w, bool on) {
+  StreamVisit& V = w.stream.visit;
+  if (V.kind == SV_HERON && V.guest) V.guest = on ? 3 : 1;
+}
+
+void streamHeronRelease(World& w) {
+  StreamVisit& V = w.stream.visit;
+  if (V.kind != SV_HERON || !V.guest) return;
+  V.guest = 0;
+  if (V.stage == GS_STAY) heronLeave(w, false, V.spot);
+}
+
+void streamHeronHandBack(World& w) { w.stream.visit.guest = 0; }
+
+bool streamHeronIsGuest(const World& w) {
+  const StreamVisit& V = w.stream.visit;
+  return V.kind == SV_HERON && V.guest != 0 && (V.stage == GS_IN || V.stage == GS_STAY);
+}
+
+float streamHeronMirrorNow(const World& w) {
+  const StreamVisit& V = w.stream.visit;
+  return V.kind == SV_HERON && V.stage == GS_STAY ? V.mirror : 0.f;
+}
+
 bool streamVisitY(const World& w, int16_t& y) {
   HPose P;
   if (!buildDone(w.build) || !heronPose(w, P)) return false;
@@ -1413,6 +1509,43 @@ void spawnFloater(World& w, Floater& f) {
   f.spin = (f.kind == FK_STICK ? 0.035f : 0.07f) * spin;   // sticks turn slowly
   f.len = f.kind == FK_STICK ? 13.f + 7.f * len : (f.kind == FK_LEAF ? 10.f + 3.f * len : 6.8f);
 }
+
+}  // namespace
+
+bool streamAddStick(World& w, Vec2 at) {
+  StreamLife& L = w.stream;
+  int free_i = -1;
+  for (int i = 0; i < STREAM_FLOATERS && free_i < 0; ++i)
+    if (L.f[i].kind == FK_NONE) free_i = i;
+  if (free_i < 0) return false;
+  float best = 3.0e38f, bs = 0.f;
+  for (int i = 5; i <= 256; ++i) {   // s from 0.25 to 12.8, every 0.05
+    const float s = 0.05f * fl(i);
+    const LsStreamPt p = landscapeStreamAt(w.land, s);
+    const float d = (at.x - p.x) * (at.x - p.x) + (at.y - p.y) * (at.y - p.y);
+    if (d < best) {
+      best = d;
+      bs = s;
+    }
+  }
+  const LsStreamPt p = landscapeStreamAt(w.land, bs);
+  const float hw = maxf(10.f, p.hw);
+  const float across = ((at.x - p.x) * p.nx + (at.y - p.y) * p.ny) / hw;
+  if (best > (hw + 2.f) * (hw + 2.f)) return false;
+  Floater& f = L.f[free_i];
+  f = Floater{};
+  f.kind = FK_STICK;
+  f.phase = FP_DRIFT;
+  f.side = 1;
+  f.s = bs;
+  f.lane = across < kLaneMin ? kLaneMin : (across > kLaneMax ? kLaneMax : across);
+  f.ang = 0.1f;
+  f.spin = 0.02f;
+  f.len = 9.f;
+  return true;
+}
+
+namespace {
 
 void stepFloater(World& w, Floater& f, float flow) {
   const Landscape& ls = w.land;

@@ -9,7 +9,9 @@
 
 #include "../anim/ease.h"
 #include "../gfx/raster.h"
+#include "patch.h"
 #include "stream.h"
+#include "trip.h"
 #include "world.h"
 
 namespace ss {
@@ -60,14 +62,11 @@ inline float blazeGust(float clock, float wild) {
   return -kBlazeGust * wild * (0.35f + 0.65f * sumSines(clock * 0.31f + 0.2f, 3));
 }
 
+// The tufts' sway is the one wind at their x (ambientWindAt, below: the formula that lived here, moved
+// there whole so the reeds read the same field; the grass is bit for bit what it was).
 void updateSway(World& w) {
   Ambient& a = w.amb;
-  // Slow swell, 20 s; the weather's wind scales it (exactly 1 when calm).
-  const float gust = (0.75f + 0.25f * sinT(a.wind_t * 0.05f)) * weatherSwayMul(w);
-  for (int i = 0; i < a.n_tufts; ++i) {
-    const float x = fl(w.land.tufts[a.tuft[i]].x);
-    a.sway[i] = gust * (-0.8f + 2.6f * sumSines(a.wind_t * kGustTurnsPerSec + x * kGustPerPx, 3));
-  }
+  for (int i = 0; i < a.n_tufts; ++i) a.sway[i] = ambientWindAt(w, fl(w.land.tufts[a.tuft[i]].x));
 }
 
 // Pick the swaying tufts by farthest-point sampling (y weighted double, the
@@ -83,7 +82,8 @@ void pickTufts(World& w) {
   for (int i = 0; i < ls.n_tufts; ++i) {
     const LsTuft& t = ls.tufts[i];
     const float mx = fl(t.x - ls.mush_x), my = fl(t.y - ls.mush_y);
-    cand[i] = !(t.x > LS_QUIET_X0 - 35 && t.y > LS_QUIET_Y0 - 20) && (mx * mx + my * my > 18.f * 18.f);
+    cand[i] = !(t.x > LS_QUIET_X0 - 35 && t.y > LS_QUIET_Y0 - 20) && (mx * mx + my * my > 18.f * 18.f) &&
+              !patchNear(ls, fl(t.x), fl(t.y), 12.f);   // nor over the patch after rain (patch.h; none at stage 0)
     best[i] = 3.0e38f;
     if (cand[i] && (first < 0 || t.x < ls.tufts[first].x)) first = i;
   }
@@ -407,6 +407,14 @@ void ambientInit(World& w, Rng& rng) {
 
 bool ambientSubTick(const World& w) { return (w.tick & 1u) == 0u; }
 
+float ambientWindAt(const World& w, float x) {
+  const Ambient& a = w.amb;
+  // Slow swell, 20 s; the weather's wind scales it (exactly 1 when calm).
+  const float gust = (0.75f + 0.25f * sinT(a.wind_t * 0.05f)) * weatherSwayMul(w);
+  const float plain = gust * (-0.8f + 2.6f * sumSines(a.wind_t * kGustTurnsPerSec + x * kGustPerPx, 3));
+  return w.day.kind == DAY_TRIP ? tripSway(w, x, plain) : plain;   // the trip's slow wave (trip.h)
+}
+
 void ambientStep(World& w, Rng& rng) {
   Ambient& a = w.amb;
   const float dt = SS_TICK_DT;
@@ -550,7 +558,7 @@ void ambientDrawGlints(const World& w, Surface& s, const Rect& clip, const Palet
     if (!glintGeom(w, i, a, b)) continue;
     const Rect r = boundsOf(minf(a.x, b.x) - 2.f, minf(a.y, b.y) - 2.f, maxf(a.x, b.x) + 2.f, maxf(a.y, b.y) + 2.f);
     if (!overlaps(r, clip)) continue;
-    strokeCapsule(s, a, b, 2.f, pal[WATER_LIGHT], clip);
+    strokeCapsule(s, a, b, 2.f, tripGlintColor(w, i, pal), clip);   // WATER_LIGHT but in the mushroom trip (trip.h)
   }
 }
 

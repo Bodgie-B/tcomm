@@ -77,8 +77,10 @@ struct Settings {
   bool presence_active_high = true; // the level read from the input that means "someone is there"
   uint16_t presence_hold_s = 60;    // how long after the last activity the place counts as occupied
   // Which house events the upstairs panel reports to the Pi (NoticeKind bits, protocol.h); it was
-  // kept in the controller and reset at every start. 0x13 = kNoticeDefaultMask (checked in controller.cpp).
-  uint8_t notice_mask = 0x13;
+  // kept in the controller and reset at every start. 0xDF = kNoticeDefaultMask (checked in controller.cpp):
+  // knock, urgent and mild arrow, mail, dog out, note and ring (Mike, 2026-11-15: mail and ring push
+  // the phones; Mike, 2026-11-18: mild arrows and notes push his phone too).
+  uint8_t notice_mask = 0xDF;
 };
 
 constexpr uint16_t kPresenceHoldLeast = 10;   // seconds

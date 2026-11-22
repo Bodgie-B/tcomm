@@ -27,7 +27,12 @@ using namespace tc;
 static lv_color_t g_fb[800 * 480];
 static lv_color_t g_draw[800 * 480];
 
+// Every pixel LVGL redraws goes through flush: the count is what a frame costs on the panel (the
+// comfort chart's zoom reports it; Mike, 2026-11-18).
+static long g_flush_px = 0;
+
 static void flush(lv_disp_drv_t *d, const lv_area_t *a, lv_color_t *px) {
+  g_flush_px += (long)(a->x2 - a->x1 + 1) * (a->y2 - a->y1 + 1);
   for (int y = a->y1; y <= a->y2; y++)
     for (int x = a->x1; x <= a->x2; x++) g_fb[y * 800 + x] = *px++;
   lv_disp_flush_ready(d);
@@ -109,6 +114,7 @@ class Proxy : public ui::Actions {
   void tap_bell() override { g_h->app.tap_bell(); }
   void tap_dog() override { g_h->app.tap_dog(); }
   void tap_mail() override { g_h->app.tap_mail(); }
+  void tap_nomail() override { g_h->app.tap_nomail(); }
   void comfort_answer(Feel f, Ask a, AskSent s) override { g_h->app.comfort_answer(f, a, s); }
   void tap_requests() override { g_h->app.tap_requests(); }
   void tap_acted() override { g_h->app.tap_acted(); }
@@ -212,6 +218,21 @@ static void wait_lit() {
   while ((g_h->host.mono / kFlashHalfMs) & 1) pump(20);
 }
 
+// How many pixels on the screen differ from a fresh drawing of everything. With the simulator
+// redrawing only what was marked (full_refresh off, as on the panel), 0 means nothing that changed
+// was left unmarked. Mike, 2026-11-18: the comfort chart's zoom marks only its plot.
+static long stale_pixels() {
+  static lv_color_t was[800 * 480];
+  lv_refr_now(nullptr);
+  std::memcpy(was, g_fb, sizeof(was));
+  lv_obj_invalidate(lv_scr_act());
+  lv_refr_now(nullptr);
+  long n = 0;
+  for (int i = 0; i < 800 * 480; i++)
+    if (was[i].full != g_fb[i].full) n++;
+  return n;
+}
+
 static void capture(const char *name) {
   lv_obj_invalidate(lv_scr_act());
   lv_refr_now(nullptr);
@@ -242,7 +263,11 @@ struct SeedDot {
   bool removed;
 };
 static SeedDot g_seed[90];
-static void seed_comfort() {
+static int g_seeded = 90;
+// The defaults are the first shots' spread (most of the chart). The zoom's shots (Mike, 2026-11-18)
+// use a tight group, as a real house gives: a few degrees and a narrow band of humidity.
+static void seed_comfort(int count = 90, float t_lo = 62.5f, float t_hi = 79.0f, float rh_lo = 0.33f, float rh_hi = 0.62f) {
+  g_seeded = count;
   static const int kHours[4] = {23, 7, 12, 19};  // NIGHT, MORNING, MIDDAY, EVENING
   static const float kNeutral[4] = {68.8f, 72.2f, 71.0f, 70.4f};
   uint32_t r = 11;
@@ -250,7 +275,7 @@ static void seed_comfort() {
     r = r * 1103515245u + 12345u;
     return lo + (hi - lo) * (float)((r >> 8) & 0xFFFF) / 65535.0f;
   };
-  for (int i = 0; i < 90; i++) {
+  for (int i = 0; i < count; i++) {
     int part = i % 4 == 0 ? 0 : (i % 4 == 1 ? 1 : (i % 4 == 2 ? 3 : (i % 8 == 3 ? 2 : 3)));
     ComfortAnswer a = {};
     a.n = (uint32_t)i + 1;
@@ -259,7 +284,7 @@ static void seed_comfort() {
     a.utc = at(2026, 10, 20 + day, kHours[part] % 24, mins, 0);
     a.offset = 0;
     a.clock_q = kClockManual;
-    float t = rnd(62.5f, 79.0f), rh = rnd(0.33f, 0.62f);
+    float t = rnd(t_lo, t_hi), rh = rnd(rh_lo, rh_hi);
     float g = grains_per_lb(t, rh * 100);
     float f = t + 0.045f * (g - 55) - kNeutral[part] + rnd(-1.3f, 1.3f);
     a.feel = (uint8_t)(f < -5 ? Feel::MuchTooCold : f < -1.7f ? Feel::TooCool : f < 1.7f ? Feel::JustRight : f < 5 ? Feel::TooWarm : Feel::MuchTooHot);
@@ -273,27 +298,52 @@ static void seed_comfort() {
     char line[kComfortLineMax];
     if (comfort_csv_line(a, line, sizeof(line))) g_h->host.append_line(kComfortFile, kComfortCsvHeader, line);
   }
-  g_h->panel.set_comfort_count(90);  // as the panel restores it at start-up; REMOVE checks it
+  g_h->panel.set_comfort_count((uint32_t)count);  // as the panel restores it at start-up; REMOVE checks it
 }
-// Where answer n's dot sits on the chart's plot (screen pixels), and its number's tap point.
+// Where answer n's dot sits on the chart's plot (screen pixels) with the whole chart showing, and
+// its number's tap point.
 static lv_point_t seed_xy(int i) {
   float g = grains_per_lb(g_seed[i].t, g_seed[i].rh);
   return {(lv_coord_t)(64 + (g_seed[i].t - kChartTMin) / (kChartTMax - kChartTMin) * 648 + 0.5f),
           (lv_coord_t)(404 - g / kChartGrMax * 320 + 0.5f)};
 }
-// A dot of a kept answer that no other dot is near, so a tap picks it.
-static int lone_seed(int from) {
-  for (int i = from; i < 90; i++) {
+// The same in the view the chart shows now (Mike, 2026-11-18: it zooms in to the dots).
+static lv_point_t seed_xy_now(int i) {
+  float v[4];
+  ui::detail::comfort_chart_peek(v);
+  ChartView cv = {v[0], v[1], v[2], v[3]};
+  return {(lv_coord_t)lroundf(chart_x(cv, g_seed[i].t, 64, 712)),
+          (lv_coord_t)lroundf(chart_y(cv, grains_per_lb(g_seed[i].t, g_seed[i].rh), 84, 404))};
+}
+// A dot of a kept answer that no other dot is near, so a tap picks it. now: in the view showing,
+// and where its card opens up and to the right of it (the touch test taps REMOVE from the dot).
+static int lone_seed(int from, bool now = false) {
+  const auto xy = [now](int i) { return now ? seed_xy_now(i) : seed_xy(i); };
+  for (int i = from; i < g_seeded; i++) {
     if (g_seed[i].removed) continue;
-    lv_point_t a = seed_xy(i);
-    bool lone = a.x > 120 && a.x < 560;
-    for (int j = 0; j < 90 && lone; j++) {
-      lv_point_t b = seed_xy(j);
+    lv_point_t a = xy(i);
+    bool lone = a.x > 120 && a.x < (now ? 500 : 560) && (!now || (a.y > 190 && a.y < 400));
+    for (int j = 0; j < g_seeded && lone; j++) {
+      lv_point_t b = xy(j);
       if (j != i && abs(a.x - b.x) < 30 && abs(a.y - b.y) < 30) lone = false;
     }
     if (lone) return i;
   }
   return from;
+}
+// The chart's zoom (Mike, 2026-11-18): 0 at rest, 1 on its opening hold, 2 gliding.
+static int chart_phase() { return ui::detail::comfort_chart_peek(nullptr); }
+// Lets a glide finish (and an opening hold run out first when through_hold).
+static void chart_settle(bool through_hold = false) {
+  for (int i = 0; i < 300 && (chart_phase() == 2 || (through_hold && chart_phase() == 1)); i++) pump(20);
+  pump(100);
+}
+// The middle of chip i on the chart's title line (ui_chart.cpp lays them out the same way).
+static int chart_chip_x(int i) {
+  static const char *const kWords[5] = {"ALL", "NIGHT", "MORNING", "MIDDAY", "EVENING"};
+  int x = 28 + ui::detail::text_width("DOWNSTAIRS COMFORT", ui::detail::J23) + 18;
+  for (int k = 0; k < i; k++) x += ui::detail::text_width(kWords[k], ui::detail::B13) + 18 + 7;
+  return x + (ui::detail::text_width(kWords[i], ui::detail::B13) + 18) / 2;
 }
 
 // Two made-up days of outside readings for the outside chart's shots (Mike, 2026-11-07): yesterday
@@ -721,8 +771,11 @@ int main(int argc, char **argv) {
   // The comfort chart (Mike, 2026-11-06, stage 3): every answer as a dot, by chosen part of the day,
   // a dot picked for removal (downstairs) or just shown (upstairs), and by night.
   {
+    // Since the zoom (Mike, 2026-11-18) the chart opens whole and holds for a second: 59, 61, 62 and
+    // 63 are taken in that second, so they still show the whole chart. 60 waits for the glide to the
+    // morning's dots to finish.
     start(p4); seed_comfort(); ui::open_sheet(ui::Sheet::Chart); pump(500); capture("59_chart_all_answers");
-    tap(518, 37); pump(300); capture("60_chart_mornings_only");
+    tap(518, 37); chart_settle(); capture("60_chart_mornings_only");
     int k = lone_seed(30);
     start(p4); seed_comfort(); ui::open_sheet(ui::Sheet::Chart); pump(500);
     tap(seed_xy(k).x, seed_xy(k).y); pump(300); capture("61_chart_remove_callout");
@@ -731,6 +784,92 @@ int main(int argc, char **argv) {
     start(upc); seed_comfort(); ui::open_sheet(ui::Sheet::Chart); pump(500);
     tap(seed_xy(k).x, seed_xy(k).y); pump(300); capture("62_chart_upstairs");
     start(p1); seed_comfort(); ui::open_sheet(ui::Sheet::Chart); pump(500); capture("63_chart_night");
+
+    // The zoom (Mike, 2026-11-18): a tight group of dots, as a real house gives. First what each
+    // frame of the glide costs: every pixel LVGL redraws in one 20 ms step of the clock here is
+    // one frame on the panel, which draws about 1.3 pixels a microsecond. The simulator normally
+    // redraws the whole screen every time; for this count it redraws only what was marked, as the
+    // panel does.
+    const auto seed_tight = [] { seed_comfort(90, 67.0f, 74.0f, 0.38f, 0.56f); };
+    {
+      start(p4); seed_tight(); ui::open_sheet(ui::Sheet::Chart); pump(200);
+      lv_disp_get_default()->driver->full_refresh = 0;
+      for (int i = 0; i < 100 && chart_phase() == 1; i++) pump(20);
+      long lo = 0, hi = 0, sum = 0;
+      int frames = 0;
+      for (int i = 0; i < 150 && chart_phase() == 2; i++) {
+        g_flush_px = 0;
+        pump(20);
+        if (!g_flush_px) continue;
+        if (!frames || g_flush_px < lo) lo = g_flush_px;
+        if (g_flush_px > hi) hi = g_flush_px;
+        sum += g_flush_px;
+        frames++;
+      }
+      std::printf("chart zoom: %d frames here, pixels redrawn per frame %ld to %ld (mean %ld): about %.1f a second on the panel\n",
+                  frames, lo, hi, frames ? sum / frames : 0, frames ? 1.3e6 / ((double)sum / frames) : 0.0);
+      pump(200);
+      int k = lone_seed(30, true);
+      g_flush_px = 0;
+      tap(seed_xy_now(k).x, seed_xy_now(k).y);
+      std::printf("chart pick: %ld pixels redrawn\n", g_flush_px);
+      tap(700, 440);  // closes the card
+      pump(200);
+      g_flush_px = 0;
+      tap(chart_chip_x(2), 37, 60);
+      std::printf("chart chip: %ld pixels redrawn in its first frames\n", g_flush_px);
+      // Marking only parts of the card must leave nothing stale: at moments all through an open, a
+      // zoom, a chip, a pick and a removal, the screen is the same as a fresh drawing of it all.
+      std::printf("comfort chart partial redraws:\n");
+      start(p4); seed_tight(); ui::open_sheet(ui::Sheet::Chart); pump(100);
+      long stale = stale_pixels();
+      for (int i = 0; i < 140; i++) {
+        pump(20);
+        if (i % 3 == 0) stale += stale_pixels();
+      }
+      check(chart_phase() == 0 && stale == 0, "nothing stale while it opens, holds and zooms");
+      stale = 0;
+      tap(chart_chip_x(1), 37, 20);
+      for (int i = 0; i < 90; i++) {
+        pump(20);
+        if (i % 3 == 0) stale += stale_pixels();
+      }
+      check(chart_phase() == 0 && stale == 0, "nor while it glides to a chip's dots");
+      tap(chart_chip_x(0), 37);
+      chart_settle();
+      k = lone_seed(30, true);
+      lv_point_t at_k = seed_xy_now(k);
+      tap(at_k.x, at_k.y);
+      stale = stale_pixels();
+      tap(700, 440);  // closes the card
+      stale += stale_pixels();
+      tap(at_k.x, at_k.y);
+      tap(at_k.x + 147, at_k.y - 5, 20);  // REMOVE
+      for (int i = 0; i < 90; i++) {
+        pump(20);
+        if (i % 3 == 0) stale += stale_pixels();
+      }
+      check(g_seed[k].n && stale == 0, "nor when a dot is picked, let go, and removed");
+      lv_disp_get_default()->driver->full_refresh = 1;
+    }
+    // The instant it opens (the whole chart), three moments of the glide, and where it ends.
+    start(p4); seed_tight(); ui::open_sheet(ui::Sheet::Chart); pump(100); capture("88_chart_zoom_opens");
+    for (int i = 0; i < 100 && chart_phase() == 1; i++) pump(20);
+    pump((int)kChartZoomMs / 4); capture("89_chart_zoom_one_quarter");
+    pump((int)kChartZoomMs / 4); capture("90_chart_zoom_half");
+    pump((int)kChartZoomMs / 4); capture("91_chart_zoom_three_quarters");
+    chart_settle(); capture("92_chart_zoomed");
+    // A chip chosen: the view glides to that part of the day's dots.
+    tap(chart_chip_x(4), 37); chart_settle(); capture("93_chart_zoomed_evenings");
+    // A dot picked in the zoomed view.
+    start(p4); seed_tight(); ui::open_sheet(ui::Sheet::Chart); chart_settle(true);
+    k = lone_seed(30, true);
+    tap(seed_xy_now(k).x, seed_xy_now(k).y); pump(300); capture("94_chart_zoomed_callout");
+    // One answer only: the view stops at its closest (6 F across, 24 gr/lb up).
+    start(p4); seed_comfort(1, 71.0f, 71.0f, 0.47f, 0.47f); ui::open_sheet(ui::Sheet::Chart); chart_settle(true);
+    capture("95_chart_one_dot");
+    // And by night.
+    start(p1); seed_tight(); ui::open_sheet(ui::Sheet::Chart); chart_settle(true); capture("96_chart_zoomed_night");
     // Settings > Update over Wi-Fi asks which panels (Mike, 2026-11-07).
     start(p4); ui::open_sheet(ui::Sheet::Settings); pump(400);
     drag_up(200, 400, 150);
@@ -783,6 +922,52 @@ int main(int argc, char **argv) {
     s.me = Floor::Upstairs;
     start(s);
     capture("39_mail_outline_upstairs_night");
+  }
+
+  // "No mail" (Mike, 2026-11-18): a badge just left of the mail one, the envelope in a ring with a
+  // slash. Upstairs: the faint outline beside the mail outline; tapped, red (a quiet notice: no sound,
+  // and downstairs does not wake). Downstairs: nothing until marked, then red and steady until the
+  // tenant taps it. Mail lit with the no-mail outline idle, and the longest status word (SLEEPING).
+  {
+    Setup s = p4;
+    s.me = Floor::Upstairs;
+    start(s);
+    capture("82_nomail_idle_upstairs");
+    tap(12 + 322, 279 + 24);  // the no-mail badge's centre, on screen
+    pump(300);
+    capture("83_nomail_red_upstairs");
+  }
+  {
+    Setup s = p4;  // downstairs
+    start(s);
+    g_h->demo.peer_tap_nomail();  // upstairs marks it
+    pump(300);
+    capture("84_nomail_red_downstairs");
+  }
+  {
+    Setup s = p4;
+    s.me = Floor::Upstairs;
+    start(s);
+    tap(12 + 362, 279 + 24);  // the mail badge
+    pump(300);
+    capture("85_mail_lit_nomail_idle_upstairs");
+  }
+  {
+    Setup s = p4;  // downstairs, SLEEPING: the longest word at 64 px
+    s.mine = Status::Sleeping;
+    start(s);
+    g_h->demo.peer_tap_nomail();
+    pump(300);
+    capture("86_nomail_red_downstairs_sleeping");
+  }
+  {
+    Setup s = p1;  // night, upstairs
+    s.me = Floor::Upstairs;
+    s.peer = Status::Sleeping;
+    start(s);
+    tap(12 + 322, 279 + 24);
+    pump(300);
+    capture("87_nomail_red_upstairs_night_sleeping");
   }
 
   // The doorbell (Mike, 2026-10-26): the bell shakes for 3 s on a ring sent or received, and an
@@ -1062,12 +1247,31 @@ int main(int argc, char **argv) {
     tap(400, 30);
     long_press(462, 375);
     check(sheet() == ui::Sheet::Chart, "a long press on INSIDE opens the chart downstairs");
+    // The zoom (Mike, 2026-11-18): the whole chart for a second, then a glide in to the dots; a tap
+    // on the plot while it glides picks nothing.
+    float cv[4];
+    check(ui::detail::comfort_chart_peek(cv) == 1 && cv[0] == kChartTMin && cv[1] == kChartTMax && cv[2] == 0 && cv[3] == kChartGrMax,
+          "the chart opens whole and holds");
+    int held = 0;  // it opened part of the way through the long press
+    for (; held < 2000 && chart_phase() == 1; held += 20) pump(20);
+    check(held > 200 && held <= (int)kChartHoldMs && chart_phase() == 2, "then, a second after opening, it starts to zoom");
+    pump(300);
+    int mid = lone_seed(30, true);
+    uint32_t kids = lv_obj_get_child_cnt(ui::detail::g_sheet_root);
+    tap(seed_xy_now(mid).x, seed_xy_now(mid).y, 60);
+    check(chart_phase() == 2 && lv_obj_get_child_cnt(ui::detail::g_sheet_root) == kids, "a tap on the plot while it zooms picks nothing");
+    chart_settle();
+    check(ui::detail::comfort_chart_peek(cv) == 0 && cv[1] - cv[0] < 26 && cv[1] - cv[0] > 20 && cv[0] > kChartTMin && cv[1] < kChartTMax &&
+              cv[3] - cv[2] < 110,
+          "and settles on the dots with half as much again around them");
     uint16_t before = px(518, 37);
     tap(518, 37);
     check(px(518, 37) != before, "MORNING takes the chosen chip");
-    int k = lone_seed(30);
-    lv_point_t d = seed_xy(k);
+    check(chart_phase() == 2, "and the view glides to the morning's dots at once");
     tap(357, 37);  // back to ALL
+    chart_settle();
+    int k = lone_seed(30, true);  // the dots are picked where the zoomed view has them
+    lv_point_t d = seed_xy_now(k);
     uint16_t dot_before = px(d.x, d.y);
     tap(d.x, d.y);
     pump(300);
@@ -1087,6 +1291,13 @@ int main(int argc, char **argv) {
     check(px(d.x, d.y) != dot_before, "the dot goes at once");
     tap(756, 37);
     check(sheet() == ui::Sheet::None, "the X closes the chart");
+    pump(400);
+    long_press(462, 375);
+    check(sheet() == ui::Sheet::Chart && ui::detail::comfort_chart_peek(cv) == 1 && cv[0] == kChartTMin && cv[1] == kChartTMax,
+          "opened again, it starts over at the whole chart");
+    chart_settle(true);
+    check(ui::detail::comfort_chart_peek(cv) == 0 && cv[1] - cv[0] < 29, "and zooms again");
+    tap(756, 37);
     Setup up = p4;
     up.me = Floor::Upstairs;
     start(up);

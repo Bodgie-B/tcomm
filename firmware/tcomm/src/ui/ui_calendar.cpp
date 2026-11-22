@@ -11,6 +11,7 @@
 #include <string.h>
 #include "../core/civil.h"
 #include "../core/holidays.h"
+#include "../core/text_edit.h"
 #include "ui_internal.h"
 
 namespace ui {
@@ -26,8 +27,8 @@ namespace {
 constexpr int kCW = 108;                  // column width, month and week
 constexpr int kRootY = 62;                // the roll-down's clip region starts under the strip
 constexpr int kPanelY = 70 - kRootY;      // the panel's top, screen 70
-constexpr int kDlgY = 68 - kRootY;        // the editor dialog's top, screen 68
-constexpr int kKbdY = 288 - kRootY;       // the keyboard's top, screen 288
+constexpr int kDlgY = 64 - kRootY;        // the editor dialog's top, screen 64
+constexpr int kKbdY = kKpTop - kRootY;    // the keyboard's top, screen 216 (kKpTop)
 constexpr int kKbdHidden = 480 - kRootY;  // below the screen
 constexpr uint32_t kAutoCloseMs = 90000;  // PROPOSED (spec 10)
 // The roll and the keyboard's slide (spec: an animation under about 20 fps goes). Measured on the
@@ -35,10 +36,23 @@ constexpr uint32_t kAutoCloseMs = 90000;  // PROPOSED (spec 10)
 // frame redraws most of the screen. Off, so both appear at once; on again if drawing gets faster.
 constexpr bool kAnimate = false;
 constexpr int kMaxShown = 64;
+// The editor dialog (Mike, 2026-11-21: layout B, for the taller keyboard): a 30 px header at 4, 34 px
+// fields at 38 (title), 76 (notes) and 114 (date, time, length and the repeat button at its right end),
+// so the date row ends at dialog y 148 (screen 212). Delete (an existing event only) sits under it.
+// While typing the dialog ends just under the date row, on the keyboard's top (screen 216).
+constexpr int kFh = 34;
+constexpr int kHdrY = 4, kHdrH = 30;
+constexpr int kFy0 = 38, kFp = 38;
+constexpr int kRowEnd = kFy0 + 2 * kFp + kFh;   // 148: the date row's bottom
+constexpr int kBtnRowY = kRowEnd + 6;           // Delete
+constexpr int kDlgFullH = kBtnRowY + 36;        // an existing event, Done pressed
+constexpr int kDlgNewH = kRowEnd + 10;          // a new event (no Delete), Done pressed
+constexpr int kDlgTypingH = kRowEnd + 4;        // 152: down to screen 216 while the keyboard is up
+constexpr int kRepW = 52;                       // the repeat button: the icon only
 
 enum View : uint8_t { kMonth, kWeek, kDay };
 enum Field : uint8_t { kNone, kTitle, kNotes };
-enum KeyKind : uint8_t { kChar, kShift, kBack, kSym, kSpace, kDone };
+enum KeyKind : uint8_t { kChar, kShift, kBack, kSym, kSpace, kDone, kMic };  // kMic: voice notes (DESIGN 2.1)
 
 // The keyboard's key and state are Keypad and KeypadKey (ui_internal.h), shared with the tile
 // message editor (ui_note.cpp, Mike 2026-11-07).
@@ -65,7 +79,7 @@ struct Cal {
   // The occurrence being edited: its day, and for a series where it started and what it was.
   int32_t occ_day = 0, orig_start = 0;
   bool orig_repeats = false;
-  lv_obj_t *f_name = nullptr, *rep_btn = nullptr, *rep_lbl = nullptr, *rep_icon = nullptr;
+  lv_obj_t *f_name = nullptr, *rep_btn = nullptr, *rep_icon = nullptr;
   lv_obj_t *picker = nullptr, *prompt = nullptr;  // over the editor
   Field focus = kNone;
   int16_t timed_start = 9 * 60;  // kept while the length unit is days, for switching back
@@ -75,6 +89,9 @@ struct Cal {
   uint32_t undo_id = 0;
   int32_t undo_day = 0;  // nonzero: Undo puts back one occurrence of the series undo_id
 } g_cal;
+
+// The editor dialog's height with the keyboard down: an existing event has Delete under the date row.
+int dlg_full_h() { return g_cal.is_new ? kDlgNewH : kDlgFullH; }
 
 // ---- Text placement -----------------------------------------------------------------------------
 
@@ -202,7 +219,8 @@ const int kMarkSizes[7] = {18, 20, 22, 24, 26, 30, 52};
 Art g_marks[2][7];
 Art g_add[3];  // 20, 24 and 52, for this panel's floor
 Art g_icon_prev, g_icon_next, g_icon_trash, g_icon_shift, g_icon_back;
-Art g_icon_up, g_icon_down, g_icon_repeat, g_icon_repeat_on, g_icon_minus, g_icon_plus;
+Art g_icon_up, g_icon_down, g_icon_repeat, g_icon_repeat_on, g_icon_minus, g_icon_plus;  // repeat: 26 px
+Art g_icon_mic;  // the keyboard's mic key: white in every mode (voice notes)
 // Birthday and anniversary markers [kind - 1][floor][size: 18, 22, 26, 30].
 const int kKindSizes[4] = {18, 22, 26, 30};
 Art g_kmarks[2][2][4];
@@ -248,8 +266,8 @@ void draw_graphics() {
   if (g_icon_back.make(26, 22, true)) art::cal_icon(g_icon_back.cv, art::CalIcon::Backspace, k.ink);
   if (g_icon_up.make(18, 18, true)) art::cal_icon(g_icon_up.cv, art::CalIcon::Up, k.ink);
   if (g_icon_down.make(18, 18, true)) art::cal_icon(g_icon_down.cv, art::CalIcon::Down, k.ink);
-  if (g_icon_repeat.make(18, 18, true)) art::cal_icon(g_icon_repeat.cv, art::CalIcon::Repeat, k.ink);
-  if (g_icon_repeat_on.make(18, 18, true)) art::cal_icon(g_icon_repeat_on.cv, art::CalIcon::Repeat, k.accent_text);
+  if (g_icon_repeat.make(26, 26, true)) art::cal_icon(g_icon_repeat.cv, art::CalIcon::Repeat, k.ink);
+  if (g_icon_repeat_on.make(26, 26, true)) art::cal_icon(g_icon_repeat_on.cv, art::CalIcon::Repeat, k.cream);
   if (g_icon_minus.make(30, 30, true)) art::cal_icon(g_icon_minus.cv, art::CalIcon::Minus, k.ink);
   if (g_icon_plus.make(30, 30, true)) art::cal_icon(g_icon_plus.cv, art::CalIcon::Plus, k.ink);
   for (int kind = 0; kind < 2; kind++)
@@ -1058,6 +1076,59 @@ const char *const kRowsSym[3] = {"1234567890", "-/:;()&@'", "+=?!#%*"};
 char *field_buf(Field f) { return f == kTitle ? g_cal.draft.title : g_cal.draft.notes; }
 size_t field_max(Field f) { return f == kTitle ? tc::kEventTitleMax : tc::kEventNotesMax; }
 
+// Tap to place the cursor (docs/voice-notes/DESIGN.md 8): each text field keeps its cursor and the
+// first character of its one-line view; the keys and the voice text go in at the cursor.
+tc::TextEdit g_fte[2] = {};
+int g_ffirst[2] = {};
+uint32_t g_fpress_ms = 0;  // the last cursor move by touch (a slide moves it at most 20 times a second)
+constexpr int kFieldTextX = 74, kFieldTextW = 668 - 6;  // the value's left in its field, and its room
+
+tc::TextEdit &fte(Field f) {
+  tc::TextEdit &t = g_fte[f == kTitle ? 0 : 1];
+  t.buf = field_buf(f);
+  t.cap = field_max(f);
+  tc::te_set(t, t.cursor);
+  return t;
+}
+
+// The width of the first n characters of s in the field font (tc::WidthFn).
+int b19_w(const char *s, int n, void *) {
+  char buf[tc::kEventNotesMax + 2];
+  if (n > (int)tc::kEventNotesMax) n = (int)tc::kEventNotesMax;
+  if (n < 0) n = 0;
+  memcpy(buf, s, (size_t)n);
+  buf[n] = 0;
+  return text_width(buf, B19);
+}
+
+// What a field shows: s[first, end), with an ellipsis before it (lead) and after it (tail) where the
+// text goes on. A focused field's view follows its cursor; an unfocused one shows the start, cut with
+// dots by the label (end is then about where the dots begin, near enough for a tap).
+struct FieldShow {
+  int first, end;
+  bool lead, tail;
+};
+FieldShow field_show(Field f, bool focused) {
+  tc::TextEdit &t = fte(f);
+  int i = f == kTitle ? 0 : 1, len = (int)strlen(t.buf), ew = text_width(kEllipsis, B19);
+  FieldShow v = {0, len, false, false};
+  if (b19_w(t.buf, len, nullptr) <= kFieldTextW) {
+    g_ffirst[i] = 0;
+    return v;
+  }
+  if (!focused) {
+    int zero = 0;
+    v.end = tc::te_window(t.buf, 0, kFieldTextW - ew, b19_w, nullptr, &zero);
+    v.tail = true;
+    return v;
+  }
+  v.end = tc::te_window(t.buf, t.cursor, kFieldTextW - 2 * ew, b19_w, nullptr, &g_ffirst[i]);
+  v.first = g_ffirst[i];
+  v.lead = v.first > 0;
+  v.tail = v.end < len;
+  return v;
+}
+
 // The repeat bubble's words: "Repeating Event" when it doesn't, else the rule ("Weekly, until
 // Dec 31", "Monthly, 10 times", "Birthday, every year").
 void rep_summary(const Event &e, char *out, size_t n) {
@@ -1080,19 +1151,6 @@ void rep_summary(const Event &e, char *out, size_t n) {
   }
 }
 
-// The end of a value too wide for its field: an ellipsis and as much of the end as fits.
-void fit_tail(const char *t, const lv_font_t *f, int w, char *out, size_t n) {
-  if (text_width(t, f) <= w) {
-    snprintf(out, n, "%s", t);
-    return;
-  }
-  for (size_t i = 0, len = strlen(t); i < len; i++) {
-    snprintf(out, n, "%s%s", kEllipsis, t + i);
-    if (text_width(out, f) <= w) return;
-  }
-  snprintf(out, n, "%s", kEllipsis);
-}
-
 void refresh_fields() {
   if (!g_cal.dlg) return;
   const theme::CalColors &k = cc();
@@ -1102,8 +1160,13 @@ void refresh_fields() {
     bool on = g_cal.focus == f;
     lv_obj_set_style_border_width(g_cal.f_box[i], on ? 3 : 2, 0);
     lv_obj_set_style_border_color(g_cal.f_box[i], C(on ? k.accent : k.ink), 0);
+    FieldShow v = {};
     if (on) {
-      fit_tail(field_buf(f), B19, 668 - 6, buf, sizeof(buf));
+      // The view follows the cursor (it replaces the old tail-only view).
+      v = field_show(f, true);
+      const char *s = field_buf(f);
+      snprintf(buf, sizeof(buf), "%s%.*s%s", v.lead ? kEllipsis : "", v.end - v.first, s + v.first,
+               v.tail ? kEllipsis : "");
       lv_label_set_long_mode(g_cal.f_val[i], LV_LABEL_LONG_CLIP);
     } else {
       snprintf(buf, sizeof(buf), "%s", field_buf(f));
@@ -1112,20 +1175,24 @@ void refresh_fields() {
     lv_obj_set_width(g_cal.f_val[i], 668);
     set_text(g_cal.f_val[i], buf);
     if (on) {
+      // 3 px wide, centred on the gap before the cursor's character.
+      tc::TextEdit &t = fte(f);
+      int x = kFieldTextX + (v.lead ? text_width(kEllipsis, B19) : 0) +
+              b19_w(t.buf + v.first, t.cursor - v.first, nullptr) - 1;
       lv_obj_set_parent(g_cal.cursor, g_cal.f_box[i]);
-      lv_obj_set_pos(g_cal.cursor, 74 + text_width(buf, B19) + 2, 5);
+      lv_obj_set_pos(g_cal.cursor, x, (kFh - 4 - 22) / 2);
     }
   }
   show(g_cal.cursor, g_cal.focus != kNone);
   const Event &e = g_cal.draft;
   set_text(g_cal.f_name, e.kind != tc::EventKind::Plain ? "NAME" : "TITLE");  // a birthday's is a name
   if (g_cal.rep_btn) {
+    // Mike, 2026-11-21: the icon only; filled green with a cream icon when the event repeats (the rule's
+    // words are in the repeat menu), the fields' face with an ink outline when it doesn't.
     bool on = e.repeats() || e.kind != tc::EventKind::Plain;
-    char rb[48], cb[48];
-    rep_summary(e, rb, sizeof(rb));
-    lv_obj_set_style_border_color(g_cal.rep_btn, C(on ? k.accent : k.ink), 0);
-    set_text_color(g_cal.rep_lbl, on ? k.accent_text : k.ink);
-    set_text(g_cal.rep_lbl, cut(rb, B15, 200 - 4 - 34 - 10, cb, sizeof(cb)));
+    lv_obj_set_style_border_color(g_cal.rep_btn, C(on ? k.accent_fill : k.ink), 0);
+    lv_obj_set_style_bg_color(g_cal.rep_btn, C(on ? k.accent_fill : k.field), 0);
+    lv_obj_set_style_bg_opa(g_cal.rep_btn, LV_OPA_COVER, 0);
     (on ? g_icon_repeat_on : g_icon_repeat).show(g_cal.rep_icon);
   }
   tc::Civil c = civ(e.day);
@@ -1182,8 +1249,11 @@ void kp_refresh(Keypad &kp) {
 void refresh_keys() { kp_refresh(g_cal.kp); }
 
 void set_focus(Field f) {
+  if (f == kNone) voice_keypad_gone(g_cal.kp);  // the keyboard goes: so does a voice job on it
   g_cal.focus = f;
-  if (f != kNone) g_cal.kp.shift = field_buf(f)[0] == 0 && f == kTitle;  // the title starts with a capital
+  // The title's capital-first rule looks at the cursor (0, or after ". "), which a tap may have
+  // placed just before this CLICKED (check fix C12); the cursor itself stays where it is.
+  if (f != kNone) g_cal.kp.shift = f == kTitle && tc::te_sentence_start(field_buf(f), fte(f).cursor);
   if (g_cal.kbd) {
     int32_t to = f != kNone ? kKbdY : kKbdHidden, from = lv_obj_get_y(g_cal.kbd);
     if (from != to && kAnimate) {
@@ -1194,27 +1264,24 @@ void set_focus(Field f) {
       lv_obj_set_y(g_cal.kbd, to);
     }
   }
+  // Typing: the dialog ends on the keyboard's top, so Delete is out of sight; Done brings it back.
+  if (g_cal.dlg) lv_obj_set_height(g_cal.dlg, f != kNone ? kDlgTypingH : dlg_full_h());
   refresh_fields();
   refresh_keys();
 }
 
 // The calendar's callbacks: the focused field takes the character, loses one, or the keyboard goes.
+// Both at the field's cursor.
 bool cal_on_char(char ch) {
   if (g_cal.focus == kNone) return false;
-  char *b = field_buf(g_cal.focus);
-  size_t n = strlen(b);
-  if (n >= field_max(g_cal.focus)) return false;
-  b[n] = ch;
-  b[n + 1] = 0;
+  if (!tc::te_insert(fte(g_cal.focus), ch)) return false;  // full
   refresh_fields();
   return true;
 }
 
 void cal_on_back() {
   if (g_cal.focus == kNone) return;
-  char *b = field_buf(g_cal.focus);
-  size_t n = strlen(b);
-  if (n) b[n - 1] = 0;
+  tc::te_backspace(fte(g_cal.focus));
   refresh_fields();
 }
 
@@ -1254,35 +1321,54 @@ void key_event(lv_event_t *e) {
 
 void add_key(Keypad &kp, float x, int row, float w, KeyKind kind, int ch, Color face, Color ink) {
   if (kp.nkeys >= (int)(sizeof(kp.keys) / sizeof(kp.keys[0]))) return;
-  static const int kTops[4] = {8, 53, 98, 143};
+  static const int kTops[4] = {8, 8 + (kKeyH + kKeyGap), 8 + 2 * (kKeyH + kKeyGap), 8 + 3 * (kKeyH + kKeyGap)};
   int xi = (int)lroundf(x), wi = (int)lroundf(x + w) - xi;
-  lv_obj_t *b = box(kp.obj, xi, kTops[row], wi, 40, face, 9);
+  lv_obj_t *b = box(kp.obj, xi, kTops[row], wi, kKeyH, face, 9);
   lv_obj_set_style_bg_color(b, C(gfx::scale(face, 0.88f)), LV_STATE_PRESSED);  // about 12 percent darker
   Key &key = kp.keys[kp.nkeys++];
   key = Key{(uint8_t)kind, (char)ch, (int16_t)wi, b, nullptr, &kp};
   lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_add_event_cb(b, key_event, LV_EVENT_CLICKED, &key);
+  if (kind == kMic) {
+    // Voice notes (DESIGN 2.1): capture starts at PRESSED, so the first syllable isn't lost waiting for
+    // the release; RELEASED applies the hold rule. The press stays this key's when the finger slides.
+    lv_obj_add_flag(b, LV_OBJ_FLAG_PRESS_LOCK);
+    lv_obj_add_event_cb(b, voice_key_event, LV_EVENT_PRESSED, &key);
+    lv_obj_add_event_cb(b, voice_key_event, LV_EVENT_PRESSING, &key);
+    lv_obj_add_event_cb(b, voice_key_event, LV_EVENT_RELEASED, &key);
+    lv_obj_add_event_cb(b, voice_key_event, LV_EVENT_PRESS_LOST, &key);
+    kp.mic = kp.nkeys - 1;
+  } else {
+    lv_obj_add_event_cb(b, key_event, LV_EVENT_CLICKED, &key);
+  }
   if (kind == kBack) lv_obj_add_event_cb(b, key_event, LV_EVENT_LONG_PRESSED_REPEAT, &key);
   switch (kind) {
     case kShift: {
-      lv_obj_t *img = image(b, (wi - 22) / 2, 9);
+      lv_obj_t *img = image(b, (wi - 22) / 2, (kKeyH - 22) / 2);
       g_icon_shift.show(img);
       break;
     }
     case kBack: {
-      lv_obj_t *img = image(b, (wi - 26) / 2, 9);
+      lv_obj_t *img = image(b, (wi - 26) / 2, (kKeyH - 22) / 2);
       g_icon_back.show(img);
       break;
     }
-    case kSpace: text_c(b, B14, 14, false, theme::cal_colors(kp.mode).muted, 0, wi, 0, 40, "SPACE", 2); break;
-    case kDone: key.lbl = text_c(b, B21, 21, false, ink, 0, wi, 0, 40, "Done"); break;
-    default: key.lbl = text(b, B21, 21, false, ink, 0, 0, 40, "?"); break;
+    case kSpace: text_c(b, B14, 14, false, theme::cal_colors(kp.mode).muted, 0, wi, 0, kKeyH, "SPACE", 2); break;
+    case kDone: key.lbl = text_c(b, B21, 21, false, ink, 0, wi, 0, kKeyH, "Done"); break;
+    case kMic: {  // child 0 the microphone, child 1 the stop square (shown while recording, ui_voice.cpp)
+      lv_obj_t *img = image(b, (wi - 22) / 2, (kKeyH - 22) / 2);
+      g_icon_mic.show(img);
+      lv_obj_t *sq = box(b, (wi - 8) / 2, (kKeyH - 8) / 2, 8, 8, hex(0xFFFFFF), 1);
+      show(sq, false);
+      break;
+    }
+    default: key.lbl = text(b, B21, 21, false, ink, 0, 0, kKeyH, "?"); break;
   }
 }
 
 // Shift and Backspace pictures, in the ink of the mode the keyboard is built for (the calendar's
 // draw_graphics makes the same two).
 void kp_icons(tc::Mode mode) {
+  if (!g_icon_mic.cv.ok() && g_icon_mic.make(22, 22, true)) art::cal_icon(g_icon_mic.cv, art::CalIcon::Mic, hex(0xFFFFFF));
   if (g_kp_icon_mode == (int)mode && g_icon_shift.cv.ok() && g_icon_back.cv.ok()) return;
   const theme::CalColors &k = theme::cal_colors(mode);
   if (g_icon_shift.make(22, 22, true)) art::cal_icon(g_icon_shift.cv, art::CalIcon::Shift, k.ink);
@@ -1293,26 +1379,33 @@ void kp_icons(tc::Mode mode) {
   if (g_art_mode != (int)mode) g_art_mode = -1;
 }
 
-// 192 px of keys at y (24 more below the screen, so the lower corners are rounded off screen).
+// kKpShown px of keys at y (24 more below the screen, so the lower corners are rounded off screen).
 void kp_build(Keypad &kp, lv_obj_t *parent, int32_t y, tc::Mode mode) {
   kp.mode = mode;
   kp_icons(mode);
   const theme::CalColors &k = theme::cal_colors(mode);
-  kp.obj = rect(parent, 0, y, 800, 192 + 24, k.kbd_bg, k.kbd_opa, 24);
+  kp.obj = rect(parent, 0, y, 800, kKpShown + 24, k.kbd_bg, k.kbd_opa, 24);
   lv_obj_add_flag(kp.obj, LV_OBJ_FLAG_CLICKABLE);  // a tap between keys goes nowhere
   kp.nkeys = 0;
+  kp.mic = -1;
+  static_assert(sizeof(kp.keys) / sizeof(kp.keys[0]) >= 34, "room for 33 keys and the mic key");
   const float kw = 73.9f, gap = 5;
   for (int i = 0; i < 10; i++) add_key(kp, 8 + i * (kw + gap), 0, kw, kChar, 0 * 16 + i, k.key, k.ink);
   for (int i = 0; i < 9; i++) add_key(kp, 48 + i * (kw + gap), 1, kw, kChar, 1 * 16 + i, k.key, k.ink);
   add_key(kp, 8, 2, 1.5f * kw, kShift, 0, k.key_special, k.ink);
   for (int i = 0; i < 7; i++) add_key(kp, 8 + 1.5f * kw + gap + i * (kw + gap), 2, kw, kChar, 2 * 16 + i, k.key, k.ink);
   add_key(kp, 800 - 8 - 1.5f * kw, 2, 1.5f * kw, kBack, 0, k.key_special, k.ink);
-  // Row 4: ?123, comma, space (whatever is left), period, Done (2.4 keys wide).
+  // Row 4: ?123, comma, the mic key when the owner offers voice (DESIGN 2.1: blue, a white
+  // microphone; night a darker blue), space (whatever is left), period, Done (2.4 keys wide).
   float x = 8;
   add_key(kp, x, 3, 1.5f * kw, kSym, 0, k.key_special, k.ink);
   x += 1.5f * kw + gap;
   add_key(kp, x, 3, kw, kChar, 3 * 16 + 0, k.key, k.ink);
   x += kw + gap;
+  if (kp.on_mic) {
+    add_key(kp, x, 3, kw, kMic, 0, hex(mode == tc::Mode::Night ? 0x2A56A8 : 0x1F5FBF), hex(0xFFFFFF));
+    x += kw + gap;
+  }
   float space_w = (800 - 8 - 2.4f * kw - gap - kw - gap) - x;
   add_key(kp, x, 3, space_w, kSpace, 0, k.key, k.ink);
   x += space_w + gap;
@@ -1322,10 +1415,14 @@ void kp_build(Keypad &kp, lv_obj_t *parent, int32_t y, tc::Mode mode) {
   kp_refresh(kp);
 }
 
+// Voice notes: the focused field's text, for the mic key (null with no field focused).
+const char *cal_on_mic() { return g_cal.focus == kNone ? nullptr : field_buf(g_cal.focus); }
+
 void build_keyboard(int32_t y) {
   g_cal.kp.on_char = cal_on_char;
   g_cal.kp.on_back = cal_on_back;
   g_cal.kp.on_done = cal_on_done;
+  g_cal.kp.on_mic = voice_offered() ? cal_on_mic : nullptr;
   kp_build(g_cal.kp, g_cal.root, y, g_cal.mode);
   g_cal.kbd = g_cal.kp.obj;
 }
@@ -1721,7 +1818,16 @@ void open_repeat_menu(bool fresh) {
   if (fresh) g_rep = g_cal.draft;
   g_pick_kind = kPickRepeat;
   lv_obj_t *p = picker_frame("Repeating event", true);
-  set_sub(g_rep.repeats() || g_rep.kind != tc::EventKind::Plain ? "Changes apply when you save the event" : "Doesn't repeat");
+  // Mike, 2026-11-21: the rule's words live here now ("Weekly, until Dec 31"), not on the repeat button.
+  char sum[64];
+  if (g_rep.repeats() || g_rep.kind != tc::EventKind::Plain) {
+    char rb[48];
+    rep_summary(g_rep, rb, sizeof(rb));
+    snprintf(sum, sizeof(sum), "%s (saved with the event)", rb);
+  } else {
+    snprintf(sum, sizeof(sum), "Doesn't repeat");
+  }
+  set_sub(sum);
   int sel = g_rep.kind == tc::EventKind::Birthday      ? 5
             : g_rep.kind == tc::EventKind::Anniversary ? 6
                                                          : (int)g_rep.repeat;
@@ -1859,6 +1965,37 @@ void undo_clicked(lv_event_t *) {
 
 void repeat_clicked(lv_event_t *) { open_repeat_menu(true); }
 
+// A press in the title or notes field puts that field's cursor at the nearest gap (the midpoint
+// rule), before CLICKED focuses it; a slide moves it along, at most 20 times a second. Held on the
+// ellipsis at either end of a focused field, the view scrolls a character at a time.
+void field_touch(lv_event_t *e) {
+  lv_event_code_t code = lv_event_get_code(e);
+  if ((code != LV_EVENT_PRESSED && code != LV_EVENT_PRESSING) || !g_cal.dlg) return;
+  if (code == LV_EVENT_PRESSING && lv_tick_elaps(g_fpress_ms) < 50) return;
+  g_fpress_ms = lv_tick_get();
+  int which = (int)(intptr_t)lv_event_get_user_data(e);
+  Field f = which == 0 ? kTitle : kNotes;
+  lv_indev_t *in = lv_indev_get_act();
+  if (!in || !g_cal.f_val[which]) return;
+  lv_point_t p;
+  lv_indev_get_point(in, &p);
+  lv_area_t a;
+  lv_obj_get_coords(g_cal.f_val[which], &a);
+  const bool on = g_cal.focus == f;
+  FieldShow v = field_show(f, on);
+  tc::TextEdit &t = fte(f);
+  int x = p.x - a.x1 - (v.lead ? text_width(kEllipsis, B19) : 0), c;
+  if (v.lead && x < 0) c = v.first - 1;  // on the left ellipsis: one character back into view
+  else if (v.tail && x >= b19_w(t.buf + v.first, v.end - v.first, nullptr)) c = on ? v.end + 1 : (int)strlen(t.buf);
+  else c = tc::te_hit(t.buf, v.first, v.end, x, b19_w, nullptr);
+  if (c == t.cursor) return;
+  tc::te_set(t, c);
+  if (!on) return;  // CLICKED focuses it next, and set_focus keeps the cursor
+  if (f == kTitle) g_cal.kp.shift = tc::te_sentence_start(t.buf, t.cursor);
+  refresh_fields();
+  refresh_keys();
+}
+
 void field_clicked(lv_event_t *e) {
   int which = (int)(intptr_t)lv_event_get_user_data(e);
   if (which == 0 || which == 1) set_focus(which == 0 ? kTitle : kNotes);
@@ -1885,53 +2022,60 @@ void unit_clicked(lv_event_t *e) {
 
 lv_obj_t *field(lv_obj_t *dlg, int x, int y, int w, const char *name, int label_w, int which) {
   const theme::CalColors &k = cc();
-  lv_obj_t *f = box(dlg, x, y, w, 38, k.field, 11);
+  lv_obj_t *f = box(dlg, x, y, w, kFh, k.field, 11);
   lv_obj_set_style_border_width(f, 2, 0);
   lv_obj_set_style_border_color(f, C(k.ink), 0);
   lv_obj_set_style_border_opa(f, LV_OPA_COVER, 0);
-  lv_obj_t *l = text(f, B11, 11, false, k.muted, 10, 0, 32, name, 1);
+  lv_obj_t *l = text(f, B11, 11, false, k.muted, 10, 0, kFh - 6, name, 1);
   if (which == 0) g_cal.f_name = l;
   (void)label_w;
   on_click(f, field_clicked, which);
+  if (which == 0 || which == 1) {  // tap to place the cursor; the press stays with the field while it slides
+    lv_obj_add_flag(f, LV_OBJ_FLAG_PRESS_LOCK);
+    lv_obj_add_event_cb(f, field_touch, LV_EVENT_PRESSED, (void *)(intptr_t)which);
+    lv_obj_add_event_cb(f, field_touch, LV_EVENT_PRESSING, (void *)(intptr_t)which);
+  }
   return f;
 }
 
 void build_dialog() {
   const theme::CalColors &k = cc();
-  g_cal.dlg = rect(g_cal.root, 12, kDlgY, 776, 214, k.paper, 230, 24);
+  g_cal.dlg = rect(g_cal.root, 12, kDlgY, 776, dlg_full_h(), k.paper, 230, 24);
   lv_obj_add_flag(g_cal.dlg, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_t *d = g_cal.dlg;
-  marker(d, g_set.floor, 30, 10, 8);  // spec 1.2: this panel's floor
-  text(d, J23, 23, true, k.ink, 48, 8, 32, g_cal.is_new ? "New event" : "Edit event");
-  text(d, B14, 14, false, k.muted, 190, 12, 24, g_set.floor == Floor::Upstairs ? "UPSTAIRS EVENT" : "DOWNSTAIRS EVENT", 1);
-  lv_obj_t *cancel = outlined(d, 564, 8, 96, 32, k.ink, 2, 16);
-  text_c(cancel, B16, 16, false, k.ink, -2, 96, -2, 32, "Cancel");
+  marker(d, g_set.floor, 30, 10, kHdrY + kHdrH / 2 - 15);  // spec 1.2: this panel's floor
+  text(d, J23, 23, true, k.ink, 48, kHdrY, kHdrH, g_cal.is_new ? "New event" : "Edit event");
+  text(d, B14, 14, false, k.muted, 190, kHdrY + (kHdrH - 24) / 2, 24, g_set.floor == Floor::Upstairs ? "UPSTAIRS EVENT" : "DOWNSTAIRS EVENT", 1);
+  lv_obj_t *cancel = outlined(d, 564, kHdrY, 96, kHdrH, k.ink, 2, kHdrH / 2);
+  text_c(cancel, B16, 16, false, k.ink, -2, 96, -2, kHdrH, "Cancel");
   press_tint(cancel, k.ink);
   on_click(cancel, cancel_clicked, 0, 6);
-  lv_obj_t *save = box(d, 670, 8, 96, 32, k.accent_fill, 16);
-  text_c(save, B16, 16, false, k.cream, 0, 96, 0, 32, "Save");
+  lv_obj_t *save = box(d, 670, kHdrY, 96, kHdrH, k.accent_fill, kHdrH / 2);
+  text_c(save, B16, 16, false, k.cream, 0, 96, 0, kHdrH, "Save");
   lv_obj_set_style_bg_color(save, C(gfx::scale(k.accent_fill, 0.88f)), LV_STATE_PRESSED);
   on_click(save, save_clicked, 0, 6);
 
-  g_cal.f_box[0] = field(d, 10, 46, 756, "TITLE", 64, 0);
-  g_cal.f_box[1] = field(d, 10, 89, 756, "NOTES", 64, 1);
-  for (int i = 0; i < 2; i++) g_cal.f_val[i] = text(g_cal.f_box[i], B19, 19, false, k.ink, 74, 0, 32, "");
-  lv_obj_t *fd = field(d, 10, 132, 247, "DATE", 52, 2);
-  g_cal.v_date = text(fd, B19, 19, false, k.ink, 62, 0, 32, "");
-  lv_obj_t *ft = field(d, 265, 132, 246, "TIME", 52, 3);
-  g_cal.v_time = text(ft, B19, 19, false, k.ink, 62, 0, 32, "");
-  lv_obj_t *fl = field(d, 519, 132, 247, "LENGTH", 64, 4);
-  g_cal.v_len = text(fl, B19, 19, false, k.ink, 76, 0, 32, "");
-  lv_obj_t *track = rect(fl, 138, 4, 92, 24, k.ink, 23, 12);
+  g_cal.f_box[0] = field(d, 10, kFy0, 756, "TITLE", 64, 0);
+  g_cal.f_box[1] = field(d, 10, kFy0 + kFp, 756, "NOTES", 64, 1);
+  for (int i = 0; i < 2; i++) g_cal.f_val[i] = text(g_cal.f_box[i], B19, 19, false, k.ink, 74, 0, kFh - 6, "");
+  // DATE, TIME and LENGTH, then the repeat button at the row's right end.
+  const int ry = kFy0 + 2 * kFp, g = 8, wl = 240, wt = 210, wd = 756 - kRepW - 3 * g - wl - wt;
+  lv_obj_t *fd = field(d, 10, ry, wd, "DATE", 52, 2);
+  g_cal.v_date = text(fd, B19, 19, false, k.ink, 62, 0, kFh - 6, "");
+  lv_obj_t *ft = field(d, 10 + wd + g, ry, wt, "TIME", 52, 3);
+  g_cal.v_time = text(ft, B19, 19, false, k.ink, 62, 0, kFh - 6, "");
+  lv_obj_t *fl = field(d, 10 + wd + wt + 2 * g, ry, wl, "LENGTH", 64, 4);
+  g_cal.v_len = text(fl, B19, 19, false, k.ink, 76, 0, kFh - 6, "");
+  lv_obj_t *track = rect(fl, wl - 4 - 92 - 6, (kFh - 4 - 24) / 2, 92, 24, k.ink, 23, 12);
   const char *units[2] = {"hr", "days"};
   for (int i = 0; i < 2; i++) {
     g_cal.unit_seg[i] = box(track, i * 46, 0, 46, 24, k.ink, 12);
     g_cal.unit_lbl[i] = text_c(g_cal.unit_seg[i], B14, 14, false, k.ink, 0, 46, 0, 24, units[i]);
     on_click(g_cal.unit_seg[i], unit_clicked, i, 6);
   }
-  g_cal.cursor = box(g_cal.f_box[0], 74, 5, 2, 22, k.accent, 0);
+  g_cal.cursor = box(g_cal.f_box[0], kFieldTextX, (kFh - 4 - 22) / 2, 3, 22, k.accent, 0);
   if (!g_cal.is_new) {  // PROPOSED: no Delete while creating
-    lv_obj_t *del = outlined(d, 10, 176, 170, 28, k.danger, 2, 14);
+    lv_obj_t *del = outlined(d, 10, kBtnRowY, 170, 28, k.danger, 2, 14);
     int tw = text_width("Delete event", B15), x0 = (170 - 4 - (16 + 8 + tw)) / 2;
     lv_obj_t *img = image(del, x0, (28 - 4 - 16) / 2);
     g_icon_trash.show(img);
@@ -1940,9 +2084,9 @@ void build_dialog() {
     on_click(del, delete_clicked, 0, 6);
   }
   // Repeating (Mike, 2026-10-25): two arrows chasing round and the words, under LENGTH on the right.
-  g_cal.rep_btn = outlined(d, 766 - 200, 176, 200, 28, k.ink, 2, 14);
-  g_cal.rep_icon = image(g_cal.rep_btn, 10, (28 - 4 - 18) / 2);
-  g_cal.rep_lbl = text(g_cal.rep_btn, B15, 15, false, k.ink, 34, -2, 28, "");
+  // The repeat button: the icon only, at the right end of the date row, as high as the fields.
+  g_cal.rep_btn = outlined(d, 766 - kRepW, ry, kRepW, kFh, k.ink, 2, 11);
+  g_cal.rep_icon = image(g_cal.rep_btn, (kRepW - 4 - 26) / 2, (kFh - 4 - 26) / 2);
   press_tint(g_cal.rep_btn, k.ink);
   on_click(g_cal.rep_btn, repeat_clicked, 0, 6);
 }
@@ -1983,6 +2127,12 @@ void open_editor_impl(const Event *e, int32_t day, int start_min, bool animate) 
   g_cal.timed_start = g_cal.draft.all_day ? 9 * 60 : g_cal.draft.start_min;
   g_cal.kp.sym = false;
   if (g_cal.panel) show(g_cal.panel, false);  // spec 9: the editor replaces the panel
+  for (int i = 0; i < 2; i++) {  // each cursor at the end of its text, the view from the start
+    tc::TextEdit &t = fte(i == 0 ? kTitle : kNotes);
+    t.cursor = (int)strlen(t.buf);
+    g_ffirst[i] = 0;
+    tc::te_register(&t);  // so the voice strip finds the cursor
+  }
   build_dialog();
   build_keyboard(animate ? kKbdHidden : kKbdY);
   set_focus(kTitle);
@@ -2058,6 +2208,8 @@ void cal_render(bool) {
       build_dialog();
       build_keyboard(focus != kNone ? kKbdY : kKbdHidden);
       g_cal.focus = focus;
+      // Still typing: the dialog ends on the keyboard's top again (build_dialog made it full height).
+      lv_obj_set_height(g_cal.dlg, focus != kNone ? kDlgTypingH : dlg_full_h());
       refresh_fields();
       refresh_keys();
     }

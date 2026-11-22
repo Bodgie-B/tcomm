@@ -28,6 +28,8 @@ class DemoPeerPlatform : public Platform {
   uint32_t random32() override { return host_.random32(); }
   void *alloc_big(size_t n) override { return host_.alloc_big(n); }
   void free_big(void *p) override { host_.free_big(p); }
+  void *alloc_state(size_t n) override { return host_.alloc_state(n); }
+  void free_state(void *p) override { host_.free_state(p); }
   uint8_t *read_file(const char *name, size_t &len) override { return files.read(*this, name, len); }
   void write_file(const char *name, uint8_t *buf, size_t len) override { files.write(*this, name, buf, len); }
   MemFiles files;  // kept over "plug in", like the real panel's SD card
@@ -63,6 +65,7 @@ class Demo {
   void peer_ring();                        // the other floor presses DOORBELL
   void peer_toggle_dog();                  // the other floor taps its dog button
   void peer_tap_mail();                    // the other floor taps its mail badge
+  void peer_tap_nomail();                  // the other floor taps its no-mail badge (Mike, 2026-11-18)
   void gateway_toggle_lucy();              // LucyGate in/out button
   void gateway_next_outside();             // a WeatherGate reading (the board samples, then Zambretti ones)
   void next_auto_answer();

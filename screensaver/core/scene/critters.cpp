@@ -66,9 +66,12 @@ const KindInfo kKinds[CR_COUNT] = {
      CA_HOP, 7, 18.f, 20.f, 10.f, 7.f},
     {"frog", 18.f, 14.f, kAlways | bit(CA_HOP) | bit(CA_BLINK) | bit(CA_LOOK) | bit(CA_STARTLE), CA_HOP, 7, 18.f,
      18.f, 0.f, 9.f},
+    // Deer: 6 primitives, 7 with the white flag up; a fawn 9 and 10 (three spots). CA_EAT (graze), CA_REACH (the
+    // cautious stretch) and CA_SHAKE are the herd's (stage 22, Mike 2026-11-18).
     {"deer", 50.f, 48.f,
-     kAlways | bit(CA_MOVE) | bit(CA_RUN) | bit(CA_LOOK) | bit(CA_SNIFF) | bit(CA_HEADTURN) | bit(CA_STARTLE),
-     CA_MOVE, 7, 26.f, 56.f, 0.f, 0.f},
+     kAlways | bit(CA_MOVE) | bit(CA_RUN) | bit(CA_LOOK) | bit(CA_SNIFF) | bit(CA_HEADTURN) | bit(CA_STARTLE) |
+         bit(CA_EAT) | bit(CA_REACH) | bit(CA_SHAKE),
+     CA_MOVE, 10, 26.f, 56.f, 0.f, 0.f},
     {"raccoon", 30.f, 18.f,
      kAlways | bit(CA_MOVE) | bit(CA_RUN) | bit(CA_SIT) | bit(CA_LOOK) | bit(CA_SNIFF) | bit(CA_REACH) |
          bit(CA_CLIMB) | bit(CA_EAT) | bit(CA_CARRY) | bit(CA_STARTLE),
@@ -179,6 +182,15 @@ constexpr CritterPose poseFor(int k, int a) {
           p.head = 0.4f; p.look = -0.25f; p.crouch = 0.1f; p.hind[0] = -0.16f; p.hind[1] = 0.04f;
           p.fore[0] = 0.12f; p.squash = 0.02f;
           break;
+        // The herd's (stage 22, Mike 2026-11-18). PROPOSED values, tuned on the pose sheet.
+        case CA_EAT:   // grazing: the forequarters down (rear: see buildDeer), the neck steep, the nose to the grass
+          p.head = -2.1f; p.look = 0.f; p.rear = 1.f; p.crouch = 0.1f; p.fore[0] = 0.3f; p.fore[1] = 0.18f;
+          break;
+        case CA_REACH:   // the cautious stretch: neck out level, the fore legs forward and the hind legs back
+          p.head = -0.85f; p.look = 0.35f; p.crouch = 0.1f; p.pitch = -0.02f; p.hind[0] = -0.24f;
+          p.hind[1] = -0.12f; p.fore[0] = 0.22f; p.fore[1] = 0.12f;
+          break;
+        case CA_SHAKE: p.head = -0.2f; p.crouch = 0.08f; break;   // braced, the head low and still
         default: break;
       }
       break;
@@ -329,7 +341,7 @@ float loopRate(const Critter& c, CritterAction a) {
     case CA_IDLE: return 0.45f * jit;
     case CA_MOVE: return (c.kind == CR_BIRD ? 5.f : 1.4f) * spd;
     case CA_RUN: return 2.6f * spd;
-    case CA_EAT: return c.kind == CR_BIRD ? 1.1f : (c.kind == CR_MOUSE ? 4.5f : 2.8f);
+    case CA_EAT: return c.kind == CR_BIRD ? 1.1f : (c.kind == CR_MOUSE ? 4.5f : (c.kind == CR_DEER ? 0.55f : 2.8f));
     case CA_SNIFF: return c.kind == CR_BEAR ? 0.45f : 0.75f;
     case CA_SHAKE: return c.kind == CR_BEAR ? 4.5f : 7.f;
     case CA_BLINK: return (c.kind == CR_OWL ? 0.32f : 0.45f) * jit;
@@ -521,6 +533,9 @@ void addLoop(Look& L, const Critter& c, CritterAction a, float ph, float w) {
         const float d = pos(sinT(ph));
         p.head -= w * 0.55f * d * d;
         p.pitch -= w * 0.4f * d * d;
+      } else if (k == CR_DEER) {   // grazing: the muzzle works along the grass, a small tug now and then; legs still
+        p.head -= w * 0.05f * sinT(ph);
+        p.look += w * 0.1f * sinT(2.f * ph + 0.2f);
       } else {              // nibble: head bobs to the paws
         const float s = sinT(ph);
         p.head -= w * 0.1f * s;
@@ -538,7 +553,14 @@ void addLoop(Look& L, const Critter& c, CritterAction a, float ph, float w) {
     }
     case CA_SHAKE: {
       const float s = sinT(ph);
-      L.shiver = w * (k == CR_DOG ? 2.2f : (k == CR_BEAR ? 1.5f : 0.9f)) * s;
+      if (k == CR_DEER) {   // a wet shake: the body shivers across, the neck and head swing a beat behind it
+        L.shiver = w * 1.4f * s;
+        p.squash += w * 0.03f * sinT(2.f * ph);
+        p.head += w * 0.22f * sinT(ph + 0.12f);
+        p.pitch += w * 0.035f * sinT(ph + 0.3f);
+        break;
+      }
+      L.shiver = w * (k == CR_DOG ? 2.2f : (k == CR_BEAR ? 1.5f : (k == CR_DEER ? 1.2f : 0.9f))) * s;
       p.squash += w * 0.03f * sinT(2.f * ph);
       p.tail += w * 0.35f * s;
       p.head += w * 0.08f * s;
@@ -621,8 +643,9 @@ struct Prims {
   Prim v[kMaxPrims];
   float low;      // lowest ground contact, local y
   float belly;    // climbing: x of the belly line, local
-  bool has_paw, has_head, has_mouth;
+  bool has_paw, has_head, has_mouth, has_deer;
   Vec2 paw, head, mouth; // anchors (critterPaw, critterHead, critterMouth), local, then frame space
+  Vec2 nose, crown;      // the deer's (critterDeerNose, critterDeerCrown), local, then frame space
 };
 
 inline Vec2 add(Vec2 a, Vec2 b) { return Vec2{a.x + b.x, a.y + b.y}; }
@@ -948,35 +971,104 @@ void deerLeg(Prims& ps, Vec2 root, float a, bool hind, float L, float lift, floa
   else limb(ps, root, a + 0.02f, 0.5f * L, a - 0.04f - fold, 0.5f * L, 4.0f * near, 2.2f, 1.7f, 0.f);
 }
 
+// The herd's deer (stage 22): the same silhouette with a few extras, none of them drawn for a plain adult
+// with tail_add 0, so every earlier deer scene is pixel for pixel what it was.
+//  - the white flag: one light leaf at the rump, drawn only from Critter::tail_add (REVIEW_FIXES F15: not
+//    from the pose's tail, which the bounding gait swings every stride);
+//  - the fawn (tone bit kDeerFawn): legs 1.12 x, body 0.9 x, the head 1.25 x with the muzzle pulled in 15 %,
+//    three pale spots along the back;
+//  - the near ear (tone bits): up, forward, half back, back.
+constexpr float kFawnLegK = 1.12f, kFawnBodyK = 0.9f, kFawnHeadK = 1.25f, kFawnMuzzleK = 0.85f;
+constexpr float kFlagMin = 0.08f;
+constexpr float kDeerDip = 0.22f, kDeerDipLeg = 3.4f;
+// Where the near ear's tip (head point 3) goes: up as drawn, forward, half back, back.
+const float kDeerEarTip[4][2] = {{-1.4f, -8.4f}, {1.2f, -8.8f}, {-3.8f, -7.0f}, {-6.4f, -5.4f}};
+// The muzzle tip and the crown, in the head frame.
+constexpr float kDeerNoseX = 8.2f, kDeerNoseY = 2.4f, kDeerCrownX = -0.6f, kDeerCrownY = -3.0f;
+// Spots on a fawn's back, in its (already shortened) body frame.
+const float kFawnSpots[3][2] = {{2.4f, -8.0f}, {7.2f, -8.6f}, {12.0f, -8.4f}};
+
 void buildDeer(const Critter& c, const Look& L, Prims& ps) {
-  (void)c;
   const CritterPose& P = L.p;
-  const float th = P.pitch;
+  const bool fawn = (c.tone & kDeerFawn) != 0;
+  const float bk = fawn ? kFawnBodyK : 1.f;
+  // P.rear is unused by a deer (it never stands up on its hind legs), so here it is "the forequarters
+  // down", 0 to 1: the body pitched nose-down about the hips and the fore legs shorter by the same drop,
+  // all four feet still on the ground. The grazing pose is 1. At 0 nothing changes.
+  const float dip = clamp01(P.rear);
+  const float th = P.pitch - kDeerDip * dip;
   const float fold = 1.f - 0.3f * clamp01(P.crouch);
-  const float Lg = 22.f * fold;
-  const Xf B = xf(Vec2{-10.f, -Lg}, th);
-  deerLeg(ps, at(B, 1.6f, -1.8f), P.hind[1], true, Lg, L.lift_h[1], 0.9f);
-  deerLeg(ps, at(B, 16.6f, -1.6f), P.fore[1], false, Lg, L.lift_f[1], 0.9f);
-  polyIn(ps, B, kDeerBody, 12, true);
+  const float Lg = (fawn ? 22.f * kFawnLegK : 22.f) * fold;
+  const float Lf = Lg - kDeerDipLeg * dip;
+  const Xf B = xf(Vec2{-10.f * bk, -Lg}, th);
+  deerLeg(ps, at(B, 1.6f * bk, -1.8f), P.hind[1], true, Lg, L.lift_h[1], 0.9f);
+  deerLeg(ps, at(B, 16.6f * bk, -1.6f), P.fore[1], false, Lf, L.lift_f[1], 0.9f);
+  if (fawn) {
+    float body[12][2];
+    for (int i = 0; i < 12; ++i) {
+      body[i][0] = kDeerBody[i][0] * bk;
+      body[i][1] = kDeerBody[i][1];
+    }
+    polyIn(ps, B, body, 12, true);
+  } else {
+    polyIn(ps, B, kDeerBody, 12, true);
+  }
+  if (fawn)
+    for (int i = 0; i < 3; ++i) ellipse(ps, at(B, kFawnSpots[i][0], kFawnSpots[i][1]), 1.6f, 1.1f, ACTOR_LIGHT);
   // Neck and head in one outline: two base points on the body, the head ring
   // in the head frame, so the neck tapers from the shoulders to the jaw.
-  const Vec2 nb = at(B, 18.6f, -7.0f);
+  const Vec2 nb = at(B, 18.6f * bk, -7.0f);
   const float na = th + kPi - 0.66f + P.head;
   const Vec2 nt = add(nb, mul(dirA(na), 14.5f));
-  const Xf H = xf(nt, th + 0.5f * P.head + P.look - 0.25f);
+  const Xf H0 = xf(nt, th + 0.5f * P.head + P.look - 0.25f);
+  const float hk = fawn ? kFawnHeadK : 1.f;
+  const Xf H{H0.o, H0.c * hk, H0.s * hk};
   {
+    int ear = 0;   // the near ear: back wins over half back over forward
+    if ((c.tone & kDeerEarBack) != 0) ear = 3;
+    else if ((c.tone & kDeerEarMid) != 0) ear = 2;
+    else if ((c.tone & kDeerEarFwd) != 0) ear = 1;
     Prim* p = push(ps, PRIM_POLY, ACTOR);
     if (p) {
       int n = 0;
-      p->p[n++] = at(B, 15.6f, -9.6f);
-      for (int i = 0; i < 11; ++i) p->p[n++] = at(H, kDeerHead[i][0], kDeerHead[i][1]);
-      p->p[n++] = at(B, 21.6f, -3.6f);
+      p->p[n++] = at(B, 15.6f * bk, -9.6f);
+      for (int i = 0; i < 11; ++i) {
+        float x = kDeerHead[i][0], y = kDeerHead[i][1];
+        if (i == 3) { x = kDeerEarTip[ear][0]; y = kDeerEarTip[ear][1]; }
+        if (fawn && i >= 6 && i <= 8) x *= kFawnMuzzleK;
+        p->p[n++] = at(H, x, y);
+      }
+      p->p[n++] = at(B, 21.6f * bk, -3.6f);
       p->n = (uint8_t)n;
       for (int i = 0; i < n; ++i) contact(ps, p->p[i].y);
     }
   }
-  deerLeg(ps, at(B, 0.6f, -1.8f), P.hind[0], true, Lg, L.lift_h[0], 1.f);
-  deerLeg(ps, at(B, 18.0f, -1.6f), P.fore[0], false, Lg, L.lift_f[0], 1.f);
+  ps.nose = at(H, kDeerNoseX * (fawn ? kFawnMuzzleK : 1.f), kDeerNoseY);
+  ps.crown = at(H, kDeerCrownX, kDeerCrownY);
+  ps.has_deer = true;
+  // The near fore leg swung forward (a stamp, pawing the water) lifts and folds at the knee as it goes.
+  deerLeg(ps, at(B, 0.6f * bk, -1.8f), P.hind[0], true, Lg, L.lift_h[0], 1.f);
+  deerLeg(ps, at(B, 18.0f * bk, -1.6f), P.fore[0], false, Lf, L.lift_f[0] + 8.f * pos(c.fore_add), 1.f);
+  // The white flag, over the rump: a leaf from the root of the tail, hanging down and back when it just
+  // shows, straight up and a little back when it is all the way up.
+  const float k = clamp01(c.tail_add);
+  if (k > kFlagMin) {
+    const Vec2 root = at(B, -4.4f * bk, -9.6f);
+    const Vec2 u = dirA(-(0.5f + 2.3f * k) + th);
+    const Vec2 n{-u.y, u.x};
+    const float fk = fawn ? 1.3f : 1.f;   // a fawn's is big for its size: it is what shows
+    const float len = (6.f + 5.f * k) * fk, wid = 5.2f * fk;
+    Prim* p = push(ps, PRIM_POLY, ACTOR_LIGHT);
+    if (p) {
+      p->tint = TINT_WHITE;
+      p->p[0] = add(root, mul(n, -0.25f * wid));
+      p->p[1] = add(add(root, mul(u, 0.45f * len)), mul(n, -0.5f * wid));
+      p->p[2] = add(root, mul(u, len));
+      p->p[3] = add(add(root, mul(u, 0.45f * len)), mul(n, 0.5f * wid));
+      p->p[4] = add(root, mul(n, 0.25f * wid));
+      p->n = 5;
+    }
+  }
 }
 
 // The bear is drawn 9% over its rig units, so it stands about 60 px on all
@@ -1158,6 +1250,15 @@ void buildBird(const Critter& c, const Look& L, Prims& ps) {
     if (red) ps.v[ps.n - 1].tint = TINT_FUR_DARK;
     cap(ps, sh, add(sh, Vec2{4.5f, -rise - 0.5f}), 1.5f);
     if (red) ps.v[ps.n - 1].tint = TINT_FUR_DARK;
+  }
+  if (c.tone == kToneRedwing) {   // the shoulder patch: red over a thin yellow bar (stage 22)
+    const Vec2 sh = flying ? at(B, 0.0f, -3.4f) : at(B, 0.6f, -2.3f);
+    if (!flying) {
+      cap(ps, at(B, -0.7f, -1.3f), at(B, 1.6f, -1.5f), 0.8f);
+      ps.v[ps.n - 1].tint = TINT_FUR_DARK;
+    }
+    ellipse(ps, sh, 1.5f, 1.1f);
+    ps.v[ps.n - 1].tint = TINT_FUR_LIGHT;
   }
   if (c.carry != CC_NONE) carryItem(ps, c.carry == CC_SHOE ? (uint8_t)CC_CRUMB : c.carry, at(H, 4.6f, -0.8f), P.head);
 }
@@ -1440,8 +1541,8 @@ void build(const Critter& c, Prims& ps) {
   ps.n = 0;
   ps.low = -3.0e38f;
   ps.belly = 0.f;
-  ps.has_paw = ps.has_head = ps.has_mouth = false;
-  ps.paw = ps.head = ps.mouth = Vec2{0.f, 0.f};
+  ps.has_paw = ps.has_head = ps.has_mouth = ps.has_deer = false;
+  ps.paw = ps.head = ps.mouth = ps.nose = ps.crown = Vec2{0.f, 0.f};
   Look L = compose(c);
   L.p.fore[0] += c.fore_add;   // the caller's offsets, on the drawn pose only
   L.p.head += c.head_add;
@@ -1471,6 +1572,10 @@ void build(const Critter& c, Prims& ps) {
   if (ps.has_paw) place(ps.paw);
   if (ps.has_head) place(ps.head);
   if (ps.has_mouth) place(ps.mouth);
+  if (ps.has_deer) {
+    place(ps.nose);
+    place(ps.crown);
+  }
   for (int k = 0; k < ps.n; ++k) {
     Prim& p = ps.v[k];
     for (int i = 0; i < p.n; ++i) place(p.p[i]);
@@ -1777,6 +1882,18 @@ Vec2 critterMouth(const Critter& c) {
   return critterHead(c);
 }
 
+Vec2 critterDeerNose(const Critter& c) {
+  Prims ps;
+  build(c, ps);
+  return ps.has_deer ? ps.nose : critterMouth(c);
+}
+
+Vec2 critterDeerCrown(const Critter& c) {
+  Prims ps;
+  build(c, ps);
+  return ps.has_deer ? ps.crown : critterHead(c);
+}
+
 float critterTurnScale(const Critter& c) { return turnScale(c.turn_t); }
 
 Vec2 critterHead(const Critter& c) {
@@ -1794,8 +1911,12 @@ void critterDraw(const Critter& c, Surface& s, const Palette& pal, const Rect& c
   build(c, ps);
   Pixel fur = c.kind == CR_DOG ? furColor(pal, c.tone, false) : pal[ACTOR];
   Pixel fur_dark = c.kind == CR_DOG ? furColor(pal, c.tone, true) : pal[ACTOR];
-  Pixel white = c.kind == CR_DOG && c.tone == DT_LUCY ? dogWhite(pal) : pal[ACTOR];
+  Pixel white = (c.kind == CR_DOG && c.tone == DT_LUCY) || c.kind == CR_DEER ? dogWhite(pal) : pal[ACTOR];   // a deer's flag
   Pixel light = c.kind == CR_DOG && c.tone == DT_COPPER ? dogLight(pal, c.tone) : pal[ACTOR];
+  if (c.kind == CR_BIRD && c.tone == kToneRedwing) {   // the red-winged blackbird's patch and bar (stage 22)
+    light = mixRGB(pal[MUSHROOM], pal[FIRE], 0.5f);
+    fur_dark = pal[FIRE_CORE];
+  }
 #if SS_XMAS
   if (c.kind == CR_RACCOON && c.tone == kToneMasked) {   // the Christmas mockups' raccoon (PROPOSED)
     fur = mixRGB(pal[ROCK], pal[WATER_LIGHT], 0.38f);    // a light grey coat that holds up at night

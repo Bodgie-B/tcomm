@@ -6,7 +6,11 @@
 //   header  ver u8 | type u8 | sender u8 | seq u16                              (5 bytes)
 //   STATE   status u8 | flags u8 | since u32 | until u32 | fallback u8 | clock u32 | clock_quality u8
 //   KNOCK   knock_id u16
-//   REPLY   knock_id u16 | come_on u8
+//   REPLY   knock_id u16 | answer u8   (bit 0: 1 = Come on, 0 = Not now; bit 1: answered from a phone
+//           (Mike, 2026-11-15), so the ringer's panel can say "(from phone)". The byte 4 alone (bit 2) =
+//           the banner was dismissed, not answered: the ringer's panel shows nothing for it, but upstairs
+//           tells the phones (Ring ANSWERED) and stops passing on phone answers to that ring. Panel to
+//           panel only. Any other value is refused.)
 //   ACK     acked_seq u16 | acked_type u8
 //   DOG     lucy_out u8 | lucy_since u32 | lucy_ver u32 | copper_out u8 | copper_since u32 | copper_ver u32
 //           (each dog on its own: both can be out; ver = that dog's change counter)
@@ -18,7 +22,9 @@
 //   EVENT   one calendar event, as event_write() lays it out (events.h)
 //   EVENT_SUM count u16 | digest u32 | flags u8   (the sender's calendar in brief; 1 = please reply)
 //   MAIL    waiting u8 | since u32 | ver u32   (mail for downstairs: upstairs marks it, downstairs
-//           acknowledges it; ver = its change counter, as for a dog. See mail.h.)
+//           acknowledges it; ver = its change counter, as for a dog. See mail.h. The byte is 0 nothing,
+//           1 mail waiting, and from 2026-11-18 (Mike) 2 = "no mail": he looked and there is none. Same
+//           size and version; a panel without that change drops a 2 as malformed, it never reads it as mail.)
 //   COMFORT one survey answer, 33 bytes: n u32 | utc u32 | offset i32 | clock_q u8 | feel u8 | ask u8 | sent u8 |
 //           status u8 | have u8 | in_t i16 | in_h u16 | up_t i16 | up_h u16 | out_t i16 | out_h u8 | removed u32
 //           (downstairs to upstairs; every answer matters, so none replaces another. See comfort.h.)
@@ -35,9 +41,28 @@
 //           when the Pi sends it the serial line UPDATE (upstairs then does what that tap does).
 //           Not latest-wins. See docs/wifi-updates.md and ../gateway/docs/weathergate.md.)
 //   NOTICE  a house event for the Pi (Mike, 2026-11-11), UPSTAIRS to the gateway only, at most 1+1+2+4+1+40 = 49 bytes
-//           of body: kind u8 (1 to 7, see NoticeKind) | floor u8 | value i16 | time u32 (UTC, 0 = no clock) |
+//           of body: kind u8 (1 to 8, see NoticeKind) | floor u8 | value i16 | time u32 (UTC, 0 = no clock) |
 //           text_len u8 | text bytes (at most kNoticeTextMax, printable ASCII, no NUL). The gateway ACKs it like a
 //           panel would and prints one serial line (../gateway/docs/gateway-c6.md). Never ACKed = dropped quietly.
+//   PHONE_ANSWER floor u8 | knock_id u16 | come_on u8   (Mike, 2026-11-15: a phone answered a ring through ntfy
+//           and the Pi.) floor = the RUNG floor (0 upstairs, 1 downstairs); knock_id = that ring's id, never 0;
+//           come_on 0 or 1. The gateway sends it to the UPSTAIRS panel; when the rung floor is downstairs,
+//           upstairs passes it on to downstairs unchanged (sender upstairs), and downstairs answers its own
+//           banner as if tapped there. A ring that is no longer showing ignores it. Not latest-wins.
+//           Upstairs ACKs it on arrival, before any check: an ACK (the gateway's "acked") means upstairs
+//           got the frame, not that a banner was answered (stale or wrong id, a banner already answered,
+//           dismissed or run out, a relay to downstairs that never arrives). The Pi says "sent", no more.
+//   MAIL_ACK reserved u8 (always 0)   (Mike, 2026-11-15: "Got it" on a downstairs phone.) Gateway to the
+//           upstairs panel, which marks the mail picked up just as the downstairs panel's tap does. Not latest-wins.
+//           ACKed on arrival like PHONE_ANSWER, even with no mail waiting. It carries no mail version, so a
+//           late "Got it" from an earlier push clears mail marked again since (the lead's call to change).
+//   ROOMS   both floors' indoor readings and upstairs occupancy for Apple Home (Mike, 2026-11-22), UPSTAIRS to the
+//           gateway only, 13 bytes of body: flags u8 (RoomsFlags) | up_temp_tenths_f i16 | up_hum_tenths u16 |
+//           down_temp_tenths_f i16 | down_hum_tenths u16 | time u32 (UTC, 0 = no clock). The readings are the ones
+//           the tiles show (offset applied); a value whose valid bit is clear means nothing. Type 32, not 31: the
+//           reach test sends type 31 to the gateway on the promise that nothing decodes it (voice_proto.h).
+//           Latest wins; the gateway ACKs it like a NOTICE and prints one serial line (../gateway/docs/gateway-c6.md).
+//           Like a NOTICE it waits behind panel traffic and is never counted as pending for the other panel.
 #pragma once
 #include "types.h"
 #include "events.h"
@@ -53,22 +78,33 @@ constexpr size_t kMaxPhrase = 48;
 
 enum class MsgType : uint8_t {
   State = 1, Knock = 2, Reply = 3, Ack = 4, DogMsg = 5, Reading = 6, Lucy = 7, Outside = 8, EventMsg = 9, EventSum = 10,
-  Mail = 11, Comfort = 12, Requests = 13, ComfortDel = 14, Update = 15, Note = 16, Notice = 17
+  Mail = 11, Comfort = 12, Requests = 13, ComfortDel = 14, Update = 15, Note = 16, Notice = 17,
+  PhoneAnswer = 18, MailAck = 19,
+  Rooms = 32  // 20-30 are voice (voice_proto.h), 31 the reach test's
 };
 
 // The house events the upstairs panel reports to the Pi (Mike, 2026-11-11; ../gateway/docs/gateway-c6.md).
 // The numbers are on the wire: never change one.
 //   Knock: floor = who rang; value 0 = nobody answered in the ring time, 1 = it rang while the
-//     other floor was Away (kept for later). Arrow: value +1 heat, -1 cooling. Mail: value 1.
+//     other floor was Away (kept for later). Arrow: value +1 heat, -1 cooling. Mail: value 1 (value 3 with text NOMAIL is "no mail", Mike, 2026-11-18, same rules); from
+//     2026-11-15 it pushes the downstairs phones, so it goes out only by the phones' rules: downstairs
+//     last heard Open or Busy, upstairs's clock valid and outside quiet hours. Not every marking is reported.
 //   DogOut: text LUCY / COPPER / BOTH, value = minutes out. Status: floor = whose, text = the word.
 //   Note: floor = whose, text = the message's first kNoticeTextMax characters.
-enum class NoticeKind : uint8_t { Knock = 1, ArrowUrgent = 2, ArrowMild = 3, Mail = 4, DogOut = 5, Status = 6, Note = 7 };
-constexpr uint8_t kNoticeKinds = 7;
+//   Ring (Mike, 2026-11-15, for the phones): floor = the RUNG floor; value = the knock id (a u16 carried
+//     in the i16: read it as value & 0xFFFF); time = when it rang (UTC, 0 = no clock). text "RING" = it
+//     just rang and the rung floor is Open or Busy outside quiet hours, so its phones should ring;
+//     text "ANSWERED" = that ring was answered at a panel (not from a phone), so the phones can say so.
+enum class NoticeKind : uint8_t { Knock = 1, ArrowUrgent = 2, ArrowMild = 3, Mail = 4, DogOut = 5, Status = 6, Note = 7, Ring = 8 };
+constexpr uint8_t kNoticeKinds = 8;
 constexpr size_t kNoticeTextMax = 40;
-// Which kinds go out, one bit each (bit k-1 for kind k). Starting value: knock, urgent arrow and
-// dog out too long; the chatty ones wait until Mike turns them on.
+// Which kinds go out, one bit each (bit k-1 for kind k). Starting value: knock, urgent and mild arrow,
+// mail, dog out too long, note and ring (Mike, 2026-11-15: mail and ring push the phones; Mike,
+// 2026-11-18: the tenant's mild temperature requests and notes push his phone too). Only the status
+// kind waits until Mike turns it on. Eight kinds fill the byte: a ninth needs a wider mask.
 constexpr uint8_t notice_bit(NoticeKind k) { return (uint8_t)(1u << ((uint8_t)k - 1)); }
-constexpr uint8_t kNoticeDefaultMask = 0x01 | 0x02 | 0x10;  // kinds 1, 2 and 5
+constexpr uint8_t kNoticeDefaultMask = 0x01 | 0x02 | 0x04 | 0x08 | 0x10 | 0x40 | 0x80;  // kinds 1, 2, 3, 4, 5, 7 and 8
+static_assert(kNoticeKinds <= 8, "the notice mask is one byte");
 // The notice never to be queued behind panel traffic: at most this many wait at once.
 constexpr int kNoticeQueueMax = 2;
 enum Sender : uint8_t { kSenderUpstairs = 0, kSenderDownstairs = 1, kSenderGateway = 2 };
@@ -78,8 +114,23 @@ inline uint8_t sender_id(Floor f) { return f == Floor::Upstairs ? kSenderUpstair
 // docs/presence-sensor.md): kStateAwayDesk, Busy but walking about the house ("Away from desk" on
 // his tile); kStateNobodyNear, nobody near the panel for 15 minutes (the tenant's ring says so).
 // Both are 0 from a panel with no sensor, and an older panel ignores them.
-enum StateFlags : uint8_t { kStatePleaseReply = 0x01, kStateClockValid = 0x02, kStateAwayDesk = 0x04, kStateNobodyNear = 0x08 };
+// kStateVoice (Mike, 2026-11-20; docs/voice-notes/DESIGN.md 4.8): set in every STATE by a panel that
+// takes voice frames (types 20-30, core/voice_proto.h). SEND and the relay are offered only to a peer
+// that sets it. decode() does not check unknown bits, so an older panel ignores it.
+// kStateGwVoice (field fix 2026-11-20, docs/voice-notes/WORKLOG.md): upstairs has heard the gateway's
+// voice hello (VOICE_GOT kind 30, key kVoiceHelloKey) in the last kVoiceGwStaleMs. Downstairs sends
+// the gateway nothing voice-related (no ping, no BEGIN, no PUSH) until it or this flag says the C6 takes
+// voice, so a C6 0.4 never gets a frame from downstairs.
+// kStateGwMulaw (Mike, 2026-11-21): with kStateGwVoice, the last hello upstairs heard was the mu-law one
+// (key kVoiceHelloKeyMulaw, C6 0.6 on), so downstairs records in mu-law too; without it, ADPCM.
+enum StateFlags : uint8_t {
+  kStatePleaseReply = 0x01, kStateClockValid = 0x02, kStateAwayDesk = 0x04, kStateNobodyNear = 0x08, kStateVoice = 0x10,
+  kStateGwVoice = 0x20, kStateGwMulaw = 0x40
+};
 enum ReadingFlags : uint8_t { kReadingValid = 0x01 };
+// ROOMS (Mike, 2026-11-22). Occupied is only ever set with known: decode refuses it alone, and any higher bit.
+enum RoomsFlags : uint8_t { kRoomsUpValid = 0x01, kRoomsDownValid = 0x02, kRoomsOccKnown = 0x04, kRoomsOccupied = 0x08 };
+constexpr uint8_t kRoomsFlagsAll = 0x0F;
 // WeatherGate's two warnings (ZAMBRETTI_REFERENCE.md section 5), set by the gateway: danger heat
 // (heat index 100 F or more) and danger cold (20 F or less). Either, both or neither.
 enum OutsideFlags : uint8_t { kOutsideValid = 0x01, kOutsideDangerHeat = 0x02, kOutsideDangerCold = 0x04 };
@@ -92,7 +143,7 @@ struct Msg {
   union {
     struct { uint8_t status, flags; uint32_t since, until; uint8_t fallback; uint32_t clock; uint8_t clock_quality; } state;
     struct { uint16_t id; } knock;
-    struct { uint16_t id; uint8_t come_on; } reply;
+    struct { uint16_t id; uint8_t come_on; uint8_t phone; uint8_t dismissed; } reply;  // each 0 or 1 (one wire byte)
     struct { uint16_t seq; uint8_t type; } ack;
     struct { uint8_t out[2]; uint32_t since[2]; uint32_t ver[2]; } dog;  // [0] Lucy, [1] Copper
     struct { uint8_t flags; int16_t temp_tenths_f; uint16_t humidity_tenths; } reading;
@@ -106,6 +157,8 @@ struct Msg {
     struct { uint32_t n, removed; int32_t offset; } comfort_del;
     struct { uint8_t floor; NoteState st; } note;  // floor: a Floor as 0 upstairs, 1 downstairs
     struct { uint8_t kind, floor; int16_t value; uint32_t time; uint8_t text_len; char text[kNoticeTextMax + 1]; } notice;
+    struct { uint8_t floor; uint16_t id; uint8_t come_on; } phone;  // PHONE_ANSWER
+    struct { uint8_t flags; int16_t up_t; uint16_t up_h; int16_t down_t; uint16_t down_h; uint32_t time; } rooms;  // ROOMS
   } u;
   Msg() : u{} {}
 };
@@ -151,7 +204,7 @@ class RetryQueue {
   // Queues a message; fills in sender and seq. Returns the seq, or 0 if it couldn't be queued.
   uint16_t push(Msg m, uint8_t sender, uint32_t mono_ms);
   // Next frame due now, if any. A NOTICE (for the gateway) only comes up when nothing for the
-  // other panel is due.
+  // other panel is due, and a ROOMS only when no NOTICE is either.
   const Frame *due(uint32_t mono_ms);
   // Marks a frame as handed to the radio.
   void sent(uint16_t seq, uint32_t mono_ms);
@@ -160,8 +213,8 @@ class RetryQueue {
   // Messages whose tries are used up and whose wait is over. Call until it returns false.
   bool expired(uint32_t mono_ms, Result &r);
   void set_seq(uint16_t s) { seq_ = s ? s : 1; }
-  // Messages waiting for the other panel. Notices (for the gateway) are not counted: they must
-  // never hold back panel-to-panel traffic.
+  // Messages waiting for the other panel. Notices and ROOMS (for the gateway) are not counted: they
+  // must never hold back panel-to-panel traffic.
   int pending() const;
   int pending(MsgType t) const;
 
@@ -173,5 +226,7 @@ class RetryQueue {
 };
 
 const char *msg_name(MsgType t);
+// The types that go to the gateway, not the other panel: NOTICE and ROOMS.
+inline bool for_gateway(MsgType t) { return t == MsgType::Notice || t == MsgType::Rooms; }
 
 }  // namespace tc

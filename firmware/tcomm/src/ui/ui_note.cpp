@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "../core/note.h"
+#include "../core/text_edit.h"
 #include "ui_internal.h"
 
 namespace ui {
@@ -18,46 +19,23 @@ namespace detail {
 using gfx::Color;
 using gfx::hex;
 
-// The width of text[a, b) in the line font with its trailing spaces ignored (a line that ends in a
-// space still fits: the space is where it breaks).
-static int span_w(const char *t, int a, int b) {
-  while (b > a && t[b - 1] == ' ') b--;
+// The width of the first n characters of t in the line font (tc::WidthFn).
+static int b20_w(const char *t, int n, void *) {
   char buf[tc::kNoteTextMax + 2];
-  int n = b - a;
   if (n > tc::kNoteTextMax) n = tc::kNoteTextMax;
-  memcpy(buf, t + a, (size_t)n);
+  if (n < 0) n = 0;
+  memcpy(buf, t, (size_t)n);
   buf[n] = 0;
   return text_width(buf, B20);
 }
 
-int note_wrap(const char *t, int start[3], int end[3]) {
-  int len = (int)strlen(t), w = note_line_w(), pos = 0, n = 0;
-  while (pos < len && n < 3) {
-    start[n] = pos;
-    int fit = pos;  // the most characters that fit on this line
-    for (int i = pos + 1; i <= len; i++) {
-      if (span_w(t, pos, i) > w) break;
-      fit = i;
-    }
-    if (fit == pos) fit = pos + 1;  // never stuck on one wide character
-    int brk = fit, next = fit;
-    if (fit < len && t[fit] != ' ') {
-      int sp = fit - 1;
-      while (sp >= pos && t[sp] != ' ') sp--;
-      if (sp >= pos) brk = sp, next = sp + 1;  // break at the last space; no space: mid-word
-    }
-    end[n] = brk;
-    while (brk > pos && end[n] > pos && t[end[n] - 1] == ' ') end[n]--;
-    while (next < len && t[next] == ' ') next++;
-    pos = next;
-    n++;
-  }
-  return n;
-}
+// The wrap itself is tc::te_wrap (core/text_edit.cpp, host-tested), moved there unchanged for tap to
+// place the cursor (docs/voice-notes/DESIGN.md 8.2).
+int note_wrap(const char *t, int start[3], int end[3]) { return tc::te_wrap(t, note_line_w(), b20_w, nullptr, start, end, 3); }
 
 namespace {
 
-constexpr int kCardX = 8, kCardY = 8, kCardW = 784, kCardH = 272;  // above the keyboard (screen y 288)
+constexpr int kCardX = 8, kCardY = 8, kCardW = 784, kCardH = kKpTop - 16;  // above the keyboard (kKpTop)
 constexpr int kFieldX = 24, kFieldY = 52, kPad = 12;
 const char *const kDurWord[tc::kNoteDurations] = {"15 min", "30 min", "1 hr", "2 hr", "4 hr"};
 
@@ -68,6 +46,9 @@ struct Editor {
   lv_obj_t *chip[tc::kNoteDurations] = {}, *chip_lab[tc::kNoteDurations] = {};
   lv_timer_t *timer = nullptr;
   Keypad kp;
+  // Tap to place the cursor (DESIGN 8): the keys and the voice text go in at te.cursor.
+  tc::TextEdit te{text, tc::kNoteTextMax, 0};
+  uint32_t press_ms = 0;  // the last cursor move by touch (a slide moves it at most 20 times a second)
 };
 Editor ed;
 
@@ -90,15 +71,14 @@ void refresh() {
     }
     set_text(ed.line[i], buf);
   }
-  // The cursor sits after the last character, trailing spaces included.
-  int last = n > 0 ? (n > 2 ? 1 : n - 1) : 0;
-  char tail[tc::kNoteTextMax + 2] = "";
-  if (n > 0) {
-    int len = (int)strlen(ed.text);
-    memcpy(tail, ed.text + st[last], (size_t)(len - st[last]));
-    tail[len - st[last]] = 0;
-  }
-  lv_obj_set_pos(ed.cursor, kPad + text_width(tail, B20) + 2, 8 + last * lh + 2);
+  // The cursor on the line that holds it (one exactly at a break starts the next line), after the
+  // characters before it on that line, spaces included; 3 px wide, centred on the gap.
+  tc::te_set(ed.te, ed.te.cursor);
+  int line = n > 0 ? tc::te_line_of(st, n, ed.te.cursor) : 0;
+  if (line > 1) line = 1;
+  int from = n > 0 ? st[line] : 0;
+  int cx = kPad + b20_w(ed.text + from, ed.te.cursor - from, nullptr) - 1;
+  lv_obj_set_pos(ed.cursor, cx, 8 + line * lh + 2);
   char c[24];
   snprintf(c, sizeof(c), "%d / %d", (int)strlen(ed.text), tc::kNoteTextMax);
   set_text(ed.count, c);
@@ -117,18 +97,21 @@ void flash() {
   lv_timer_set_repeat_count(t, 1);
 }
 
+// A key at the cursor (tap to place the cursor, DESIGN 8.1).
 bool on_char(char ch) {
-  int len = (int)strlen(ed.text);
+  tc::TextEdit &t = ed.te;
+  tc::te_set(t, t.cursor);
+  int len = (int)strlen(ed.text), c = t.cursor;
   if (len >= tc::kNoteTextMax) {
     flash();
     return false;
   }
-  if (ch == ' ' && (len == 0 || ed.text[len - 1] == ' ')) return false;  // no leading or doubled spaces
-  ed.text[len] = ch;
-  ed.text[len + 1] = 0;
+  // No leading or doubled spaces: both neighbours count.
+  if (ch == ' ' && (c == 0 || ed.text[c - 1] == ' ' || ed.text[c] == ' ')) return false;
+  tc::te_insert(t, ch);
   int st[3], en[3];
   if (note_wrap(ed.text, st, en) > 2) {  // it would need a third line
-    ed.text[len] = 0;
+    tc::te_backspace(t);
     flash();
     return false;
   }
@@ -136,9 +119,52 @@ bool on_char(char ch) {
   return true;
 }
 
+// Backspace at the cursor. A space left leading or doubled by it goes too, and in the rare case the
+// joined words would need a third line nothing changes.
 void on_back() {
-  int len = (int)strlen(ed.text);
-  if (len) ed.text[len - 1] = 0;
+  tc::TextEdit &t = ed.te;
+  tc::te_set(t, t.cursor);
+  if (t.cursor > 0) {
+    char before[tc::kNoteTextMax + 1];
+    memcpy(before, ed.text, sizeof(before));
+    int was = t.cursor;
+    tc::te_backspace(t);
+    int c = t.cursor;
+    if (ed.text[c] == ' ' && (c == 0 || ed.text[c - 1] == ' ')) tc::te_delete(t);
+    int st[3], en[3];
+    if (note_wrap(ed.text, st, en) > 2) {
+      memcpy(ed.text, before, sizeof(before));
+      t.cursor = was;
+      flash();
+    }
+  }
+  refresh();
+}
+
+// A press in the field puts the cursor at the nearest gap: the line by y, the gap by the midpoint
+// rule; sliding moves it along, at most 20 times a second.
+void field_event(lv_event_t *e) {
+  lv_event_code_t code = lv_event_get_code(e);
+  if ((code != LV_EVENT_PRESSED && code != LV_EVENT_PRESSING) || !open_now()) return;
+  if (code == LV_EVENT_PRESSING && lv_tick_elaps(ed.press_ms) < 50) return;
+  ed.press_ms = lv_tick_get();
+  lv_indev_t *in = lv_indev_get_act();
+  if (!in) return;
+  lv_point_t p;
+  lv_indev_get_point(in, &p);
+  lv_area_t a;
+  lv_obj_get_coords(ed.line[0], &a);  // the first line's left and top, in the field's own frame
+  int st[3] = {}, en[3] = {};
+  int n = note_wrap(ed.text, st, en), len = (int)strlen(ed.text), c = 0;
+  if (n > 0) {
+    int shown = n > 2 ? 2 : n, y = p.y - a.y1;
+    int line = y < 0 ? 0 : y / B20->line_height;
+    if (line > shown - 1) line = shown - 1;
+    int hi = line == n - 1 ? len : en[line];  // a line above the last ends before its break space
+    c = tc::te_hit(ed.text, st[line], hi, p.x - a.x1, b20_w, nullptr);
+  }
+  if (c == ed.te.cursor) return;
+  tc::te_set(ed.te, c);
   refresh();
 }
 
@@ -189,12 +215,18 @@ void send_clicked(lv_event_t *) { do_send(); }
 // Mike, 2026-11-07: the keyboard's Done key does what SEND does.
 void on_done() { do_send(); }
 
+// Voice notes (DESIGN 2.1): the mic key's text goes in at the cursor, through on_char (the strip
+// finds the cursor by tc::te_find on this text).
+const char *on_mic() { return ed.text; }
+
 void cancel_clicked(lv_event_t *) { close_sheet(); }
 
 }  // namespace
 
 void open_note_editor() {
   ed.text[0] = 0;
+  ed.te.cursor = 0;
+  tc::te_register(&ed.te);
   ed.dur = tc::kNoteDurations - 1;
   lv_obj_t *root = new_sheet(Sheet::Note, true);
   Color sheet = sheet_col(), k = ink();
@@ -210,20 +242,27 @@ void open_note_editor() {
   lv_obj_set_style_border_color(ed.field, C(k), 0);
   lv_obj_set_style_border_opa(ed.field, LV_OPA_COVER, 0);
   for (int i = 0; i < 2; i++) ed.line[i] = label(ed.field, B20, k, kPad, 8 + i * lh, "");
-  ed.cursor = box(ed.field, kPad, 10, 2, lh - 4, k, 0);
+  ed.cursor = box(ed.field, kPad, 10, 3, lh - 4, k, 0);
+  // Tap to place the cursor; the press stays with the field while the finger slides.
+  lv_obj_add_flag(ed.field, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_flag(ed.field, LV_OBJ_FLAG_PRESS_LOCK);
+  lv_obj_add_event_cb(ed.field, field_event, LV_EVENT_ALL, nullptr);
   ed.count = label(card, B16, muted(), kFieldX + 4, kFieldY + fh + 6, "");
 
   // SEND and CANCEL to the right of the field.
   const int bx = kCardW - 24 - 180;
-  button(card, bx, kFieldY, 180, 64, hex(0x1F6B3A), cc.cream, "SEND", J24, send_clicked, nullptr);
-  button(card, bx, kFieldY + 76, 180, 64, chip(), k, "CANCEL", J24, cancel_clicked, nullptr);
+  const int bh = 60, bgap = 12;  // Mike, 2026-11-21: 60 px high (were 64) for the taller keyboard
+  button(card, bx, kFieldY, 180, bh, hex(0x1F6B3A), cc.cream, "SEND", J24, send_clicked, nullptr);
+  button(card, bx, kFieldY + bh + bgap, 180, bh, chip(), k, "CANCEL", J24, cancel_clicked, nullptr);
 
-  // How long it shows: the chosen one filled dark, like the chart's chips.
-  label(card, B16, muted(), kFieldX + 4, 178, "SHOW FOR");
-  int x = kFieldX;
+  // How long it shows: the chosen one filled dark, like the chart's chips. Layout B: SHOW FOR left of
+  // the chips on one row.
+  const int chip_y = 138;
+  label(card, B16, muted(), kFieldX + 4, chip_y + 13, "SHOW FOR");
+  int x = kFieldX + 4 + text_width("SHOW FOR", B16) + 14;
   for (int i = 0; i < tc::kNoteDurations; i++) {
-    int w = text_width(kDurWord[i], B20) + 34;
-    lv_obj_t *b = box(card, x, 204, w, 46, sheet, 23);
+    int w = text_width(kDurWord[i], B20) + 28;
+    lv_obj_t *b = box(card, x, chip_y, w, 46, sheet, 23);
     lv_obj_set_style_border_width(b, 2, 0);
     lv_obj_set_style_border_color(b, C(k), 0);
     lv_obj_set_style_border_opa(b, LV_OPA_COVER, 0);
@@ -242,7 +281,8 @@ void open_note_editor() {
   ed.kp.on_char = on_char;
   ed.kp.on_back = on_back;
   ed.kp.on_done = on_done;
-  keypad_build(ed.kp, root, 288, g_mode);
+  ed.kp.on_mic = voice_offered() ? on_mic : nullptr;
+  keypad_build(ed.kp, root, kKpTop, g_mode);
   if (!ed.timer) ed.timer = lv_timer_create(tick, 250, nullptr);
   refresh();
 }

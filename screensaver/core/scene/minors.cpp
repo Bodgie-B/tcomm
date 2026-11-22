@@ -7,6 +7,7 @@
 #include "../anim/ease.h"
 #include "../ss_app.h"
 #include "director.h"
+#include "stage22_switch.h"
 #include "world.h"
 
 namespace ss {
@@ -15,9 +16,16 @@ namespace {
 
 const char* const kNames[MN_COUNT] = {"chipmunk_cross", "squirrel_nut", "frog_splash", "bird_chip",
                                       "deer_edge",      "owl_watch",    "mouse_tent",  "leaf_fall",
-                                      "moth_lantern",   "bee_visit",    "cloud_animal"};
-// Base weights; each loop scales them by 0.6..1.4.
-const float kBaseWeight[MN_COUNT] = {1.4f, 1.0f, 1.0f, 1.0f, 0.8f, 1.2f, 0.9f, 1.2f, 2.0f, 1.0f, 0.8f};
+                                      "moth_lantern",   "bee_visit",    "cloud_animal", "reed_bird"};
+// Base weights; each loop scales them by 0.6..1.4. The reed_bird's 0.15 (0.8 at first, about one a daytime loop)
+// gives about one blackbird every two to three daytime loops: 0.38 to 0.44 a loop over 400 seeds (stage 22).
+const float kBaseWeight[MN_COUNT] = {1.4f, 1.0f, 1.0f, 1.0f, 0.8f, 1.2f, 0.9f, 1.2f, 2.0f, 1.0f, 0.8f, 0.15f};
+// The reeds' blackbird (stage 22) changes when the other minors play, so it waits for the stage 22 switch: with
+// it off its weight is 0 and every minor log is what it was. Its loop factor is a hash of the loop's first draw,
+// not a draw of its own, so the minors' stream is the same in every loop either way; and it never plays in an
+// evening loop, so the evening's minors (and the memory they leave, the dug hole) are byte for byte what they
+// were with the switch on too (the evening pins, INTEGRATION_PLAN 6.1 and C7).
+constexpr bool kReedBirdLive = SS_S22 != 0;
 
 constexpr float kHz = (float)SS_TICK_HZ;
 constexpr float kDt = SS_TICK_DT;
@@ -1157,6 +1165,114 @@ void stepCloud(World& w, Renderer& r) {
   }
 }
 
+// reed_bird (stage 22, CATTAILS_PLAN 4.3 with REVIEW_FIXES F22): a red-winged blackbird flies in from the
+// nearer edge and lands on the tallest cattail of RS_NEAR or RS_UPSTREAM (the one farther from him). The stalk
+// dips under it, comes back a little and settles; it rides the head 8 to 14 s, looks about twice (CA_LOOK: the
+// bird has no head turn), shuffles a pixel, crouches and springs off, and the stalk rings down behind it.
+bool startReedBird(World& w) {
+  Minors& m = w.minors;
+  const int c = reedsBirdPerch(w);
+  if (c < 0) return false;
+  const Vec2 tip = reedsTip(w, c, 0);
+  const int side = tip.x < 0.5f * (float)SS_WIDTH ? -1 : 1;   // in from the nearer edge
+  const float sy = m.rng.range(140.f, 190.f);
+  const float ride = m.rng.range(8.f, 14.f);
+  m.p0 = Vec2{side > 0 ? (float)SS_WIDTH + 24.f : -24.f, sy};
+  m.p2 = Vec2{lerp(m.p0.x, tip.x, 0.6f), tip.y - 50.f};
+  m.dir = (int8_t)side;
+  m.n = (uint8_t)c;
+  m.u0 = ride;
+  const int s = spawn(w, CR_BIRD, m.p0, -side, 0);
+  if (s < 0) return false;
+  m.slot[0] = (int8_t)s;
+  w.critters[s].tone = kToneRedwing;
+  critterSetAction(w.critters[s], CA_MOVE, 0.1f);
+  return true;
+}
+
+void stepReedBird(World& w) {
+  Minors& m = w.minors;
+  Critter* c = own(w, 0);
+  const int clump = m.n;
+  if (!c) return letGo(m);   // scattered (he walked near): the stalk lets go by itself
+  const int s = m.slot[0];
+  if (m.quit && m.stage < 3) next(m, 3);   // a beat that owns the critters: it leaves now
+  const float away = -(float)m.dir;        // the way it was flying when it landed
+  switch (m.stage) {
+    case 0: {   // the flight in, onto the head's tip where it is now
+      const float u = clamp01(m.t / 2.2f);
+      flyAlong(*c, m.p0, m.p2, reedsTip(w, clump, 0), easeOutCubic(u));
+      if (u >= 1.f) {
+        critterSetAction(*c, CA_IDLE, 0.2f);
+        c->facing = m.dir > 0 ? -1 : 1;
+        w.crit[s].sort_y = (int16_t)(w.reeds.site[clump].y + 1);   // in front of its stalk
+        next(m, 1);
+      }
+      break;
+    }
+    case 1:     // the stalk dips under it: 5 px down and 3 toward its way in 0.25 s, back 2 px, settles
+    case 2: {   // and it rides the stalk
+      float ox = 2.f * away, oy = 3.f;
+      if (m.stage == 1) {
+        if (m.t < 0.25f) {
+          const float e = easeOutCubic(m.t / 0.25f);
+          ox = 3.f * away * e;
+          oy = 5.f * e;
+        } else {
+          const float e = easeInOut(clamp01((m.t - 0.25f) / 0.35f));
+          ox = lerp(3.f * away, 2.f * away, e);
+          oy = lerp(5.f, 3.f, e);
+        }
+        if (m.t >= 0.6f) next(m, 2);
+      } else {
+        const float r = m.u0;
+        if (m.t > 1.8f && m.t - kDt <= 1.8f) critterSetAction(*c, CA_LOOK, 0.3f);
+        if (m.t > 3.4f && m.t - kDt <= 3.4f) critterSetAction(*c, CA_IDLE, 0.3f);
+        if (m.t > 0.55f * r && m.t - kDt <= 0.55f * r) critterSetAction(*c, CA_LOOK, 0.3f);
+        if (m.t > 0.55f * r + 1.6f && m.t - kDt <= 0.55f * r + 1.6f) critterSetAction(*c, CA_IDLE, 0.3f);
+        if (m.t >= r) next(m, 3);
+      }
+      reedsBirdHold(w, clump, ox, oy);
+      const Vec2 tip = reedsTip(w, clump, 0);
+      const float shuffle = m.stage == 2 && m.t > 0.4f * m.u0 ? (float)m.dir : 0.f;   // one slow pixel along it
+      c->feet = Vec2{tip.x + shuffle, tip.y};
+      break;
+    }
+    case 3: {   // it crouches (the stalk dips a pixel more), springs off; the stalk whips up and rings down
+      if (m.t < 0.4f && !m.quit) {
+        reedsBirdHold(w, clump, 2.f * away, 4.f);
+        const Vec2 tip = reedsTip(w, clump, 0);
+        c->feet = tip;
+        break;
+      }
+      w.crit[s].sort_y = 0;
+      reedsPush(w, clump, -away, 0.35f);
+      m.p1 = c->feet;
+      // Out by the far edge; told to quit, by the nearer one and quickly (u0 marks the hurry for stage 4).
+      const float ey = m.rng.range(140.f, 190.f);
+      const int out = m.quit ? nearSide(c->feet.x) : -m.dir;
+      m.p3 = Vec2{out < 0 ? -30.f : (float)SS_WIDTH + 30.f, ey};
+      m.p2 = Vec2{lerp(m.p1.x, m.p3.x, 0.35f), m.p1.y - 40.f};
+      m.u0 = m.quit ? -1.f : 1.f;
+      critterSetAction(*c, CA_MOVE, 0.12f);
+      next(m, 4);
+      break;
+    }
+    case 4: {
+      const float dist = fabsf(m.p3.x - m.p1.x) + 60.f;
+      const float u = clamp01(m.t / (m.u0 < 0.f ? maxf(0.9f, dist / 320.f) : maxf(1.4f, dist / 170.f)));
+      flyAlong(*c, m.p1, m.p2, m.p3, u * (0.4f + 0.6f * u));
+      if (u >= 1.f || !c->visible) {
+        directorRelease(w, s);
+        m.slot[0] = -1;
+        letGo(m);
+      }
+      break;
+    }
+    default: break;
+  }
+}
+
 // ---- the pool ------------------------------------------------------------------------------
 
 // Can this minor play in the scene as it is? (Gates; start may still decline.)
@@ -1167,6 +1283,7 @@ bool gate(const World& w, int id) {
     case MN_MOTH_LANTERN: return dark(m) && w.tent.lit && w.tent.state == TENT_UP;
     case MN_MOUSE_TENT: return w.tent.state == TENT_UP;
     case MN_BIRD_CHIP: return w.fire.stones >= 1.f;
+    case MN_REED_BIRD: return kReedBirdLive && w.plan.family != SF_EVENING && reedsBirdPerch(w) >= 0;
     default: return true;
   }
 }
@@ -1184,6 +1301,7 @@ bool startMinor(World& w, int id) {
     case MN_MOTH_LANTERN: return startMoth(w);
     case MN_BEE_VISIT: return startBee(w);
     case MN_CLOUD_ANIMAL: return startCloud(w);
+    case MN_REED_BIRD: return startReedBird(w);
     default: return false;
   }
 }
@@ -1201,6 +1319,7 @@ void stepMinor(World& w, Renderer& r) {
     case MN_MOTH_LANTERN: stepMoth(w); break;
     case MN_BEE_VISIT: stepBee(w); break;
     case MN_CLOUD_ANIMAL: stepCloud(w, r); break;
+    case MN_REED_BIRD: stepReedBird(w); break;
     default: break;
   }
 }
@@ -1315,6 +1434,14 @@ void minorsInit(World& w, const Rng& rng) {
   // replays that loop's minors too.
   m.rng.seed(((uint64_t)a << 32) ^ 0x6D696E6F72730000ull, 0x4D494E4F52530001ull);
   for (int i = 0; i < MN_COUNT; ++i) {
+    if (i == MN_REED_BIRD) {   // no draw: the stream is what it was before stage 22
+      uint32_t x = a ^ 0x52454544u;
+      x ^= x >> 16;
+      x *= 0x7FEB352Du;
+      x ^= x >> 15;
+      m.weight[i] = kReedBirdLive ? kBaseWeight[i] * (0.6f + 0.8f * (float)(x >> 8) * (1.f / 16777216.f)) : 0.f;
+      continue;
+    }
     const float k = m.rng.range(0.6f, 1.4f);
     m.weight[i] = kBaseWeight[i] * k;
   }
@@ -1423,6 +1550,9 @@ void minorsStep(World& w, Renderer& r) {
   // The weather has him (weather.h: the wind took his hat, or he is fanning
   // himself with it): wait until he has it back on.
   if (w.weather.gag == WG_HAT || w.weather.gag == WG_FAN) return;
+  // The reed pick has him (reeds.h): none starts during it, but in an evening loop, whose minors stay as they
+  // were (the evening pins); a minor that starts there under a pick plays round him.
+  if (reedsPickActive(w) && w.plan.family != SF_EVENING) return;
   if (storyTick(w) < m.hold_tick) return;
   const bool moth_early = gate(w, MN_MOTH_LANTERN) && m.fired_by[MN_MOTH_LANTERN] == 0 &&
                           (m.fired == 0 || storyTick(w) >= m.last_start + ticksOf(kGapMin));

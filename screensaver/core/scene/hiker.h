@@ -110,6 +110,10 @@ struct Hiker {
   // of height); 1 and 1 from hikerInit. The Lookout's sunset slows it to a
   // 4 s cycle and deepens it to 1 px at 44 px.
   float breath_rate, breath_scale;
+  // Tai chi's turn (TAICHI_PLAN 4.5; Mike, 2026-11-18): 0 normal, 1 feet end-on (heel and toe both
+  // 0.035 H) for the moment he turns round on the spot. 0 from hikerInit, and at 0 every frame is bit
+  // for bit what it was. Only the tai chi module sets it.
+  float foot_turn;
 };
 
 void hikerInit(Hiker& h, Vec2 feet, int facing);
@@ -129,6 +133,9 @@ void hikerApplyClimb(Hiker& h, float w);
 Vec2 hikerHandPos(const Hiker& h, int i);
 // Centre of the head in frame space and its radius (px), the same way.
 Vec2 hikerHeadPos(const Hiker& h, float* radius);
+// His mouth in frame space, from the same head (front and a little below its centre, turned with the
+// head and his facing): where the reeds draw a stem he chews (reeds.h; stage 22).
+Vec2 hikerMouthPos(const Hiker& h);
 // The rod's tip in frame space (CARRY_ROD; the near hand otherwise).
 Vec2 hikerRodTip(const Hiker& h);
 

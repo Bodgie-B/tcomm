@@ -152,6 +152,10 @@ float weatherCloudCover(const World& w);
 
 // Hooks for the rest of the scene.
 float weatherSwayMul(const World& w);   // grass sway amplitude, 1 in calm weather
+// The shared breeze, 0..1 (stage 22, INTEGRATION_PLAN 3.1 point 1; Mike, 2026-11-18): 0.18 calm, up to
+// 0.68 in a full gust, always blowing toward -x as the clouds and smoke go. The long shot's ribbon and
+// dust puffs and the reeds' fluff read it, so they all lean the same way by the same amount.
+float weatherBreeze(const World& w);
 float weatherSmokeMul(const World& w);  // smoke puff size, 1 when dry
 float weatherFireCap(const World& w);   // the lit fire's intensity cap, 1 when dry
 // The rig overlay: hug, fan and shiver over the composed pose (stepHiker).

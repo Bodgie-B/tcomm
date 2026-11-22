@@ -5,7 +5,10 @@
 #include <string.h>
 
 #include "../anim/ease.h"
+#include "day_herd.h"
 #include "day_kite.h"
+#include "day_taichi.h"
+#include "day_trip.h"
 #include "world.h"
 
 namespace ss {
@@ -72,6 +75,10 @@ size_t sizeOf(uint8_t kind) {
     case DAY_ARCHERY: return sizeof(DayArchery);
     case DAY_SLACK: return sizeof(DaySlack);
     case DAY_ROPES: return sizeof(DayRopes);
+    case DAY_PLINK: return sizeof(DayPlink);
+    case DAY_TAICHI: return sizeof(DayTaichi);
+    case DAY_HERD: return sizeof(DayHerd);
+    case DAY_TRIP: return sizeof(DayTrip);
     default: return 0;
   }
 }
@@ -96,6 +103,10 @@ Rect dayBounds(const DayState& d) {
     case DAY_ARCHERY: return archeryBounds(d.archery.a);
     case DAY_SLACK: return slackBounds(d.slack);
     case DAY_ROPES: return ropesBounds(d.ropes.r);
+    case DAY_PLINK: return plinkBounds(d.plink.p);
+    case DAY_TAICHI: return taichiDayBounds(d.taichi);
+    case DAY_HERD: return herdDayBounds(d.herd);
+    case DAY_TRIP: return tripDayBounds(d.trip);
     default: return Rect{0, 0, 0, 0};
   }
 }
@@ -117,6 +128,10 @@ void dayPose(World& w) {
       if (w.react.active && ropesHikerBusy(d.ropes.r)) h.facing = w.react.facing;   // (the bell does not turn him on the course)
       ropesPose(d.ropes.r, h);
       break;
+    case DAY_PLINK: plinkBend(d.plink.p, h.pose); break;   // kneel, shoulder the rifle (Mike, 2026-11-17)
+    case DAY_TAICHI: taichiDayPose(w); break;               // the form writes his whole pose (Mike, 2026-11-18)
+    case DAY_HERD: herdDayPose(w); break;
+    case DAY_TRIP: tripDayPose(w); break;
     default: break;
   }
 }
@@ -127,6 +142,10 @@ bool dayHoldsFacing(const World& w) {
     case DAY_BIKE: return bikeDriving(d.bike.bike);
     case DAY_SLACK: return d.slack.line_on && d.slack.walker.mode != SW_OFF;
     case DAY_ROPES: return ropesHikerBusy(d.ropes.r);
+    case DAY_PLINK: return plinkRifleOut(d.plink.p);
+    case DAY_TAICHI: return taichiDayHoldsFacing(w);
+    case DAY_HERD: return herdDayHoldsFacing(w);
+    case DAY_TRIP: return tripDayHoldsFacing(w);
     default: return false;
   }
 }
@@ -149,11 +168,20 @@ void dayStep(World& w, bool frozen) {
       s.cr.visible = true;
       break;
     }
+    case DAY_PLINK:
+      plinkFace(d.plink.p, h.facing);
+      plinkStep(d.plink.p, hikerHandPos(h, 0), hikerHandPos(h, 1), h.facing, h.height, frozen ? 0.f : SS_TICK_DT, d.plink.rng);
+      if (frozen) plinkFreeze(d.plink.p);   // (a muzzle flash showing when the bell rings is switched off)
+      break;
+    case DAY_TAICHI: taichiDayStep(w, frozen); break;
+    case DAY_HERD: herdDayStep(w, frozen); break;
+    case DAY_TRIP: tripDayStep(w, frozen); break;
     default: break;
   }
 }
 
 void dayTrack(World& w, Renderer& r) {
+  tripSkyTrack(w, r);   // the mushroom trip's sky: one cache band a tick, or the way back to natural (day_trip.h)
   DayState& d = w.dirty.day_s;
   const DayState& c = w.day;
   if (c.kind == DAY_NONE && d.kind == DAY_NONE) return;
@@ -202,6 +230,16 @@ void dayTrack(World& w, Renderer& r) {
         for (int i = 0; i < n; ++i) markOn(r, rr[i]);
         break;
       }
+      case DAY_PLINK: {
+        Rect rp[PLINK_DIRTY_MAX];
+        const int n = plinkDirty(d.plink.p, c.plink.p, rp);
+        for (int i = 0; i < n; ++i) markOn(r, rp[i]);
+        break;
+      }
+      // Stage 22's kinds mark their own changes (each day_*.h).
+      case DAY_TAICHI: taichiDayTrack(d.taichi, c.taichi, w, r); break;
+      case DAY_HERD: herdDayTrack(d.herd, c.herd, w, r); break;
+      case DAY_TRIP: tripDayTrack(d.trip, c.trip, w, r); break;
       default: break;
     }
   }
@@ -254,6 +292,19 @@ bool dayPartY(const World& w, int part, int16_t& y) {
         return true;
       }
       return false;
+    case DAY_PLINK:
+      if (part == 0 && !plinkTreeBounds(d.plink.p).empty()) {   // the cans, the food and what lies on the ground: behind him, like the hung bag
+        y = (int16_t)(w.land.camp.base_y - 1);
+        return true;
+      }
+      if (part == 1 && !plinkHeldBounds(d.plink.p).empty()) {   // the rifle, the stick and the sack in his hands: in front of him
+        y = baseY(h.feet.y + 1.f);
+        return true;
+      }
+      return false;
+    case DAY_TAICHI: return taichiDayPartY(w, part, y);
+    case DAY_HERD: return herdDayPartY(w, part, y);
+    case DAY_TRIP: return tripDayPartY(w, part, y);
     default: return false;
   }
 }
@@ -286,6 +337,13 @@ void dayPartDraw(const World& w, int part, Surface& s, const Rect& clip, const P
       }
       break;
     case DAY_ROPES: ropesDraw(d.ropes.r, s, clip, pal); break;
+    case DAY_PLINK:
+      if (part == 0) plinkTreeDraw(d.plink.p, s, clip, pal);
+      else if (part == 1) plinkHeldDraw(d.plink.p, s, clip, pal);
+      break;
+    case DAY_TAICHI: taichiDayPartDraw(w, part, s, clip, pal); break;
+    case DAY_HERD: herdDayPartDraw(w, part, s, clip, pal); break;
+    case DAY_TRIP: tripDayPartDraw(w, part, s, clip, pal); break;
     default: break;
   }
 }

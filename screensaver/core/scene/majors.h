@@ -51,6 +51,14 @@ enum MajorId : uint8_t {
   // day_slackline.h, day_ropes.h): midday only, by day, and never in a rain, snow or storm the data says
   // is there. They share one union of state with the kite (day.h).
   MJ_BIKE, MJ_ARCHERY, MJ_SLACKLINE, MJ_ROPES,
+  // The plinking (day_plink.h; Mike, 2026-11-17): cans on the food bag's branch shot off with a .22. The same
+  // gate as the others, and never with a house dog out.
+  MJ_PLINK,
+  // Stage 22 (INTEGRATION_PLAN section 1; Mike, 2026-11-18), in this order: morning Tai Chi (day_taichi.h,
+  // morning only), the long shot at steel on the far hills (day_longshot.h, midday, on the plinking's
+  // rifle) and the mushrooms after rain (day_trip.h, midday, weight 0: forced when the patch is ripe).
+  // Their weights stay 0 until the plan block (step C0), and with SS_S22 off (stage22_switch.h).
+  MJ_TAICHI, MJ_LONGSHOT, MJ_MUSHROOM,
   MJ_COUNT
 };
 // Memory keeps a loop's majors as a MajorSet (memory.h sets, spine.cpp): one
@@ -85,6 +93,8 @@ enum ShapeId : uint8_t {
   SH_PERCH,      // a small bird side on, pos its feet: k 0 perched, 1 wings up (taking off, flying); t flap phase
   SH_CHIP,       // a chipmunk sitting up side on, pos its feet, tail curled up behind; k 0..1 head turned up
   SH_STICK,      // fetch's stick (fetch.cpp draws it): pos its centre, rot turns, scale times 24 px long
+  SH_GONG,       // the long shot's steel on a post (day_longshot.cpp draws it): pos its foot; k the plate's swing; t > 0 the glint
+  SH_FLAG,       // the long shot's wind flag (day_longshot.cpp): pos the stick's foot; k the breeze; t the flutter phase
   SH_COUNT
 };
 
@@ -135,6 +145,13 @@ int majorSeconds(int id, int var);
 // A pick the loop-length fit must not drop (spineFitLength): a fetch planned because a
 // dog is out (Inputs::dog_out). fishing_good has its own rule there (dinner is planned round it).
 bool majorKept(int id, int var);
+// Stage 22 (step C0): which of the new pieces plan in this build for this memory (S22Piece bits,
+// stage22_switch.h): none with SS_S22 off; with it on, the pieces whose serial step has landed, or what
+// a test's Memory::s22_preview names.
+uint8_t majorsS22Plans(const Memory& mem);
+// Will this loop play the mushroom major: the piece plans, the patch is ripe, a midday loop by day, and
+// the OUTSIDE data says no rain, snow or storm (mushWillPlay, mush_patch.h). The herd's pick asks it.
+bool majorsMushroomPlays(const Inputs& in, const Memory& mem, uint8_t family);
 // Where a family's majors can go: up to 4 slots, the spine beat each one
 // follows (LoopPlan::major_after), and which are open (bit k: slot k). The
 // pool's slot bits (majors.cpp kMajors) are slot indices, so they mean the

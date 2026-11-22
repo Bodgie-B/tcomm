@@ -22,6 +22,7 @@
 // tick) moments the review contact sheets are made from ("SHEET ..." lines).
 // Plain executable; returns non-zero on failure.
 #include "ss_app.h"
+#include "scene/day_taichi.h"
 #include "scene/hiker.h"
 #include "scene/react.h"
 #include "scene/spine.h"
@@ -174,6 +175,7 @@ struct ReactReport {
   bool started = false;
   int frozen = 0;            // ticks from the bell to the one that ends it, inclusive
   bool hands_full = false;
+  bool look_only = false;   // tai chi (stage 22): he holds the form, only his head lifts: no hop, no wave
   int pre_facing = 0;
   int pre_carry = 0;
   bool walking = false;
@@ -204,7 +206,8 @@ static ReactReport runReaction(Rig& r, const char* label) {
   }
   rep.pre_facing = w->hiker.facing;
   rep.pre_carry = (int)w->hiker.carry;
-  rep.hands_full = w->hiker.carry != CARRY_NONE;
+  rep.hands_full = w->hiker.carry != CARRY_NONE || taichiHatInHand(*w);   // (his hat in his hand: an Item, not a carry)
+  rep.look_only = taichiInForm(*w);
   rep.walking = w->hiker.walking;
   rep.pre_pose_sh0 = w->hiker.pose.shoulder[0];
   rep.max_pose_sh0 = -9.f;
@@ -292,6 +295,10 @@ static ReactReport runReaction(Rig& r, const char* label) {
   rep.hopped = max_lift > pre_lift + 0.02f;
   rep.waved = rep.max_pose_sh0 > 2.0f;
   rep.turned = rep.pre_facing == -1 && facing_ok_mid && !dayHoldsFacing(*w);
+  if (rep.look_only) {   // (tests/test_day_taichi.cpp checks that no joint but the head moves)
+    CHECK(!rep.hopped && !arm_w0_moved, "%s: in the tai chi form he hopped (lift max %.3f) or waved", label, (double)max_lift);
+    return rep;
+  }
   CHECK(rep.rect_moved, "%s: his rect never changed during the reaction", label);
   CHECK(rep.hopped, "%s: fx.lift never rose above %.3f (max %.3f)", label, (double)pre_lift, (double)max_lift);
   CHECK(facing_ok_mid, "%s: he did not face right through the middle of the reaction (was %d; facing %d on %d ticks, first on tick %d)",
@@ -853,7 +860,7 @@ static void testWeatherGags() {
                  label, rep.facing_bad_n, rep.facing_bad_first, at[i] + rep.facing_bad_first, (unsigned long long)seed,
                  kFamName[SF_EVENING], weatherArg(wx.code), at[i] + rep.facing_bad_first - 3, at[i]);
         }
-        if (rep.started && !rep.hands_full && rep.max_pose_sh0 <= 2.0f) {
+        if (rep.started && !rep.hands_full && !rep.look_only && rep.max_pose_sh0 <= 2.0f) {
           ++lost;
           if (wx.gag == WG_HUG) ++no_wave_hug;
           printf("    no wave: %s: composed near shoulder only reached %.2f (rest %.2f)\n"
@@ -926,9 +933,160 @@ static void noteSmallHeld() {
 
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// The wave to a passer-by (Mike, 2026-11-16): if his hands are busy when someone arrives he keeps
+// trying for up to kPasserWaitTicks, even after they have gone, waves once as soon as he can, and
+// gives up silently after that. The "busy" is made by holding the pack in his hand (World::pack.held,
+// which reactWaveOk reads) from the test, so the timing is exact.
+
+struct WaveRun {
+  bool ok = false;           // the setup found a moment where he could wave
+  int starts = 0;            // wave reactions started over the run
+  int first_start = -1;      // ticks after the arrival when the first began
+  int first_len = 0;         // ticks the first one stayed active
+  bool story_held = true;    // beat name and progress did not move while it ran
+  bool story_resumed = false;
+};
+
+static void holdPack(Rig& r, bool held) { const_cast<World*>(appWorld(r.app))->pack.held = held; }
+
+// One arrival: he is free at the start; the pack is forced into his hand for `busy_ticks` from the
+// arrival; the passer-by stays for `stay` ticks; the run goes on `total` ticks in all.
+static WaveRun waveTrial(uint64_t seed, int busy_ticks, int stay, int total) {
+  WaveRun out;
+  Rig r;
+  Inputs in = makeInputs(3.f, SF_MIDDAY, 0);
+  if (!r.start(seed, in)) return out;
+  int t = 0;
+  for (; t < 6000 && !reactWaveOk(*appWorld(r.app)); ++t) appTick(r.app);
+  if (t >= 6000) {
+    r.stop();
+    return out;
+  }
+  out.ok = true;
+  in.passer_by = true;
+  appSetInputs(r.app, in);
+  char beat[64] = "";
+  float prog = 0.f;
+  int active = 0;
+  bool ended = false;
+  for (int k = 0; k < total; ++k) {
+    if (k == stay) {
+      in.passer_by = false;
+      appSetInputs(r.app, in);
+    }
+    holdPack(r, k < busy_ticks);
+    const bool before = appWorld(r.app)->react.active;
+    appTick(r.app);
+    const World* w = appWorld(r.app);
+    if (!before && w->react.active && w->react.wave) {
+      if (out.starts == 0) {
+        out.first_start = k;
+        snprintf(beat, sizeof beat, "%s", appBeatName(r.app));
+        prog = appBeatProgress(r.app);
+      }
+      ++out.starts;
+    }
+    if (out.starts >= 1 && !ended) {
+      if (w->react.active) {
+        ++active;
+        out.first_len = active;
+        if (strcmp(beat, appBeatName(r.app)) != 0 || fabsf(prog - appBeatProgress(r.app)) > 1e-6f) out.story_held = false;
+      } else if (active > 0) {
+        ended = true;   // the story moves again within a few ticks of the end
+        for (int j = 0; j < 5 && !out.story_resumed; ++j) {
+          appTick(r.app);
+          out.story_resumed = strcmp(beat, appBeatName(r.app)) != 0 || fabsf(prog - appBeatProgress(r.app)) > 1e-6f;
+        }
+        break;
+      }
+    }
+  }
+  r.stop();
+  return out;
+}
+
+static void testPasserWait() {
+  printf("passer-by wait: kWaveTicks %d (%.2f s), kPasserWaitTicks %d (%.1f s)\n", kWaveTicks, (double)kWaveTicks / SS_TICK_HZ,
+         kPasserWaitTicks, (double)kPasserWaitTicks / SS_TICK_HZ);
+  CHECK(kWaveTicks >= 87 && kWaveTicks <= 100, "the wave should run about 3.5 to 4 s, not %d ticks", kWaveTicks);
+  CHECK(kPasserWaitTicks == 8 * SS_TICK_HZ, "the wait is 8 s");
+  int free_started = 0, late_started = 0, busy_started = 0, trials = 0, late_ok = 0, busy_ok = 0;
+  const int kStay = 3 * SS_TICK_HZ;   // the input is high for about 3 s
+  for (uint64_t seed = 1; seed <= 6; ++seed) {
+    // Free hands: he waves at once, once, though the passer-by stays 12 s; the story holds and resumes.
+    const WaveRun a = waveTrial(seed, 0, 12 * SS_TICK_HZ, 14 * SS_TICK_HZ);
+    if (!a.ok) continue;
+    ++trials;
+    CHECK(a.starts == 1, "seed %llu: free hands, passer-by stays 12 s: %d waves, wanted one", (unsigned long long)seed, a.starts);
+    CHECK(a.first_start >= 0 && a.first_start <= 2, "seed %llu: free: wave began %d ticks after the arrival", (unsigned long long)seed,
+          a.first_start);
+    CHECK(abs(a.first_len - kWaveTicks) <= 1, "seed %llu: wave ran %d ticks, not %d", (unsigned long long)seed, a.first_len, kWaveTicks);
+    CHECK(a.story_held, "seed %llu: the story moved during the wave", (unsigned long long)seed);
+    CHECK(a.story_resumed, "seed %llu: the story did not resume after the wave", (unsigned long long)seed);
+    free_started += a.starts;
+
+    // Busy for 5 s from the arrival, the passer-by gone after 3 s: he waves when his hands free up.
+    const WaveRun b = waveTrial(seed, 5 * SS_TICK_HZ, kStay, 20 * SS_TICK_HZ);
+    if (b.ok) {
+      CHECK(b.starts == 1, "seed %llu: late free-up: %d waves", (unsigned long long)seed, b.starts);
+      if (b.starts == 1) {
+        CHECK(b.first_start >= 5 * SS_TICK_HZ && b.first_start <= 5 * SS_TICK_HZ + 3,
+              "seed %llu: late wave began %d ticks after the arrival (hands free at %d)", (unsigned long long)seed, b.first_start,
+              5 * SS_TICK_HZ);
+        ++late_ok;
+      }
+      late_started += b.starts;
+    }
+
+    // Busy for 9 s: past the wait, so he does not wave at all, not even once the hands are free.
+    const WaveRun c = waveTrial(seed, 9 * SS_TICK_HZ, kStay, 20 * SS_TICK_HZ);
+    if (c.ok) {
+      CHECK(c.starts == 0, "seed %llu: busy past 8 s but he waved (tick %d)", (unsigned long long)seed, c.first_start);
+      busy_started += c.starts;
+      ++busy_ok;
+    }
+  }
+  CHECK(trials >= 3, "too few usable moments (%d)", trials);
+  CHECK(late_ok >= 3, "the late wave was only tested %d times", late_ok);
+  CHECK(busy_ok >= 3, "the give-up was only tested %d times", busy_ok);
+  printf("  %d moments: free hands %d waves, hands free after 5 s %d (of %d), busy past 8 s %d (of %d)\n", trials, free_started,
+         late_started, late_ok, busy_started, busy_ok);
+
+  // Each new arrival waves again, one wave each.
+  Rig r;
+  Inputs in = makeInputs(3.f, SF_MIDDAY, 0);
+  CHECK(r.start(2, in), "start");
+  int waves = 0;
+  for (int arrival = 0; arrival < 3; ++arrival) {
+    for (int t = 0; t < 40 * SS_TICK_HZ && !reactWaveOk(*appWorld(r.app)); ++t) appTick(r.app);
+    in.passer_by = true;
+    appSetInputs(r.app, in);
+    int started = 0;
+    for (int k = 0; k < 3 * SS_TICK_HZ; ++k) {
+      const bool before = appWorld(r.app)->react.active;
+      appTick(r.app);
+      if (!before && appWorld(r.app)->react.active && appWorld(r.app)->react.wave) ++started;
+    }
+    in.passer_by = false;
+    appSetInputs(r.app, in);
+    for (int k = 0; k < kWaveTicks + 5; ++k) {   // let it finish; no second wave
+      const bool before = appWorld(r.app)->react.active;
+      appTick(r.app);
+      if (!before && appWorld(r.app)->react.active && appWorld(r.app)->react.wave) ++started;
+    }
+    CHECK(started <= 1, "arrival %d: %d waves", arrival, started);
+    waves += started;
+  }
+  printf("  three arrivals in a row: %d waves\n", waves);
+  CHECK(waves >= 2, "a new arrival did not get a wave (%d of 3)", waves);
+  r.stop();
+}
+
 int main() {
   setvbuf(stdout, nullptr, _IONBF, 0);   // a crash must not eat the lines before it
   const auto t0 = std::chrono::steady_clock::now();
+  testPasserWait();
   printf("kReactSeconds %.2f s = %d ticks\n", (double)kReactSeconds, (int)(kReactSeconds * SS_TICK_HZ + 0.5f));
 
   // The moments the review sheets and the named checks use: the preview's own

@@ -346,7 +346,7 @@ cd build-NAME && ctest --output-on-failure      # every tests/test_*.cpp; or ./t
 - Force a family or weather: `--spine morning --mood 1.5`, `--weather rain`. There is **no flag to force a major**: find a seed with `for s in $(seq 1 60); do ./ss_preview.exe --seed $s --mood 4 --loops 1 | grep -q "majors=.*NAME" && echo $s; done`. Loop 0 starts with empty memory, so `--seed s` replays that plan. Replaying a later loop's printed seed gives its geometry and minors but not necessarily its plan (memory differs).
 - Frame f shows tick `SKIP + (f + 1) * N`. To get frames at ticks T, T+N, ...: `--skip $((T - N)) --every N`. A frame is 1.15 MB: never render a whole loop at `--every 1` (about 18 GB).
 
-**Clips.** `python -I tools/review_clips.py --preview build-NAME/ss_preview.exe --out DIR --seeds 1-12 [--night] [--family morning|midday|lookout] [--weather-clips]` cuts one clip per beat, variant, filler, major and minor, plus `manifest.json` (README lists the options; `--list` prints the table). It needs **ffmpeg, which this PC does not have**: it exits with code 2 at line 831. A real Python is at `C:\Users\Lodeb\AppData\Local\Python\bin\python.exe`; the `python` on PATH first is the Store stub.
+**Clips.** `python -I tools/review_clips.py --preview build-NAME/ss_preview.exe --out DIR --seeds 1-12 [--night] [--family morning|midday|lookout] [--weather-clips]` cuts one clip per beat, variant, filler, major and minor, plus `manifest.json` (README lists the options; `--list` prints the table). It needs **ffmpeg, which this PC does not have**: it exits with code 2 at line 831. A real Python is at `~\AppData\Local\Python\bin\python.exe`; the `python` on PATH first is the Store stub.
 
 **The fallback: PPM frames to a PNG contact sheet** (no Pillow, no ffmpeg; tested here on synthetic frames, same output either way). Save as `sheet.py` in your scratch folder:
 ```python
@@ -396,7 +396,7 @@ Use: beat starts at `T` in the log; 12 frames 2 s apart: `./ss_preview.exe --see
 
 ## 10. Gotchas
 
-1. **Major-id masks.** The 16-bit problem is already fixed in the tree: `typedef uint32_t MajorSet` (`memory.h:39`), asserted twice (`memory.h:40`, `majors.h:48`), used by `majorsPlan` (`majors.cpp:3863, 3884, 3919`) and `spineFitLength` (`spine.cpp:2754-2787`, `uint32_t`), covered by `tests/test_memory_sets.cpp`. Room for 32 ids; 17 used. Still narrow, all deliberately: `MajorState::cue` is 16 bits (used: 1, 2, 4, 8, 16 `kSweep`, 32 `kFired`, 64, 128 as raw literals at `majors.cpp:1517-1522`, 256 to 1024 `kE1..kE3`; free from 2048); `Memory::brave` 16 bits (9 kinds, asserted); `kMajors[].slots` 4 bits; family and filler masks `uint8_t` (4 of 8 bits); `LoopPlan::major[]` and `Memory::ring[]` are `uint8_t`; `Renderer::dirty_mask`, `BuildState` and `LKL_` layer masks are `uint16_t`. `test_scene.cpp:1057` hard-codes bit 5 for raccoon_pack (`1u << 5`).
+1. **Major-id masks.** The 16-bit problem is already fixed in the tree: `typedef uint32_t MajorSet` (`memory.h:39`), asserted twice (`memory.h:40`, `majors.h:48`), used by `majorsPlan` (`majors.cpp:3863, 3884, 3919`) and `spineFitLength` (`spine.cpp:2754-2787`, `uint32_t`), covered by `tests/test_memory_sets.cpp`. Room for 32 ids; 28 used since stage 22 (section 11). Still narrow, all deliberately: `MajorState::cue` is 16 bits (used: 1, 2, 4, 8, 16 `kSweep`, 32 `kFired`, 64, 128 as raw literals at `majors.cpp:1517-1522`, 256 to 1024 `kE1..kE3`; free from 2048); `Memory::brave` 16 bits (9 kinds, asserted); `kMajors[].slots` 4 bits; family and filler masks `uint8_t` (4 of 8 bits); `LoopPlan::major[]` and `Memory::ring[]` are `uint8_t`; `Renderer::dirty_mask`, `BuildState` and `LKL_` layer masks are `uint16_t`. `test_scene.cpp:1057` hard-codes bit 5 for raccoon_pack (`1u << 5`).
 2. **Three copies of the major-name list in tests** (`test_scene.cpp:983`, `test_spines.cpp:188`, `test_midday.cpp:212`), and `N_MAJORS` is 16 while `MJ_COUNT` is 17 (rain_shelter missing; it only plays for a storm from the data). A major missing from `kMajorNames` that does play makes `testVariety` fail on the `busy` check.
 3. **Silent defaults hide typos.** An unknown anchor means "where he stands" (`spine.cpp:2269`). A shape without a `drawShape` case draws nothing and has reach 12 (`majors.cpp:142, 399`). An `ItemId` without bounds marks nothing (`props.cpp:509`). An unsupported critter action becomes idle. Arrays sized by `*_COUNT` with a short initializer give null names and zero weights (`kNames`, `kBaseWeight`, `kRearAng`, `kReach`, `itemName`, filler weights). Check by running, not by compiling.
 4. **Pinned regression lines.** `test_spines.cpp:77-100` pins the evening for seeds 1 and 7, `test_midday.cpp:79-131` pins evening, morning and midday. They include each loop's length and the plan, so these change the pins: any new or re-weighted pool entry (`rng.weighted` over `MJ_COUNT`), a new variant, a changed `seconds`, a new filler. Excluding a major from a family leaves that family's pin alone (zero weights are skipped by `Rng::weighted`, `anim/rng.cpp:41`). Re-capture from `ss_preview --seed S --mood M [--spine F] --loops 10` (the tests drop the `weather=` token) and say so in your notes. The evening needs Mike's yes.
@@ -420,6 +420,89 @@ Use: beat starts at `T` in the log; 12 frames 2 s apart: `./ss_preview.exe --see
 22. **`-Werror` on core only.** A test file with warnings still builds (`CMakeLists.txt:30`); core with one does not. An unused anonymous-namespace function is an error.
 23. **Weather overlays share him.** The hat gag and the fan run only when no script holds him; `majorEnd` forces `hat_on = true` (`majors.cpp:3791`) so an overrun cannot leave him hatless. Leave hands empty and the hat on at the end of every script.
 24. **Labels in comments**: the code marks guesses `PROPOSED` and `UNVERIFIED` (`react.h`, `reveal.h`, `palette.h`). Do the same.
+
+## 11. Stage 22: the new ids, kinds, hooks and switch (added 2026-11-19)
+
+Stage 22 (docs/screensaver/stage22/, INTEGRATION_PLAN.md) added five pieces: the reeds and cattails (every camp
+family), tai chi (a morning major), the long shot (a midday major on the plinking's rifle), the deer visit (a midday
+*beat*, not a major) and the mushroom trip (a midday major forced by a ripe patch). Line numbers above predate it;
+search by name. What a new scene must know:
+
+**The switch.** `core/scene/stage22_switch.h`: `SS_S22` defaults to 1 (the panel compiles the core with no defines,
+so the pieces are live there) and CMake's `option(SS_S22 ... ON)`. It gates only plans (weights, the forced picks,
+the herd's share, `mushWillPlay`), never a struct, enum, hook or the reeds, so the World is the same either way.
+`build-s22-off` (configured with `-DSS_S22=OFF`) must keep reproducing `reviews/stage22-baseline` (README.txt there:
+the `--loops` lines, beat and minors logs, and with the reeds hidden every frame hash). Each piece also has a
+`k*Landed` constant in `majors.cpp` (all true now) and `Memory::s22_preview` (bit 7 plus `S22Piece` bits) lets a
+test plan as if a piece had landed; it is 0 in every run.
+
+**Ids and enums.** `MJ_TAICHI` 25, `MJ_LONGSHOT` 26, `MJ_MUSHROOM` 27 (`MJ_COUNT` 28; 4 ids left of the 32 a
+`MajorSet` holds). `SH_GONG` 16, `SH_FLAG` 17 (`SH_COUNT` 18; drawn by `longshotShapeDraw`). `DayKind`: `DAY_TAICHI`
+7, `DAY_HERD` 8, `DAY_TRIP` 9; `DAY_PARTS` 3. `ACT_REED` (actor idx = clump), `CT_HERD` (critter tag),
+`WORLD_ACTOR_MAX` 136. `MN_REED_BIRD` is minor index 11 (`MN_COUNT` 12; `test_scene` lists 12). `REED_CLUMPS` 5
+(`RS_FORE`, `RS_NEAR`, `RS_UPSTREAM`, `RS_FIRESIDE`, `RS_FAR`), `REED_STALKS` 5, `LS_REED_FRINGE` 16,
+`SKYTRIP_BANDS` 10, `MUSH_PATCH` 6, `HERD_MAX` 6. The test lists of major names (`isMajor` in test_spines,
+test_midday, test_morning_stay) carry the three new names; test_scene's `kMajorNames` (evening runs) does not need them.
+
+**The carry word.** `Inputs::carry` (uint16) seeds the new App's memory at `appStart`: low byte `Memory::mush` (the
+patch, packed as `core/mush_patch.h` says: 0x46 is ripe), high byte `Memory::taichi_next` (bits 0-1 the next
+chapter, bit 2 "done this morning", bit 7 valid). `appCarry(app)` is the word to hand the next run. The firmware does
+not pass it yet (step C8, Mike's go), so on the panel every screensaver start is a "first morning loop" for tai chi
+and the patch can only ripen inside one run. Tests that want a morning without tai chi pass carry 0x8400.
+
+**The plan block** (`majorsPlan`, INTEGRATION_PLAN 3.1 point 9 and 4.8). Tai chi: by day, not in the data's rain,
+snow or storm; forced in round 0 of a morning loop while `taichi_next` bit 2 is clear (`taichiMajorBegin` sets it
+when a form *begins*, so a no-show or a cut form never forces it into every loop); counts as two majors. The long
+shot: by day, not in rain, snow, storm or fog, never with a house dog, at most one of plink / longshot /
+ranger_ridge. A herd loop (`LoopPlan::herd`, picked first in `middayPlan` from its own stream "HERDDEER") has at most
+two majors and no deer_stick, plink or long shot. The ripe patch plays the mushroom alone, or after the forced fetch
+with a dog out (the fetch keeps to slot 0 or 1 then, so it plays first). `majorKept` keeps tai chi and the mushroom;
+`spineFitLength`'s floor is one major with either. Weights (step C6): tai chi 2.4, the long shot 0.8, the herd's
+share 0.30, the blackbird minor 0.15. A forced pick can end a plan with another loop rng state (`Rng::weighted`
+takes no draw when nothing is left), so the loop seeds after such a loop differ; that is expected, as after a forced
+fetch.
+
+**A midday beat that is not a major.** The herd is the timeline beat "herd" between the build and the return. Any
+new midday beat or extra seconds must go through `busySeconds` (spine_midday.cpp) before it can plan, or the loop
+length fit is wrong; the plan token ` herd=N` follows ` afternoon=`. `DAY_HERD` can still hold the day union (the
+hoof prints) when a midday major begins: a day play's begin clears it, a plain major lets the prints fade.
+
+**The day hooks, per kind** (day.h; `taichiDay*`, `herdDay*`, `tripDay*`): `XDayBounds`, `XDayPose` (after
+hikerTick), `XDayHoldsFacing`, `XDayStep(w, frozen)` (after stepHiker; `frozen` is the doorbell), `XDayTrack` (mark
+your own changes), `XDayPartY` and `XDayPartDraw` for parts 0..2. The long shot has none: it runs on `DAY_PLINK`.
+**Module-driven pose:** while tai chi's form runs, `taichiDayPose` writes his whole pose from the module
+(`TaichiState`); scripts and overlays must not touch the pose then (the doorbell is look-only: `taichiInForm`).
+The trip's `tripHandsFull` and tai chi's `taichiHatInHand` make the doorbell a hop and a look.
+
+**Other hooks a new scene may meet.** `reedsPickActive(w)` holds `hikerFree`, `fireIceCalm`, `reactWaveOk`, a house
+dog's pat and the minors (a pick is a pause overlay: never start your own overlay while it is on).
+`reedsDropChew(w)` drops the stem from his mouth (call it in a begin hook that puts something at his face);
+`reedsGiveChew(w, s)`; `reedsPush`, `reedsBend`, `reedsTake`, `reedsBlast` for bodies that touch a clump;
+`reedsStandPoint` for feet beside a camp-bank clump. One wind: `ambientWindAt(w, x)` (the grass's field; it swings
+right for moments by design), `weatherBreeze(w)` 0..1 for anything that streams (always toward -x). The stream's
+heron can be lent (`streamHeronGuest`, one visitor a loop). `houseDogsLend(w, HD_LUCY)` asks for Lucy first.
+`critterDeerNose`, `critterDeerCrown` anchor things to a deer's head (`critterHead` is the top of the bounds for
+every kind but the bear). `herdGuestAt` lets Lucy chase the herd. `fireIceCalm` treats `DAY_HERD` with only the signs
+left as calm.
+
+**Budgets after stage 22** (host, Christmas set): `sizeof(App)` 29,936 of the 29,992 test wire (56 bytes left;
+never raise the wire, find bytes in the day union or padding); World 24,760; Memory 88 and LoopPlan 88 (asserted);
+the day union is DayBike's 1,904 (DayPlink 1,048, DayTaichi 216, DayHerd 832, DayTrip 456); the Lookout's shared
+block 624 holds StreamLife 296 + Reeds 216 + XmasState 92 = 604. Glyphs: the long shot keeps 3 or 4 target glyphs
+for the rest of a midday loop. Strips: the reeds cost about +0.03 a frame always; a herd of six in snow about 9.7.
+
+**The trip's sky renders per frame.** Its ten cache bands latch on render ticks (REVIEW_FIXES F28), so a test that
+compares an incremental render with a full one during a trip must render the full-render twin every tick too
+(invalidate it only on the compared tick), and a tool that wants the sky as the panel shows it must render every
+tick.
+
+**Pins.** The evening never moves (the same pins in both folders). The morning and midday `--loops` pins in
+test_midday (`kMorning1S22`, `kMidday1S22`), test_morning_stay (`kMarkS22`) and the frame pins in test_xmas
+(`kIdentPinsS22`) have a second set chosen by `ssS22Switch()`; a change that moves only one of them must say why in
+the comment. `tests/test_stage22.cpp` holds the cross-piece checks (INTEGRATION_PLAN section 8): layout, the evening
+against the baseline, the never-together table, the ripe loop, tai chi through restarts, the site rules (measured
+against each clump's drawn pixels at rest), the doe and the cattail, the fawn and the reeds, one wind, the stem, the
+heron, load, determinism, and the dog rules with every piece live.
 
 ---
 

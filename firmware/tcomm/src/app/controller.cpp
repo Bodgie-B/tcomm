@@ -1,6 +1,7 @@
 #include "controller.h"
 #include "../core/brightness.h"
 #include "../core/civil.h"
+#include "../core/voice_dsp.h"  // voice_meter_level (inline)
 #include <new>
 #include <stdio.h>
 #include <stdlib.h>
@@ -65,6 +66,15 @@ void Controller::begin(const Settings &s, const OwnState &own, const DogState &d
     p_.free_big(buf);
   }
   send_sum(true);
+  // Voice notes: xfers start somewhere new each boot (a C6 that kept a session from before a restart
+  // never takes the new job's frames for it), the saved inbox comes back, and on the downstairs auto
+  // route the first ping goes out a few seconds after start-up.
+  vxfer_ = (uint8_t)(p_.random32() % 255);
+  {
+    VoiceInboxData d;
+    if (p_.load_voice_inbox(d)) restore_voice_inbox(d);
+  }
+  vping_next_ = started_ms_ + 3000;
   build_view();
 }
 
@@ -81,6 +91,7 @@ void Controller::tick() {
   // counter wraps after about 24.8 days.
   if (touched_ && ms_diff(now, last_touch_) >= (int32_t)settings_.touch_wake_ms) touched_ = false;
   if (mail_wake_ && ms_diff(now, mail_wake_at_) >= (int32_t)settings_.touch_wake_ms) mail_wake_ = false;
+  if (voice_wake_ && ms_diff(now, voice_wake_at_) >= (int32_t)settings_.touch_wake_ms) voice_wake_ = false;
   if (toast_[0] && ms_reached(now, toast_until_)) toast_[0] = 0;
   if (outside_.have && !outside_fresh(now)) outside_.have = false;
   if (last_missed_ && ms_diff(now, missed_mono_) >= 3600000) bell_in_.clear_missed();  // PROPOSED: an hour
@@ -97,8 +108,8 @@ void Controller::tick() {
   tick_notices();
 
   while (const RetryQueue::Frame *f = retry_.due(now)) {
-    // A NOTICE goes to the gateway; everything else to the other panel.
-    p_.radio_send(f->type == MsgType::Notice ? (uint8_t)kSenderGateway : sender_id(other_floor(settings_.floor)), f->data, f->len);
+    // A NOTICE or a ROOMS goes to the gateway; everything else to the other panel.
+    p_.radio_send(for_gateway(f->type) ? (uint8_t)kSenderGateway : sender_id(other_floor(settings_.floor)), f->data, f->len);
     retry_.sent(f->seq, now);
   }
   RetryQueue::Result r;
@@ -106,6 +117,15 @@ void Controller::tick() {
     if (r.type == MsgType::Notice) {
       // No gateway answered: the notice is dropped. Never No signal: it wasn't for the other panel.
       p_.log("notice: no ACK from the gateway, dropped");
+      continue;
+    }
+    if (r.type == MsgType::Rooms) {  // the same: never No signal. tick_rooms tries again later.
+      if (r.seq == rooms_.seq) {
+        rooms_.failed = true;
+        rooms_.acked = false;
+      }
+      if (!rooms_fail_logged_) p_.log("rooms: no ACK from the gateway, again in a minute");
+      rooms_fail_logged_ = true;
       continue;
     }
     // HANDOFF: no ACK after every retry marks the other side as No signal.
@@ -127,6 +147,8 @@ void Controller::tick() {
   tick_events(now, w);
   tick_dog_nudge(now, w);
   tick_presence(now);
+  tick_rooms(now, w);
+  tick_voice(now, w);
   update_agenda(w);
   build_view();
   if (!backlight_set_ || view_.backlight != last_backlight_) {
@@ -142,6 +164,15 @@ void Controller::tick() {
 Controller::~Controller() {
   p_.free_big(events_.memory());
   for (ArchFile &a : arch_) p_.free_big(a.ev);
+  store_->~Store();
+  p_.free_state(store_);
+}
+
+// The Store (controller.h): never null on the panel (PSRAM, else internal RAM); stop if there is none.
+Controller::Store *Controller::make_store(Platform &p) {
+  void *m = p.alloc_state(sizeof(Store));
+  if (!m) abort();
+  return new (m) Store();
 }
 
 bool Controller::send(Msg m) {
@@ -160,7 +191,9 @@ void Controller::send_state(bool please_reply) {
   m.u.state.status = (uint8_t)s.status;
   sent_pres_flags_ = presence_flags();
   m.u.state.flags = (uint8_t)(((please_reply || want_peer_state_) ? kStatePleaseReply : 0) | (w.valid ? kStateClockValid : 0) |
-                              sent_pres_flags_);
+                              sent_pres_flags_ | kStateVoice |  // this firmware takes voice messages (SAY)
+                              (vgw_heard_ ? kStateGwVoice : 0) |  // only what this panel heard itself, never echoed
+                              (vgw_heard_ && store_->vgw_mulaw ? kStateGwMulaw : 0));
   m.u.state.since = s.since;
   m.u.state.until = s.until;
   m.u.state.fallback = (uint8_t)s.fallback;
@@ -185,7 +218,7 @@ void Controller::send_mail() {
   Msg m;
   m.type = MsgType::Mail;
   const MailState &s = mail_.state();
-  m.u.mail.waiting = s.waiting ? 1 : 0;
+  m.u.mail.waiting = s.waiting ? 1 : s.none ? 2 : 0;  // 2 = no mail (Mike, 2026-11-18)
   m.u.mail.since = s.since;
   m.u.mail.ver = s.ver;
   send(m);
@@ -618,8 +651,40 @@ void Controller::raise_notice(NoticeKind k, Floor floor, int16_t value, uint32_t
   if (!retry_.push(m, me(), p_.mono_ms())) p_.log("notice: too many waiting, dropped");
 }
 
+// The phones' rules (Mike, 2026-11-15): only a floor that is Open or Busy, and never in quiet hours.
+// Quiet hours come from this panel's settings and clock. Without a clock it could be 3 AM, so no
+// push (as current_volume takes the quiet cap then): a missed push is the quiet failure, and the
+// panels stay the real doorbell.
+bool Controller::phones_ok(Status rung_status) {
+  if (rung_status != Status::Open && rung_status != Status::Busy) return false;
+  WallTime w = p_.wall();
+  return w.valid && !in_quiet_hours(settings_, minutes_of_day((int64_t)w.utc + p_.utc_offset(w.utc)));
+}
+
+// A ring that should push the rung floor's phones (upstairs only, like every notice). Remembered so
+// that an answer or dismiss at a panel can send the quiet follow-up "ANSWERED".
+void Controller::ring_notice(Floor rung, uint16_t knock_id, uint32_t utc) {
+  if (settings_.floor != Floor::Upstairs) return;
+  raise_notice(NoticeKind::Ring, rung, (int16_t)knock_id, utc, "RING");
+  ring_pushed_ = true;
+  ring_pushed_floor_ = rung;
+  ring_pushed_id_ = knock_id;
+  ring_pushed_utc_ = utc;
+  ring_pushed_mono_ = p_.mono_ms();
+}
+
+// That ring was answered or dismissed at a panel, inside its 2 minutes: tell the phones. Not for a
+// phone's own answer (the Pi knows), and not once the window is over (the phones have given up).
+void Controller::ring_answered_here(Floor rung, uint16_t knock_id) {
+  if (!ring_pushed_ || rung != ring_pushed_floor_ || knock_id != ring_pushed_id_) return;
+  ring_pushed_ = false;
+  int32_t age = ms_diff(p_.mono_ms(), ring_pushed_mono_);
+  if (age < 0 || age >= (int32_t)BellReceiver::kBannerMs) return;
+  raise_notice(NoticeKind::Ring, rung, (int16_t)knock_id, ring_pushed_utc_, "ANSWERED");
+}
+
 // Unanswered rings, both ways. Upstairs rang and downstairs never replied: the sender's "No answer
-// yet". Downstairs rang and nobody here answered or dismissed the banner within its minute: it ran
+// yet". Downstairs rang and nobody here answered or dismissed the banner within its 2 minutes: it ran
 // out (bell.cpp). A ring while this panel is Away is reported when it arrives (handle, Knock).
 void Controller::tick_notices() {
   BellOut o = bell_out_.state();
@@ -665,6 +730,11 @@ void Controller::heard_from_peer() {
 }
 
 void Controller::on_radio(const uint8_t *data, size_t len) {
+  // Voice frames (types 20-30) have their own codec and never use the ACK, Dedup or RetryQueue.
+  if (is_voice_frame(data, len)) {
+    on_voice(data, len);
+    return;
+  }
   Msg m;
   if (!decode(data, len, m)) {
     char line[96];
@@ -686,6 +756,11 @@ void Controller::on_radio(const uint8_t *data, size_t len) {
     RetryQueue::Result r;
     bool acked = retry_.ack(m.u.ack.seq, r);
     if (acked && r.type == MsgType::Knock) bell_out_.on_delivered(r.knock_id, now);
+    if (acked && r.type == MsgType::Rooms && m.sender == kSenderGateway && m.u.ack.seq == rooms_.seq) {
+      rooms_.acked = true;
+      rooms_.failed = false;
+      rooms_fail_logged_ = false;
+    }
     if (acked && (r.type == MsgType::Comfort || r.type == MsgType::ComfortDel)) {
       for (int i = 0; i < comfort_out_n_; i++) {
         if (comfort_out_[i].seq != m.u.ack.seq) continue;
@@ -751,6 +826,9 @@ void Controller::handle(const Msg &m) {
       peer_.st.fallback = (Status)m.u.state.fallback;
       peer_.away = (m.u.state.flags & kStateAwayDesk) != 0;
       peer_.nobody_near = (m.u.state.flags & kStateNobodyNear) != 0;
+      vpeer_voice_ = (m.u.state.flags & kStateVoice) != 0;
+      vpeer_gw_voice_ = (m.u.state.flags & kStateGwVoice) != 0;
+      store_->vpeer_gw_mulaw = (m.u.state.flags & kStateGwMulaw) != 0;
       maybe_copy_clock(m);
       if (m.u.state.flags & kStatePleaseReply) {
         send_state(false);
@@ -769,7 +847,11 @@ void Controller::handle(const Msg &m) {
       KnockAction a = bell_in_.on_knock(m.u.knock.id, other_floor(settings_.floor), settings_, status_.state().status, now,
                                         w.valid ? w.utc : 0);
       if (a.save) raise_notice(NoticeKind::Knock, other_floor(settings_.floor), 1, w.valid ? w.utc : 0);
-      if (a.banner) ring_resolved_ = false;
+      if (a.banner) {
+        ring_resolved_ = false;
+        // A new ring on the banner (a duplicate returns no action): push this floor's phones.
+        if (phones_ok(status_.state().status)) ring_notice(settings_.floor, m.u.knock.id, w.valid ? w.utc : 0);
+      }
       if (a.banner || a.save || a.chime != Chime::None) {  // a new ring, not a repeat of one
         bell_shakes_++;
         ring_alert_ = true;
@@ -784,9 +866,41 @@ void Controller::handle(const Msg &m) {
     }
     case MsgType::Reply: {
       if (m.sender != peer) return;
+      if (m.u.reply.dismissed) {
+        // The other panel dismissed our ring's banner: nothing shows here (a dismiss stays silent to the
+        // ringer), but the phones that were pushed hear about it, and a later phone answer to that ring
+        // is not passed on (2026-11-15).
+        if (bell_out_.awaiting(m.u.reply.id)) ring_dismissed_id_ = m.u.reply.id;
+        ring_answered_here(other_floor(settings_.floor), m.u.reply.id);
+        break;
+      }
       BellOut before = bell_out_.state();
-      bell_out_.on_reply(m.u.reply.id, m.u.reply.come_on, now);
-      if (bell_out_.state() != before) p_.play(m.u.reply.come_on ? Sound::ReplyYes : Sound::ReplyNo, current_volume());
+      bell_out_.on_reply(m.u.reply.id, m.u.reply.come_on, now, m.u.reply.phone != 0);
+      if (bell_out_.state() != before) {
+        p_.play(m.u.reply.come_on ? Sound::ReplyYes : Sound::ReplyNo, current_volume());
+        // Answered on the downstairs panel itself: the phones that were pushed hear about it.
+        if (!m.u.reply.phone) ring_answered_here(other_floor(settings_.floor), m.u.reply.id);
+      }
+      break;
+    }
+    case MsgType::PhoneAnswer:
+      on_phone_answer(m);
+      break;
+    case MsgType::MailAck: {
+      // Mike, 2026-11-15: "Got it" on a downstairs phone, through the gateway to upstairs only. The same
+      // as the downstairs panel's tap: the mail is picked up, and downstairs clears it from MAIL.
+      // The ACK to the gateway is out already (on_radio). No Mail notice for this. Mike, 2026-11-18:
+      // it clears whichever is showing, the mail badge or the no-mail one.
+      if (m.sender != kSenderGateway || settings_.floor != Floor::Upstairs) {
+        p_.log("mail ack: ignored (only the gateway, to the upstairs panel)");
+        return;
+      }
+      if (!mail_.acknowledge(w)) {
+        p_.log("mail ack: nothing showing, ignored");
+        return;
+      }
+      p_.save_mail(mail_.state());
+      send_mail();
       break;
     }
     case MsgType::DogMsg: {
@@ -858,7 +972,8 @@ void Controller::handle(const Msg &m) {
     case MsgType::Mail: {
       if (m.sender != peer) return;
       MailState in;
-      in.waiting = m.u.mail.waiting != 0;
+      in.waiting = m.u.mail.waiting == 1;
+      in.none = m.u.mail.waiting == 2;  // Mike, 2026-11-18: "no mail"; no chime, no wake, on either panel
       in.since = m.u.mail.since;
       in.ver = m.u.mail.ver;
       bool was_waiting = mail_.state().waiting;
@@ -930,6 +1045,7 @@ void Controller::handle(const Msg &m) {
       peer_.reading = m.u.reading.flags & kReadingValid;
       peer_.temp = m.u.reading.temp_tenths_f;
       peer_.hum = m.u.reading.humidity_tenths;
+      peer_rd_have_ = true;  // for ROOMS: one has arrived since start-up (Mike, 2026-11-22)
       break;
     case MsgType::Lucy:
       if (m.sender != kSenderGateway) return;
@@ -1081,6 +1197,12 @@ void Controller::tap_bell() {
   m.type = MsgType::Knock;
   m.u.knock.id = id;
   send(m);
+  ring_dismissed_id_ = 0;  // a new ring: nobody has dismissed it yet
+  // Upstairs ringing downstairs: push the tenants' phones by downstairs's last known status.
+  if (settings_.floor == Floor::Upstairs && peer_.known && phones_ok(peer_.st.status)) {
+    WallTime w = p_.wall();
+    ring_notice(Floor::Downstairs, id, w.valid ? w.utc : 0);
+  }
 }
 
 bool Controller::tap_dog() {
@@ -1386,8 +1508,30 @@ bool Controller::tap_mail() {
   WallTime w = p_.wall();
   if (settings_.floor == Floor::Upstairs) {
     mail_.toggle(w);
-    if (mail_.state().waiting) raise_notice(NoticeKind::Mail, Floor::Downstairs, 1, mail_.state().since);
-  } else if (!mail_.acknowledge(w)) {
+    // The notice pushes the downstairs phones (Mike, 2026-11-15): only while downstairs is Open or Busy
+    // and not in quiet hours.
+    if (mail_.state().waiting && peer_.known && phones_ok(peer_.st.status))
+      raise_notice(NoticeKind::Mail, Floor::Downstairs, 1, mail_.state().since);
+  } else if (!mail_.acknowledge_mail(w)) {
+    return false;
+  }
+  p_.save_mail(mail_.state());
+  send_mail();
+  return true;
+}
+
+// Mike, 2026-11-18: "no mail", the badge left of the mail one. The same rules as the mail badge,
+// except it is quiet: no chime, no screen wake, no pulse, on either panel. The phones get one notice
+// (the Mail kind, value 3, text NOMAIL) under the same gate as a mail notice; the phone's "Got it"
+// comes back as MAIL_ACK and clears it. Marking it clears mail waiting, and the reverse.
+bool Controller::tap_nomail() {
+  touch();
+  WallTime w = p_.wall();
+  if (settings_.floor == Floor::Upstairs) {
+    mail_.toggle_none(w);
+    if (mail_.state().none && peer_.known && phones_ok(peer_.st.status))
+      raise_notice(NoticeKind::Mail, Floor::Downstairs, 3, mail_.state().since, "NOMAIL");
+  } else if (!mail_.acknowledge_none(w)) {
     return false;
   }
   p_.save_mail(mail_.state());
@@ -1411,8 +1555,8 @@ void Controller::mail_alert() {
   }
 }
 
-void Controller::answer_banner(bool come_on) {
-  touch();
+void Controller::answer_banner(bool come_on, bool phone) {
+  if (!phone) touch();  // a phone's answer is nobody at this panel
   ring_alert_ = false;
   ring_resolved_ = true;
   uint16_t id = bell_in_.answer(p_.mono_ms());
@@ -1421,14 +1565,60 @@ void Controller::answer_banner(bool come_on) {
   m.type = MsgType::Reply;
   m.u.reply.id = id;
   m.u.reply.come_on = come_on ? 1 : 0;
+  m.u.reply.phone = phone ? 1 : 0;
   send(m);
+  if (!phone) ring_answered_here(settings_.floor, id);
 }
 
 void Controller::dismiss_banner() {
   touch();
   ring_alert_ = false;
   ring_resolved_ = true;
+  if (bell_in_.banner() == BannerKind::Knock) {
+    uint16_t id = bell_in_.id();
+    ring_answered_here(settings_.floor, id);
+    // Tell the ringer's panel, which shows nothing for it: upstairs needs it when downstairs dismisses,
+    // to send the phones ANSWERED and stop passing on their answers (2026-11-15).
+    Msg m;
+    m.type = MsgType::Reply;
+    m.u.reply.id = id;
+    m.u.reply.dismissed = 1;
+    send(m);
+  }
   bell_in_.dismiss();
+}
+
+// Mike, 2026-11-15: a phone answered a ring (ntfy, the Pi, the gateway). The gateway sends only to
+// upstairs (already ACKed by on_radio). A ring to upstairs is answered here as if tapped; a ring to
+// downstairs is passed on, unchanged, while upstairs still waits on that knock, and downstairs
+// answers its own banner. A ring no longer showing (answered, dismissed, run out, another id) ignores
+// it, so a late or repeated tap on a phone does nothing.
+void Controller::on_phone_answer(const Msg &m) {
+  uint8_t peer = sender_id(other_floor(settings_.floor));
+  Floor rung = m.u.phone.floor ? Floor::Downstairs : Floor::Upstairs;
+  bool from_gw = m.sender == kSenderGateway && settings_.floor == Floor::Upstairs;
+  bool relayed = m.sender == peer && settings_.floor == Floor::Downstairs && rung == Floor::Downstairs;
+  if (!from_gw && !relayed) {
+    p_.log("phone answer: ignored (wrong sender for this panel)");
+    return;
+  }
+  if (rung == settings_.floor) {
+    if (bell_in_.banner() != BannerKind::Knock || bell_in_.id() != m.u.phone.id) {
+      p_.log("phone answer: that ring isn't showing, ignored");
+      return;
+    }
+    answer_banner(m.u.phone.come_on != 0, true);
+    return;
+  }
+  // Upstairs, a ring to downstairs: pass it on while this panel still waits on that knock.
+  if (!bell_out_.awaiting(m.u.phone.id) || m.u.phone.id == ring_dismissed_id_) {
+    p_.log("phone answer: that ring to downstairs is over, ignored");
+    return;
+  }
+  Msg r;
+  r.type = MsgType::PhoneAnswer;
+  r.u.phone = m.u.phone;
+  send(r);
 }
 
 void Controller::apply_settings(const Settings &s) {
@@ -1441,6 +1631,9 @@ void Controller::apply_settings(const Settings &s) {
   p_.save_settings(settings_);
   if (floor_changed) {  // this panel now speaks for the other floor: start the exchange again
     peer_ = Peer();
+    peer_rd_have_ = false;
+    rooms_ = RoomsInfo();  // upstairs now (or no longer): the next ROOMS goes at once, past the first 20 s
+    rooms_fail_logged_ = false;
     retry_ = RetryQueue();  // pending frames carry the old sender id
     retry_.set_seq((uint16_t)p_.random32());
     dedup_ = Dedup();
@@ -1449,6 +1642,20 @@ void Controller::apply_settings(const Settings &s) {
     notice_bell_out_ = BellOut::Idle;
     notice_banner_ = BannerKind::None;
     ring_resolved_ = false;
+    ring_pushed_ = false;
+    ring_dismissed_id_ = 0;
+    // Voice: a job, a SAY or a PUSH in flight carries the old floor; the inbox stays this panel's.
+    if (vjob_) voice_cancel();
+    vout_.clear();
+    vsay_id_ = 0;
+    vpeer_voice_ = false;
+    vpeer_gw_voice_ = false;
+    store_->vpeer_gw_mulaw = false;
+    vdirect_ok_ = true;
+    vping_miss_ = 0;
+    vping_wait_ = false;
+    vping_next_ = p_.mono_ms();
+    if (vui_ != VoiceUi::Idle) voice_set_ui(VoiceUi::Idle);
     want_peer_state_ = true;
     send_state(true);
   }
@@ -1457,6 +1664,582 @@ void Controller::apply_settings(const Settings &s) {
 void Controller::set_clock_manual(uint32_t utc) {
   p_.set_wall(utc, kClockManual);
   send_state(false);  // the other panel copies a better clock from STATE
+}
+
+// ---------------------------------------------------------------------------------------------
+// Voice notes (docs/voice-notes/DESIGN.md; piece B): the upload (voice_tx), the route, SAY to the
+// other panel, the arrival inbox, the phones' push and their dismiss. Frames are never traced and the
+// text of a message is never logged.
+
+bool Controller::VLink::voice_send(uint8_t to, const uint8_t *d, size_t n) { return c_->p_.radio_send_voice(to, d, n); }
+
+static const char *voice_err_word(VoiceErr e) {
+  static const char *const w[] = {"none", "no Pi", "gateway old", "send failed", "lost", "nothing heard",
+                                  "not caught", "no memory", "peer no answer", "bell", "busy"};
+  return (unsigned)e < sizeof(w) / sizeof(w[0]) ? w[(int)e] : "?";
+}
+
+bool Controller::voice_capturing() const { return vrec_ && !vrec_->done.load(std::memory_order_acquire); }
+
+void Controller::voice_set_ui(VoiceUi u, VoiceErr e) {
+  if (vui_ == u && verr_ == e) return;
+  vui_ = u;
+  verr_ = e;
+  vui_at_ = p_.mono_ms();
+}
+
+// Upstairs always talks to the gateway directly (the proven link). Downstairs: as the route says; on
+// auto, direct while the pings are answered, else through upstairs when it can relay (it advertises
+// voice and is not No signal), else direct anyway (nothing else to try).
+uint8_t Controller::voice_hop() const {
+  if (settings_.floor == Floor::Upstairs) return kSenderGateway;
+  const bool relay_ok = vpeer_voice_ && peer_.known && !peer_.no_signal;
+  switch (vroute_) {
+    case VoiceRoute::Direct: return kSenderGateway;
+    case VoiceRoute::Relay: return kSenderUpstairs;
+    default: return (vdirect_ok_ || !relay_ok) ? (uint8_t)kSenderGateway : (uint8_t)kSenderUpstairs;
+  }
+}
+
+int Controller::voice_fallback() const {
+  if (settings_.floor != Floor::Downstairs || vroute_ != VoiceRoute::Auto || voice_hop() != kSenderGateway) return -1;
+  return vpeer_voice_ && peer_.known && !peer_.no_signal ? (int)kSenderUpstairs : -1;
+}
+
+// Frames from the gateway's side for this panel's floor: from the gateway itself, or (downstairs) relayed
+// by upstairs. Upstairs relays only what voice_relay_to allows, so a relayed frame is the gateway's.
+bool Controller::voice_from_gateway(const VoiceMsg &m) const {
+  if (m.floor != (uint8_t)settings_.floor) return false;
+  if (m.sender == kSenderGateway) return true;
+  return settings_.floor == Floor::Downstairs && m.sender == kSenderUpstairs;
+}
+
+void Controller::voice_send_got(uint8_t to, uint8_t kind, uint32_t key, VoiceGotResult r) {
+  uint8_t buf[kVoiceGotLen];
+  size_t n = voice_make_got(me(), (uint8_t)settings_.floor, ++vseq_, kind, key, r, buf, sizeof(buf));
+  if (n) p_.radio_send_voice(to, buf, n);
+}
+
+void Controller::voice_save_inbox() {
+  p_.save_voice_inbox(vinbox_.data());
+  vinbox_seq_++;
+}
+
+void Controller::on_voice(const uint8_t *data, size_t len) {
+  uint32_t now = p_.mono_ms();
+  VoiceMsg m;
+  if (!voice_decode(data, len, m)) {
+    vbad_n_++;
+    if (!vbad_logged_ || ms_diff(now, vbad_log_) >= 60000) {  // once a minute at most
+      char line[64];
+      snprintf(line, sizeof(line), "voice: dropped malformed voice frames (%lu so far)", (unsigned long)vbad_n_);
+      p_.log(line);
+      vbad_logged_ = true;
+      vbad_log_ = now;
+    }
+    return;
+  }
+  const uint8_t peer = sender_id(other_floor(settings_.floor));
+  if (m.sender == me()) return;
+  if (m.sender == kSenderGateway) {  // its hello, or any answer: it takes voice; the hello's key: mu-law too
+    const bool hello = m.type == VType::Got && m.u.got.kind == (uint8_t)VType::Ping && voice_hello_key(m.u.got.key);
+    voice_heard_gateway(now, hello ? (m.u.got.key == kVoiceHelloKeyMulaw ? 1 : 0) : -1);
+  }
+  if (m.sender == peer) heard_from_peer();  // a relayed frame or a SAY: the other panel is there
+  switch (m.type) {
+    case VType::Ack:
+      if (voice_from_gateway(m)) vtx_.on_ack(m, now);
+      break;
+    case VType::Abort:
+      if (voice_from_gateway(m)) vtx_.on_abort(m, now);
+      break;
+    case VType::Text: {
+      if (!voice_from_gateway(m)) break;
+      VoiceTextIs r = vtx_.on_text(m, now);
+      // Always answered (a lost GOT means the C6 tries again); a dead xfer's text is "gone" and ignored.
+      voice_send_got(m.sender, (uint8_t)VType::Text, voice_text_key(m.u.text.xfer, m.u.text.status),
+                     r == VoiceTextIs::NotMine ? VoiceGotResult::Gone : VoiceGotResult::Ok);
+      break;
+    }
+    case VType::Say:
+      if (m.sender == peer && m.floor == (uint8_t)other_floor(settings_.floor)) voice_arrived(m);
+      break;
+    case VType::Got:
+      if (m.u.got.kind == (uint8_t)VType::Say) {
+        if (m.sender != peer) break;
+        if (vout_.on_got(m.u.got.kind, m.u.got.key) && m.u.got.key == vsay_id_) {
+          vsay_id_ = 0;
+          voice_set_ui(VoiceUi::Delivered);
+        }
+      } else if (m.u.got.kind == (uint8_t)VType::Push) {
+        if (!voice_from_gateway(m)) break;
+        if (vout_.on_got(m.u.got.kind, m.u.got.key) && m.u.got.result == (uint8_t)VoiceGotResult::Refused)
+          p_.log("voice: the Pi has no voice service, the phones were not told");
+      } else if (m.u.got.kind == (uint8_t)VType::Ping) {
+        // Only straight from the gateway: a ping proves the direct link, so a relayed answer never counts.
+        if (m.sender != kSenderGateway || !vping_wait_ || m.u.got.key != vping_nonce_) break;
+        vping_wait_ = false;
+        vping_miss_ = 0;
+        if (!vdirect_ok_) p_.log("voice: the gateway answers direct again, direct route");
+        vdirect_ok_ = true;
+        vping_next_ = now + 600000;
+      }
+      break;
+    case VType::Dismiss: {
+      // A phone's Got it (phone_bell, the bridge, the C6). Only from the gateway's side.
+      if (!voice_from_gateway(m)) break;
+      bool removed = vinbox_.remove(m.u.dismiss.id);
+      if (removed) {
+        voice_save_inbox();
+        p_.log("voice: a message was dismissed from a phone");
+      }
+      voice_send_got(m.sender, (uint8_t)VType::Dismiss, m.u.dismiss.id, removed ? VoiceGotResult::Ok : VoiceGotResult::Gone);
+      break;
+    }
+    default:
+      // BEGIN, DATA, END, PUSH and PING are for the C6. On upstairs board_radio passes downstairs' on
+      // (the vrelay task) before they get here; anything else is not for a panel.
+      break;
+  }
+}
+
+// A SAY from the other panel (DESIGN 2.3, 7.4): into the inbox (dedup by id), answered with VOICE_GOT
+// (a duplicate too: its first GOT may be what was lost), then the ding, the wake and the phones.
+void Controller::voice_arrived(const VoiceMsg &m) {
+  const uint8_t peer = sender_id(other_floor(settings_.floor));
+  bool dropped = false;
+  VoiceAdd r = vinbox_.add(m.u.say.id, m.u.say.time, m.floor, m.u.say.text, m.u.say.len, &dropped);
+  voice_send_got(peer, (uint8_t)VType::Say, m.u.say.id, r == VoiceAdd::Bad ? VoiceGotResult::Refused : VoiceGotResult::Ok);
+  if (r != VoiceAdd::Added) return;
+  voice_save_inbox();
+  char line[80];
+  snprintf(line, sizeof(line), "voice: a message from %s arrived (id %lu)%s", floor_lower(other_floor(settings_.floor)),
+           (unsigned long)m.u.say.id, dropped ? ", the oldest dropped" : "");
+  p_.log(line);
+  WallTime w = p_.wall();
+  bool quiet = false, dark = false;
+  if (w.valid) {
+    int minute = minutes_of_day((int64_t)w.utc + p_.utc_offset(w.utc));
+    quiet = in_quiet_hours(settings_, minute);
+    dark = settings_.screen_off_overnight && in_screen_off_hours(settings_, minute);
+  }
+  VoiceArrival a = voice_arrival(status_.state().status, w.valid, quiet, dark, voice_capturing(),
+                                 bell_in_.banner() != BannerKind::None);
+  if (a.wake) {
+    voice_wake_ = true;
+    voice_wake_at_ = p_.mono_ms();
+  }
+  // The panel's play() stops the screensaver before the ding renders (check fix C3, tcomm.ino).
+  if (a.ding) p_.play(Sound::Ding, soft_volume());
+  if (a.defer) vding_due_ = true;
+  if (a.push) voice_push(vinbox_.data().msg[vinbox_.count() - 1]);
+}
+
+void Controller::voice_test_arrival(const char *text) {
+  size_t len = text ? strlen(text) : 0;
+  if (len > kVoiceTextMax) len = kVoiceTextMax;
+  if (!len) return;
+  WallTime w = p_.wall();
+  const uint32_t id = p_.random32() | 1u;
+  bool dropped = false;
+  VoiceAdd r = vinbox_.add(id, w.valid ? w.utc : 0, (uint8_t)other_floor(settings_.floor), text, (uint8_t)len, &dropped);
+  if (r != VoiceAdd::Added) return;
+  voice_save_inbox();
+  p_.log("voice: a test arrival was shown (serial voice test; not sent, no phone push)");
+  voice_wake_ = true;
+  voice_wake_at_ = p_.mono_ms();
+  p_.play(Sound::Ding, soft_volume());
+}
+
+// The receiving panel tells its floor's phones (DESIGN 7.4): VOICE_PUSH to the gateway by this panel's
+// route, retried until VOICE_GOT kind 28; no answer is one log line.
+void Controller::voice_push(const VoiceNote &n) {
+  if (!voice_gateway_ok()) {  // a C6 0.4, or none: it gets no voice frame (field fix 2026-11-20)
+    p_.log("voice: the gateway has not said it takes voice, the phones were not told");
+    return;
+  }
+  VoiceMsg m;
+  m.type = VType::Push;
+  m.sender = me();
+  m.floor = (uint8_t)settings_.floor;
+  m.seq = ++vseq_;
+  m.u.push.id = n.id;
+  m.u.push.from = n.from;
+  m.u.push.time = n.time;
+  m.u.push.len = n.len;
+  memcpy(m.u.push.text, n.text, n.len);
+  uint8_t buf[kMaxMsg];
+  size_t len = voice_encode(m, buf, sizeof(buf));
+  if (!len || !vout_.add(voice_hop(), (uint8_t)VType::Push, n.id, buf, len, p_.mono_ms()))
+    p_.log("voice: no room to tell the phones, dropped");
+  else
+    vout_.tick(p_.mono_ms(), vlink_);  // the first try now, not at the next tick
+}
+
+bool Controller::voice_press(VoicePurpose purpose) {
+  if (vjob_ || vui_ == VoiceUi::Sending) return false;  // one voice job per panel
+  touch();
+  if (!voice_gateway_ok()) {
+    // No voice hello from the gateway (a C6 0.4, or one that has not said so since this panel started):
+    // "Gateway needs an update", and not one frame goes out (field fix 2026-11-20).
+    p_.log("voice: the gateway has not said it takes voice, nothing sent");
+    voice_set_ui(VoiceUi::Error, VoiceErr::GatewayOld);
+    return false;
+  }
+  if (vrec_) voice_free_clip();  // the last clip, if the mic task has let go of it by now
+  if (vrec_) {
+    voice_set_ui(VoiceUi::Error, VoiceErr::NoMemory);
+    return false;
+  }
+  const uint32_t now = p_.mono_ms();
+  // The codec (mu-law when the gateway takes it, else ADPCM; serial `voice codec` by hand) sets the
+  // clip's size: mu-law 210 chunks (about 51 KB of PSRAM), ADPCM 104.
+  const uint8_t codec = (uint8_t)voice_codec();
+  const uint8_t clip = (uint8_t)voice_clip_chunks(codec);
+  const size_t bytes = voice_rec_bytes(clip);
+  void *mem = p_.alloc_big(bytes);
+  VoiceRec *rec = voice_rec_init(mem, bytes, clip);
+  if (!rec) {
+    p_.free_big(mem);
+    p_.log("voice: not enough memory for the clip");
+    voice_set_ui(VoiceUi::Error, VoiceErr::NoMemory);
+    return false;
+  }
+  vxfer_ = (uint8_t)(vxfer_ % 255 + 1);
+  const uint8_t hop = voice_hop();
+  rec->xfer = vxfer_;
+  rec->floor = (uint8_t)settings_.floor;
+  rec->sender = me();
+  rec->to = hop;
+  rec->codec = codec;
+  rec->chunk_samples = voice_chunk_samples(codec);
+  rec->press_ms = now;
+  rec->early_stop = kVoiceEarlyStop;
+  if (!p_.voice_rec_begin(rec)) {
+    voice_rec_destroy(rec);
+    p_.free_big(mem);
+    p_.log("voice: the microphone would not start");
+    voice_set_ui(VoiceUi::Error, VoiceErr::NoMemory);
+    return false;
+  }
+  vrec_ = rec;
+  vjob_ = true;
+  vpurpose_ = purpose;
+  vpress_ms_ = now;
+  vtext_[0] = 0;
+  vtext_flags_ = 0;
+  vtx_.start(rec, purpose, hop, voice_fallback(), now, vlink_);
+  voice_set_ui(VoiceUi::Recording);
+  return true;
+}
+
+void Controller::voice_stop() {
+  if (vjob_ && voice_capturing()) p_.voice_rec_stop(vrec_, VoiceStop::StopKey);
+}
+
+void Controller::voice_cancel() {
+  if (vjob_) {
+    if (voice_capturing()) p_.voice_rec_stop(vrec_, VoiceStop::Cancel);
+    vtx_.cancel(VoiceAbort::User, p_.mono_ms(), vlink_);
+    vtx_.forget_rec();
+    vtx_.reset();
+    vjob_ = false;
+    voice_free_clip();
+  }
+  vsay_id_ = 0;  // a SAY still in flight may arrive; this screen no longer waits for it
+  voice_set_ui(VoiceUi::Idle);
+}
+
+void Controller::voice_done() {
+  if (vjob_) {
+    voice_cancel();
+    return;
+  }
+  vsay_id_ = 0;
+  voice_set_ui(VoiceUi::Idle);
+}
+
+bool Controller::voice_send(const char *text) {
+  if (!text || vjob_ || vsay_id_ || !vpeer_voice_ || !peer_.known || peer_.no_signal) return false;
+  VoiceMsg m;
+  m.type = VType::Say;
+  m.sender = me();
+  m.floor = (uint8_t)settings_.floor;  // SAY: the writer's floor
+  m.seq = ++vseq_;
+  // Printable ASCII only, no spaces at either end, 120 characters at most.
+  while (*text == ' ') text++;
+  size_t n = 0;
+  for (; *text && n < kVoiceTextMax; text++) {
+    uint8_t c = (uint8_t)*text;
+    if (c >= 0x20 && c <= 0x7E) m.u.say.text[n++] = (char)c;
+  }
+  while (n && m.u.say.text[n - 1] == ' ') n--;
+  if (!n) return false;
+  m.u.say.len = (uint8_t)n;
+  m.u.say.text[n] = 0;
+  uint32_t id = 0;
+  while (!id) id = p_.random32();
+  m.u.say.id = id;
+  WallTime w = p_.wall();
+  m.u.say.time = w.valid ? w.utc : 0;
+  uint8_t buf[kMaxMsg];
+  size_t len = voice_encode(m, buf, sizeof(buf));
+  if (!len || !vout_.add(sender_id(other_floor(settings_.floor)), (uint8_t)VType::Say, id, buf, len, p_.mono_ms()))
+    return false;
+  touch();
+  vsay_id_ = id;
+  vpurpose_ = VoicePurpose::Message;
+  voice_set_ui(VoiceUi::Sending);
+  vout_.tick(p_.mono_ms(), vlink_);  // the first try now, not at the next tick
+  return true;
+}
+
+bool Controller::voice_dismiss() {
+  if (!vinbox_.pop_top()) return false;
+  touch();
+  voice_save_inbox();
+  // TODO(voice): clear the phone push. Owner default: a dismiss at the panel sends nothing to the phones
+  // yet (kVoiceDismissClearsPhone false); a later phone tap gets "Already dismissed at the panel".
+  if (kVoiceDismissClearsPhone) {
+  }
+  return true;
+}
+
+void Controller::restore_voice_inbox(const VoiceInboxData &d) {
+  if (!vinbox_.restore(d)) p_.log("voice: the saved inbox was unreadable, starting empty");
+  vinbox_seq_++;
+}
+
+void Controller::set_voice_route(VoiceRoute r) {
+  vroute_ = r;
+  vping_wait_ = false;
+  vping_miss_ = 0;
+  if (r == VoiceRoute::Auto) {
+    vdirect_ok_ = true;
+    vping_next_ = p_.mono_ms();  // check it now
+  }
+}
+
+// The clip is let go of once the mic task has finished with it (voice_rec_release), never sooner.
+void Controller::voice_free_clip() {
+  if (!vrec_ || !p_.voice_rec_release(vrec_)) return;  // still inside it: the next tick tries again
+  voice_rec_destroy(vrec_);
+  p_.free_big(vrec_);
+  vrec_ = nullptr;
+}
+
+void Controller::voice_end_job() {
+  const bool failed = vtx_.phase() == VoiceTxPhase::Failed;
+  vlast_stats_ = vtx_.stats();
+  vlast_err_ = vtx_.err();
+  vlast_fell_back_ = vtx_.fell_back();
+  vjobs_++;
+  if (failed) vjob_fails_++;
+  char line[120];
+  snprintf(line, sizeof(line), "voice: x=%u %s%s, %u chunks, %lu resends, %lu BEGIN, text %lu ms after the end",
+           (unsigned)vtx_.xfer(), failed ? "failed: " : "text in", failed ? voice_err_word(vtx_.err()) : "",
+           (unsigned)vlast_stats_.chunks, (unsigned long)vlast_stats_.resends, (unsigned long)vlast_stats_.begin_sends,
+           (unsigned long)vlast_stats_.ms_to_text);
+  p_.log(line);
+  // The direct route went unanswered for this BEGIN: the auto route checks it with a ping now.
+  if (vtx_.direct_failed() && settings_.floor == Floor::Downstairs && vroute_ == VoiceRoute::Auto) vping_next_ = p_.mono_ms();
+  vtx_.forget_rec();
+  vtx_.reset();
+  vjob_ = false;
+  if (voice_capturing()) p_.voice_rec_stop(vrec_, VoiceStop::Cancel);
+  voice_free_clip();
+}
+
+void Controller::voice_meter() {
+  Store &st = *store_;
+  const uint32_t now = p_.mono_ms();
+  if (!st.vmeter_on) st.vmeter_read = now - kVoiceMeterEveryMs;  // the first reading at the next tick
+  st.vmeter_on = true;
+  st.vmeter_at = now;
+}
+
+void Controller::tick_voice(uint32_t now, const WallTime &w) {
+  (void)w;
+  {  // The badge row's live meter (field fix 2026-11-21): the mic task's own block peaks, no capture.
+    Store &st = *store_;
+    if (st.vmeter_on && ms_diff(now, st.vmeter_at) > (int32_t)kVoiceMeterHoldMs) {
+      st.vmeter_on = false;  // the row closed or started recording: nobody asks any more
+      st.vmeter_level = 0;
+    }
+    if (st.vmeter_on && !voice_capturing() && ms_diff(now, st.vmeter_read) >= (int32_t)kVoiceMeterEveryMs) {
+      st.vmeter_read = now;
+      float peak = -99.0f;
+      st.vmeter_level = p_.mic_meter(peak) ? voice_meter_level(peak) : 0;
+    }
+  }
+  // The doorbell stopped the recording (the mic task turns g_rec_bell into rec->stop = Bell).
+  bool bell = vjob_ && vrec_ && vrec_->stopped.load(std::memory_order_acquire) == (uint8_t)VoiceStop::Bell;
+  if (bell && vtx_.active()) vtx_.cancel(VoiceAbort::Bell, now, vlink_);
+  vtx_.tick(now, vlink_);
+  vout_.tick(now, vlink_);
+  uint8_t kind = 0;
+  uint32_t key = 0;
+  while (vout_.expired(now, kind, key)) {
+    if (kind == (uint8_t)VType::Say) {
+      // Like a failed KNOCK: the other panel was offered only because it advertised voice.
+      peer_.no_signal = true;
+      p_.log("voice: SAY had no answer, other panel marked No signal");
+      if (key == vsay_id_) {
+        vsay_id_ = 0;
+        voice_set_ui(VoiceUi::Error, VoiceErr::PeerNoAnswer);
+      }
+    } else {
+      p_.log("voice: VOICE_PUSH had no answer from the gateway, dropped");
+    }
+  }
+  if (vjob_) {
+    const bool cap = voice_capturing();
+    switch (vtx_.phase()) {
+      case VoiceTxPhase::Begin:
+      case VoiceTxPhase::Stream:
+      case VoiceTxPhase::Ending:
+      case VoiceTxPhase::WaitText:
+        voice_set_ui(cap ? VoiceUi::Recording : vtx_.waiting() ? VoiceUi::Waiting : VoiceUi::Working);
+        break;
+      case VoiceTxPhase::Done:
+        snprintf(vtext_, sizeof(vtext_), "%s", vtx_.text());
+        vtext_flags_ = vtx_.text_flags();
+        vtext_seq_++;
+        voice_set_ui(VoiceUi::Result);
+        voice_end_job();
+        break;
+      case VoiceTxPhase::Failed: {
+        VoiceErr e = bell ? VoiceErr::Bell : vtx_.err();
+        voice_set_ui(e == VoiceErr::None ? VoiceUi::Idle : VoiceUi::Error, e);
+        voice_end_job();
+        break;
+      }
+      default:
+        vjob_ = false;
+        break;
+    }
+  }
+  if (!vjob_ && vrec_) voice_free_clip();
+  if (vgw_heard_ && ms_diff(now, vgw_heard_at_) >= (int32_t)kVoiceGwStaleMs) {  // the hellos stopped
+    vgw_heard_ = false;
+    store_->vgw_mulaw = false;
+    p_.log("voice: no voice hello from the gateway for 10 minutes, voice to it stopped");
+    send_state(false);  // the other panel's kStateGwVoice goes with it
+  }
+  if (vui_ == VoiceUi::Error && ms_diff(now, vui_at_) >= 4000) voice_set_ui(VoiceUi::Idle);
+  if (vui_ == VoiceUi::Delivered && ms_diff(now, vui_at_) >= 1500) voice_set_ui(VoiceUi::Idle);
+  if (vding_due_ && !voice_capturing()) {  // a message came while recording
+    vding_due_ = false;
+    p_.play(Sound::Ding, soft_volume());
+  }
+  tick_voice_ping(now);
+}
+
+// The downstairs auto route (DESIGN 4.7): a VOICE_PING straight to the gateway a few seconds after
+// start-up, every 10 minutes, and after a direct BEGIN went unanswered. VOICE_GOT kind 30 within 300 ms
+// = direct is good; a miss is tried again 2 s later, and 3 in a row = through upstairs until a good one.
+// Field fix 2026-11-20: no ping at all until the gateway has said it takes voice (its hello, or
+// upstairs' kStateGwVoice), so a C6 0.4 never gets one; and after 3 misses the gap doubles from 10
+// minutes up to an hour.
+void Controller::tick_voice_ping(uint32_t now) {
+  if (settings_.floor != Floor::Downstairs || vroute_ != VoiceRoute::Auto || !voice_gateway_ok()) {
+    vping_wait_ = false;
+    return;
+  }
+  if (vping_wait_) {
+    if (ms_diff(now, vping_sent_) < 300) return;
+    vping_wait_ = false;
+    if (vping_miss_ < 255) vping_miss_++;
+    if (vping_miss_ >= 3 && vdirect_ok_) {
+      vdirect_ok_ = false;
+      p_.log("voice: 3 pings in a row unanswered direct, using the relay through upstairs");
+    }
+    const int doublings = vping_miss_ < 3 ? 0 : vping_miss_ - 3 > 3 ? 3 : vping_miss_ - 3;
+    const uint32_t gap = vping_miss_ < 3 ? 2000u : 600000u << doublings;
+    vping_next_ = now + (gap > 3600000u ? 3600000u : gap);
+    return;
+  }
+  if (!ms_reached(now, vping_next_)) return;
+  if (vjob_) {  // never in the middle of an upload
+    vping_next_ = now + 1000;
+    return;
+  }
+  uint32_t nonce = p_.random32() | 1u;
+  if ((nonce >> 16) == kReachPingTag) nonce ^= 0x80000000u;  // never mistaken for the serial reach test's
+  if (voice_hello_key(nonce)) nonce = 3;                      // nor for the gateway's hello (key 0 or 1)
+  VoiceMsg m;
+  m.type = VType::Ping;
+  m.sender = me();
+  m.floor = (uint8_t)settings_.floor;
+  m.seq = ++vseq_;
+  m.u.ping.nonce = nonce;
+  uint8_t buf[kVoicePingLen];
+  size_t n = voice_encode(m, buf, sizeof(buf));
+  if (!n) return;
+  p_.radio_send_voice(kSenderGateway, buf, n);
+  vping_nonce_ = nonce;
+  vping_wait_ = true;
+  vping_sent_ = now;
+}
+
+// A voice frame straight from the gateway: it takes voice. The first one after none (start-up, or
+// after the hellos stopped) is logged and goes to the other panel in a STATE (kStateGwVoice). A hello
+// also says whether it takes mu-law (mulaw 1, key 1: C6 0.6 on) or ADPCM only (0, key 0: C6 0.5); a
+// change is logged and goes out in a STATE too (kStateGwMulaw), for the next recording on either panel.
+void Controller::voice_heard_gateway(uint32_t now, int mulaw) {
+  const bool was = vgw_heard_;
+  vgw_heard_ = true;
+  vgw_heard_at_ = now;
+  bool changed = false;
+  if (mulaw >= 0 && store_->vgw_mulaw != (mulaw == 1)) {
+    store_->vgw_mulaw = mulaw == 1;
+    changed = true;
+  }
+  if (was && !changed) return;
+  if (!was) p_.log("voice: the gateway says it takes voice");
+  if (changed) p_.log(store_->vgw_mulaw ? "voice: the gateway takes mu-law (its hello), recording in mu-law"
+                                        : "voice: the gateway takes ADPCM only (its hello), recording in ADPCM");
+  send_state(false);
+}
+
+void Controller::voice_report(char *out, size_t n) {
+  static const char *const kRoute[] = {"auto", "direct", "relay"};
+  const bool up = settings_.floor == Floor::Upstairs;
+  snprintf(out, n,
+           "voice: route %s (%s now%s), pings missed in a row %u; jobs %lu, %lu failed; last: %u chunks, %lu resends, "
+           "%lu BEGIN%s, %s, text %lu ms after the end; inbox %d; other panel %s; gateway %s%s; codec %s%s",
+           up ? "direct (upstairs)" : kRoute[(int)vroute_], voice_hop() == kSenderGateway ? "direct" : "via upstairs",
+           (!up && vroute_ == VoiceRoute::Auto) ? (vdirect_ok_ ? ", pings answered" : ", pings unanswered") : "",
+           (unsigned)vping_miss_, (unsigned long)vjobs_, (unsigned long)vjob_fails_, (unsigned)vlast_stats_.chunks,
+           (unsigned long)vlast_stats_.resends, (unsigned long)vlast_stats_.begin_sends,
+           vlast_fell_back_ ? " (fell back to upstairs)" : "", voice_err_word(vlast_err_),
+           (unsigned long)vlast_stats_.ms_to_text, vinbox_.count(),
+           vpeer_voice_ ? "takes voice" : "has no voice (or not heard)",
+           vgw_heard_ ? "takes voice (its hello)" : vpeer_gw_voice_ ? "takes voice (upstairs heard it)" : "no voice hello, nothing sent to it",
+           !voice_gateway_ok() ? "" : voice_gateway_mulaw() ? ", mu-law too" : ", ADPCM only",
+           voice_codec() == VoiceCodec::Mulaw ? "1 mu-law" : "2 ADPCM", store_->vcodec ? " by hand" : "");
+}
+
+void Controller::fill_voice_view(VoiceView &vv, const WallTime &w) {
+  vv.capable = true;
+  vv.peer_offline = !peer_.known || peer_.no_signal;
+  vv.peer_voice = vpeer_voice_;
+  vv.ui = vui_;
+  vv.purpose = vui_ == VoiceUi::Idle ? (VoicePurpose)0 : vpurpose_;
+  vv.press_ms = vpress_ms_;
+  // While capturing, the recording's own level; with the badge row open before START, the live meter.
+  if (store_->vmeter_on && !voice_capturing()) vv.level = store_->vmeter_level;
+  else vv.level = vrec_ ? vrec_->level.load(std::memory_order_relaxed) : 0;
+  vv.err = verr_;
+  vv.text_seq = vtext_seq_;
+  vv.text_flags = vtext_flags_;
+  snprintf(vv.text, sizeof(vv.text), "%s", vtext_);
+  vv.inbox_n = (uint8_t)vinbox_.count();
+  vv.inbox_seq = vinbox_seq_;
+  if (const VoiceNote *t = vinbox_.top()) {
+    vv.top = *t;
+    if (t->time && w.valid) format_time12(vv.top_when, sizeof(vv.top_when), (int64_t)t->time + p_.utc_offset(t->time));
+  }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1605,19 +2388,19 @@ void Controller::update_agenda(const WallTime &w) {
 // temperature and pulse on both panels. Mike, 2026-11-13: the sound is five dings (Sound::DogAlert,
 // not the soft chime, which was taken for a doorbell), only on the panel of the floor the dog
 // belongs to (Lucy upstairs, Copper downstairs), at the doorbell's volume, and again every
-// kDogRingRepeatMin minutes until the dog is in. The limit is 30 minutes,
-// 15 when the outside is below 32 or above 88 F, 10 when WeatherGate flags danger heat or cold; with
-// no clock or no fresh outside reading, 30 minutes and no temperature. How long it has been out
+// kDogRingRepeatMin minutes until the dog is in. Mike, 2026-11-22: the limit is each dog's own, from
+// the "feels like" temperature outside (dog_limit_min, core/dog.h: 5 to 60 minutes, none at all from
+// 45 to 89 F); with no clock or no fresh outside reading, kDogOutMinNormal and no temperature. How long it has been out
 // comes from the dog's "since" time; if that or the clock is missing, from when this panel first
 // saw it out. Both panels do this alone from the same data. Cheap: a few integer compares.
 void Controller::tick_dog_nudge(uint32_t now, const WallTime &w) {
-  int limit = kDogOutMinNormal;
+  int limit[2] = {kDogOutMinNormal, kDogOutMinNormal};
   nudge_temp_ = false;
   if (w.valid && outside_fresh(now)) {
     nudge_temp_ = true;
     nudge_tenths_ = outside_.temp;
-    if (outside_.flags & (kOutsideDangerHeat | kOutsideDangerCold)) limit = kDogOutMinDanger;
-    else if (outside_.temp < kDogColdTenthsF || outside_.temp > kDogHotTenthsF) limit = kDogOutMinExtreme;
+    const int16_t feels = feels_like_tenths(outside_.temp, outside_.hum);
+    for (int i = 0; i < 2; i++) limit[i] = dog_limit_min(i, feels);
   }
   bool told = false;    // a dog went past the limit this tick: the Pi is told once, after the loop
   for (int i = 0; i < 2; i++) {
@@ -1636,7 +2419,7 @@ void Controller::tick_dog_nudge(uint32_t now, const WallTime &w) {
     if (w.valid && d.since >= kClockFloor && w.utc >= d.since) secs = w.utc - d.since;
     else secs = (uint32_t)(ms_diff(now, n.out_mono) / 1000);
     uint32_t mins = secs / 60;
-    n.over_min = secs >= (uint32_t)limit * 60u ? (uint16_t)(mins > 65535u ? 65535u : mins) : 0;
+    n.over_min = limit[i] > 0 && secs >= (uint32_t)limit[i] * 60u ? (uint16_t)(mins > 65535u ? 65535u : mins) : 0;
     if (n.over_min && !n.noticed) {  // for the Pi, whatever the quiet hours or status say about the chime
       n.noticed = true;
       told = true;
@@ -1716,6 +2499,61 @@ uint8_t Controller::presence_flags() const {
   return (uint8_t)((away_now() ? kStateAwayDesk : 0) | (nobody_near_ ? kStateNobodyNear : 0));
 }
 
+// ROOMS (Mike, 2026-11-22): the upstairs panel tells the gateway both floors' indoor readings (as the
+// tiles show them, offset applied) and whether upstairs is occupied, for Apple Home through the Pi.
+// Downstairs never sends one. When: the first about kRoomsFirstMs after start-up; an occupancy change
+// at once; a reading that moved 0.5 F or 2 points of humidity since the last one sent, or a reading
+// coming or going, but never within kRoomsMinGapMs of the last; and at least every kRoomsBeatMs (every
+// kRoomsRetryMs after one went unACKed). It rides the retry queue behind panel traffic and notices.
+void Controller::tick_rooms(uint32_t now, const WallTime &w) {
+  if (!rooms_warm_ && ms_diff(now, started_ms_) >= (int32_t)kRoomsFirstMs) rooms_warm_ = true;
+  if (settings_.floor != Floor::Upstairs || !rooms_warm_) return;
+  Msg m;
+  m.type = MsgType::Rooms;
+  auto &r = m.u.rooms;
+  if (reading_valid_) {
+    r.flags |= kRoomsUpValid;
+    r.up_t = reading_temp_;
+    r.up_h = reading_hum_;
+  }
+  // Downstairs (Mike's call via the lead, 2026-11-22): valid while its last READING said valid and the
+  // link to it is up. Downstairs sends a READING only when it moves (no heartbeats), so an age limit
+  // here would flap the Home tile in a steady room; the Pi's 15-minute check on its own file, which
+  // this message's heartbeat keeps fresh, catches a ROOMS stream that stops.
+  if (peer_rd_have_ && peer_.reading && !peer_.no_signal) {
+    r.flags |= kRoomsDownValid;
+    r.down_t = peer_.temp;
+    r.down_h = peer_.hum > 1000 ? 1000 : peer_.hum;
+  }
+  if (settings_.presence_fitted) r.flags |= (uint8_t)(kRoomsOccKnown | (occupied_ ? kRoomsOccupied : 0));
+  if (rooms_.any) {
+    const uint8_t occ = kRoomsOccKnown | kRoomsOccupied, valid = kRoomsUpValid | kRoomsDownValid;
+    const int32_t since = ms_diff(now, rooms_.at);
+    const bool occ_moved = (r.flags & occ) != (rooms_.flags & occ);
+    const bool moved = (r.flags & valid) != (rooms_.flags & valid) ||
+                       ((r.flags & kRoomsUpValid) && (abs(r.up_t - rooms_.up_t) >= 5 || abs((int)r.up_h - (int)rooms_.up_h) >= 20)) ||
+                       ((r.flags & kRoomsDownValid) &&
+                        (abs(r.down_t - rooms_.down_t) >= 5 || abs((int)r.down_h - (int)rooms_.down_h) >= 20));
+    const bool beat = since >= (int32_t)(rooms_.failed ? kRoomsRetryMs : kRoomsBeatMs) || since < 0;
+    if (!occ_moved && !((moved || beat) && (since >= (int32_t)kRoomsMinGapMs || since < 0))) return;
+  }
+  r.time = w.valid ? w.utc : 0;
+  const bool failed = rooms_.failed;
+  uint16_t seq = retry_.push(m, me(), now);  // latest wins: replaces one still waiting
+  rooms_.any = true;
+  rooms_.acked = false;
+  rooms_.failed = seq == 0 || failed;  // not queued (full, or refused by encode) counts as unACKed: again in a minute
+  rooms_.flags = r.flags;
+  rooms_.up_t = r.up_t;
+  rooms_.up_h = r.up_h;
+  rooms_.down_t = r.down_t;
+  rooms_.down_h = r.down_h;
+  rooms_.time = r.time;
+  rooms_.at = now;
+  rooms_.seq = seq;
+  if (!seq) p_.log("rooms: could not be queued, again in a minute");
+}
+
 void Controller::build_view() {
   uint32_t now = p_.mono_ms();
   WallTime w = p_.wall();
@@ -1780,7 +2618,7 @@ void Controller::build_view() {
   if (fresh) {
     v.outside.code = forecast_valid(outside_.code) ? (Forecast)outside_.code : Forecast::Unknown;
     v.outside.heat = outside_.flags & kOutsideDangerHeat;
-    v.outside.cold = outside_.flags & kOutsideDangerCold;
+    v.outside.cold = (outside_.flags & kOutsideDangerCold) || cold_test_;
     v.outside.temp_tenths = outside_.temp;
     v.outside.hum_pct = outside_.hum;
     snprintf(v.outside.temp, sizeof(v.outside.temp), "%d%sF", round_tenths(outside_.temp), kDeg);
@@ -1802,7 +2640,9 @@ void Controller::build_view() {
   v.bell.shakes = bell_shakes_;
   v.bell.alert = ring_alert_;
   static const char *const kBell[] = {"", "Ringing", "Delivered", "Come on", "Not now", "No answer yet", "Couldn't reach"};
-  snprintf(v.bell.line, sizeof(v.bell.line), "%s", kBell[(int)v.bell.out]);
+  bool by_phone = bell_out_.from_phone() && (v.bell.out == BellOut::ComeOn || v.bell.out == BellOut::NotNow);
+  // "Come on (from phone)" is 212 px in B20, inside the 250 px tile (Mike, 2026-11-15).
+  snprintf(v.bell.line, sizeof(v.bell.line), "%s%s", kBell[(int)v.bell.out], by_phone ? " (from phone)" : "");
   bool missed = bell_in_.missed();
   if (missed && !last_missed_) missed_mono_ = now;  // the note stays an hour (cleared in tick)
   last_missed_ = missed;
@@ -1833,6 +2673,8 @@ void Controller::build_view() {
   v.mail.solid = mail_.state().waiting;
   v.mail.show = upstairs || v.mail.solid;
   v.mail.pulse = !upstairs && v.mail.solid;
+  v.nomail.active = mail_.state().none;
+  v.nomail.show = upstairs || v.nomail.active;
 
   // The heat and cooling arrows
   {
@@ -1912,6 +2754,8 @@ void Controller::build_view() {
            ms_diff(now, knock_near_at_) < (int32_t)kNearNoteMs)
     snprintf(v.toast, sizeof(v.toast), "No one is near the panel");
 
+  fill_voice_view(v.voice, w);
+
   v.passer_by = passer_on_;
   v.presence.fitted = pres_on_;
   v.presence.seen_now = pres_on_ && pres_now_;
@@ -1925,6 +2769,7 @@ void Controller::build_view() {
   bi.minute_of_day = w.valid ? minutes_of_day((int64_t)w.utc + p_.utc_offset(w.utc)) : -1;  // the dark hours go by the clock
   bi.doorbell_wake = v.banner.kind != BannerKind::None;
   bi.mail_wake = mail_wake_ || (upstairs && v.req.flash);  // urgent arrows keep it lit (Mike, 2026-11-06)
+  bi.voice_wake = voice_wake_;
   bi.clean_screen = clean_screen_;
   // The night path: someone walking past lights the screen (at the night level) for kNightWakeMs.
   bi.presence_wake = pres_on_ && pres_seen_ && ms_diff(now, pres_last_ms_) < (int32_t)kNightWakeMs;
