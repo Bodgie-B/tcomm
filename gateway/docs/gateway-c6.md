@@ -78,7 +78,7 @@ Or tell Claude "flash the gateway on COM7" (with the right port).
    differ, the bottom line of the screen is yellow: put the screen's MAC in the secrets file and
    run step 5 again. The C6's Wi-Fi MAC is esptool's `BASE MAC` (6 bytes), not its longer `MAC`
    line, which is the chip's 8-byte Zigbee/Thread address. Mike's C6 reads BASE MAC
-   fc:01:2c:fd:d3:a8 (esptool read_mac, 2026-10-25).
+   02:00:00:00:00:03 (esptool read_mac, 2026-10-25).
 
 To compile without uploading, leave the port off: `bash firmware/tools/fw.sh gateway`.
 
@@ -105,7 +105,7 @@ same folder to `secrets.h` and fill it in. It's in `.gitignore`, so it never get
 gateway never prints the keys or shows them on its screen.
 
 ```
-#define TCOMM_MAC_UPSTAIRS   {0x14, 0xC1, 0x9F, 0x54, 0xBE, 0x20}
+#define TCOMM_MAC_UPSTAIRS   {0x02, 0x00, 0x00, 0x00, 0x00, 0x01}
 #define TCOMM_MAC_DOWNSTAIRS {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
 #define TCOMM_MAC_GATEWAY    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
 
@@ -115,10 +115,10 @@ gateway never prints the keys or shows them on its screen.
 ```
 
 `TCOMM_MAC_UPSTAIRS` is the panel the gateway sends to. The line above assumes the first panel
-(14:C1:9F:54:BE:20) goes upstairs; the panel works out its floor from this table too.
+(02:00:00:00:00:01) goes upstairs; the panel works out its floor from this table too.
 `TCOMM_MAC_DOWNSTAIRS` stays all zeros until the second panel arrives, and the gateway skips a zero
-MAC. `TCOMM_MAC_GATEWAY` is the C6's own Wi-Fi MAC: for Mike's C6, `{0xFC, 0x01, 0x2C, 0xFD, 0xD3,
-0xA8}` (step 7 above confirms it). The gateway runs without it, but the panels and the listener
+MAC. `TCOMM_MAC_GATEWAY` is the C6's own Wi-Fi MAC, for example `{0x02, 0x00, 0x00, 0x00, 0x00,
+0x03}` (step 7 above confirms it). The gateway runs without it, but the panels and the listener
 ignore anything from a MAC that isn't in this table.
 
 The three keys are exactly 16 characters each; the build stops if one isn't. `TCOMM_PMK` is

@@ -22,7 +22,7 @@ Board: Waveshare ESP32-S3-Touch-LCD-4.3C (800x480 IPS, 5-point capacitive touch,
 - Touch works everywhere Mike tried. The backlight dims low enough that he can't see the screen, so the low-brightness check passed by his judgment. Flicker at low brightness has not been checked (slow-motion phone video).
 - Sound came out of the unit during the AI app demo, so a speaker is connected. Its size, impedance and loudness are unknown.
 - Whether the onboard clock holds time with power off is unknown. The coin cell is not in Waveshare's package list. Test: set the time, unplug for a minute, replug.
-- MAC addresses read from the flash tool for this board: Wi-Fi station 14:C1:9F:54:BE:20, soft-AP 14:C1:9F:54:BE:21, Bluetooth 14:C1:9F:54:BE:22. ESP-NOW peers normally use the station MAC (my understanding, confirm in code).
+- MAC addresses read from the flash tool for this board: Wi-Fi station 02:00:00:00:00:01, soft-AP 14:C1:9F:54:BE:21, Bluetooth 14:C1:9F:54:BE:22. ESP-NOW peers normally use the station MAC (my understanding, confirm in code).
 - The two floors are not assigned yet. The firmware needs a stored "which floor am I" setting.
 
 ## Decisions already made (do not reopen)
@@ -72,7 +72,7 @@ Time value of 0 (rule added 2026-10-30): the gateway sends a time of 0 until the
 The LUCY and OUTSIDE messages come from Mike's WeatherGate Raspberry Pi 2 through an ESP32-C6 gateway on its USB port. That gateway and the Pi-side bridge are Mike's work and are not part of the panel firmware. Their code is not in this repo.
 
 Gateway status (Mike's test report, 2026-10-30):
-- The gateway is working. The C6 shows up on the Pi as a USB serial device (`/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_...`, `ttyACM0`) with a udev alias `/dev/tcomm-gateway`. A Pi service, `tcomm-bridge`, talks to it. The serial ID includes the C6's MAC, FC:01:2C:FD:D3:A8. That should be its station MAC for ESP-NOW peering (unverified, confirm in code).
+- The gateway is working. The C6 shows up on the Pi as a USB serial device (`/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_...`, `ttyACM0`) with a udev alias `/dev/tcomm-gateway`. A Pi service, `tcomm-bridge`, talks to it. The serial ID includes the C6's MAC, 02:00:00:00:00:03. That should be its station MAC for ESP-NOW peering (unverified, confirm in code).
 - Opening the port from the Pi does not reset the C6.
 - Real LUCY and OUTSIDE messages reached Mike's 4.3C panel (the S3 board) and were acked: first contact in 5 ms (LUCY) and 48 ms (OUTSIDE), readings about once a minute acked in 22 to 41 ms, and a LucyGate button double-click OUT then IN acked in 6 and 26 ms. A day-long run started 2026-10-30, with no stuck replies so far.
 - Not yet tested: the gateway's `failed` reply to the Pi when a panel doesn't ack. This is how the Pi learns a message didn't get through. Test it by unplugging the panel's power and pressing the LucyGate button.

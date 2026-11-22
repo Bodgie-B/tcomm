@@ -54,8 +54,8 @@ Then the laptop runs your flash command over ssh, pointing at those files.
 | | |
 |---|---|
 | Chip | ESP32-C6 (Waveshare ESP32-C6-GEEK), 4 MB flash |
-| Port | `/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_FC:01:2C:FD:D3:A8-if00`, or `/dev/tcomm-gateway` if the udev rule is in place |
-| Base MAC | `fc:01:2c:fd:d3:a8` |
+| Port | `/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_02:00:00:00:00:03-if00`, or `/dev/tcomm-gateway` if the udev rule is in place |
+| Base MAC | `02:00:00:00:00:03` |
 | Where the image goes | `0x10000`, the app0 slot |
 | Slot size | `0x140000` (1,310,720 bytes); an image can't be bigger |
 | Never written | bootloader `0x0`, partition table `0x8000`, nvs `0x9000`, otadata `0xE000`, and everything from `0x150000` up |
@@ -75,7 +75,7 @@ The command names below are esptool 4.x's. esptool 5.x spells them with hyphens 
    ESP32-C6 as its chip. If any check fails, stop with nothing changed and the bridge still running.
 3. Stop the bridge, and make sure nothing has the port open.
 4. Read the chip with `esptool --chip esp32c6 --port PORT read_mac`. Carry on only if it's an
-   ESP32-C6 and its base MAC is `fc:01:2c:fd:d3:a8`. Otherwise start the bridge again and stop.
+   ESP32-C6 and its base MAC is `02:00:00:00:00:03`. Otherwise start the bridge again and stop.
 5. Save what's in the slot now with `read_flash 0x10000 0x140000` into a new backup file, and write
    a `.sha256` beside it. Only when that read succeeds does it replace the previous backup.
 6. Write the image at `0x10000` and nowhere else: `write_flash 0x10000 gateway-c6.ino.bin`. No
@@ -91,7 +91,7 @@ The command names below are esptool 4.x's. esptool 5.x spells them with hyphens 
    in case Lucy went out or came in while the bridge was down. Weather readings missed in that
    minute need nothing: the panels keep showing the last one until the next arrives.
 9. Print the hello reply as the last line and exit 0, for example
-   `{"boot":false,"mac":"fc:01:2c:fd:d3:a8","channel":1,"fw":"gateway-c6 0.2"}`. The laptop checks
+   `{"boot":false,"mac":"02:00:00:00:00:03","channel":1,"fw":"gateway-c6 0.2"}`. The laptop checks
    the `fw` value against the version it built.
 
 For anything else, exit non-zero with a line saying which step failed. If the bridge won't start

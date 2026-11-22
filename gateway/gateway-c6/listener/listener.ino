@@ -1,6 +1,6 @@
 // A stand-in for the upstairs panel, for testing the C6 gateway before the panels' own ESP-NOW is
 // switched on. It runs on any ESP32 whose Wi-Fi MAC is a panel's in secrets.h (the first panel,
-// 14:C1:9F:54:BE:20, is upstairs). It prints each frame from the gateway, decoded and in hex, and
+// 02:00:00:00:00:01, is upstairs). It prints each frame from the gateway, decoded and in hex, and
 // sends back the same ACK the panel firmware sends (Controller::on_radio).
 //
 // Type into its serial port:

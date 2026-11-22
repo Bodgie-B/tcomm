@@ -123,4 +123,4 @@ These come from reading the core's sdkconfig and source, not from the board.
 - The dimmest readable backlight level in a dark room, and whether it flickers at low levels. The schematic suggests the PWM is filtered into the boost converter, which would make the LED current smooth, but that's a reading of the drawing, not a measurement.
 - Speaker size, impedance, loudness.
 - Current draw with backlight and speaker running.
-- ESP-NOW peer address: the chip's Wi-Fi station MAC is the usual choice. The bring-up sketch prints it to compare with the flash tool's 14:C1:9F:54:BE:20.
+- ESP-NOW peer address: the chip's Wi-Fi station MAC is the usual choice. The bring-up sketch prints it to compare with the flash tool's 02:00:00:00:00:01.

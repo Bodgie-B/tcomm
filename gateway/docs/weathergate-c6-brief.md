@@ -28,10 +28,10 @@ the same code.
 |---|---|
 | Board | Waveshare ESP32-C6-GEEK |
 | Firmware | `gateway-c6 0.1`, built and flashed from the TComm project (never from the Pi) |
-| Wi-Fi MAC | `fc:01:2c:fd:d3:a8` |
+| Wi-Fi MAC | `02:00:00:00:00:03` |
 | ESP-NOW | channel 1, encrypted; never joins Wi-Fi |
-| Sends to | the upstairs panel, `14:c1:9f:54:be:20` |
-| USB | the chip's own USB Serial/JTAG: Espressif `303a:1001`, serial number `FC:01:2C:FD:D3:A8` |
+| Sends to | the upstairs panel, `02:00:00:00:00:01` |
+| USB | the chip's own USB Serial/JTAG: Espressif `303a:1001`, serial number `02:00:00:00:00:03` |
 
 The keys are in the C6's firmware. The Pi never needs them, and they never go over the serial
 link.
@@ -45,7 +45,7 @@ there's nothing to install. Linux's own `cdc_acm` driver picks it up as `/dev/tt
 That number can change between boots, so use the stable name:
 
 ```
-/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_FC:01:2C:FD:D3:A8-if00
+/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_02:00:00:00:00:03-if00
 ```
 
 Linux builds that name from the USB strings, which Windows showed as the same serial number on
@@ -65,7 +65,7 @@ ModemManager also holds the port for a few seconds. A udev rule keeps it away an
 fixed name at the same time. In `/etc/udev/rules.d/99-tcomm-gateway.rules`:
 
 ```
-SUBSYSTEM=="tty", ATTRS{idVendor}=="303a", ATTRS{idProduct}=="1001", ATTRS{serial}=="FC:01:2C:FD:D3:A8", SYMLINK+="tcomm-gateway", ENV{ID_MM_DEVICE_IGNORE}="1"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="303a", ATTRS{idProduct}=="1001", ATTRS{serial}=="02:00:00:00:00:03", SYMLINK+="tcomm-gateway", ENV{ID_MM_DEVICE_IGNORE}="1"
 ```
 
 then
@@ -158,13 +158,13 @@ text starts `ESP-ROM`, and any system error starts `E (`.
 The first line after every restart, power-up included:
 
 ```
-{"boot":true,"mac":"fc:01:2c:fd:d3:a8","channel":1,"fw":"gateway-c6 0.1"}
+{"boot":true,"mac":"02:00:00:00:00:03","channel":1,"fw":"gateway-c6 0.1"}
 ```
 
 The reply to hello:
 
 ```
-{"boot":false,"mac":"fc:01:2c:fd:d3:a8","channel":1,"fw":"gateway-c6 0.1"}
+{"boot":false,"mac":"02:00:00:00:00:03","channel":1,"fw":"gateway-c6 0.1"}
 ```
 
 Exactly one final reply per request with a valid id. These are real ones from the tests:
@@ -298,7 +298,7 @@ back in, printing every line that comes back. UNVERIFIED on the Pi; written for 
 ```python
 import json, time, serial
 
-PORT = '/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_FC:01:2C:FD:D3:A8-if00'
+PORT = '/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_02:00:00:00:00:03-if00'
 
 with serial.Serial(PORT, 115200, timeout=0.2, exclusive=True) as s:
     def send(obj):

@@ -3,14 +3,14 @@
 Both panels run the same radio build. A panel works out its floor from its own Wi-Fi MAC: the MAC
 listed as `TCOMM_MAC_UPSTAIRS` in `secrets.h` is upstairs, the one listed as `TCOMM_MAC_DOWNSTAIRS`
 is downstairs. So the second panel needs one line in `secrets.h` and no code change. The first
-panel (14:C1:9F:54:BE:20) is upstairs.
+panel (02:00:00:00:00:01) is upstairs.
 
 Both panels get flashed: the new one, and then the first one again, because each panel only
 listens to the MACs it was built with. The C6 gateway doesn't need flashing. It only ever sends to
 upstairs, and upstairs passes the weather and Lucy on to downstairs.
 
 Written 2026-10-31, before the second board arrived. Ran on 2026-11-02: `fw.sh mac` read the new
-board's MAC (a4:cb:8f:c7:22:ec) with esptool's usual serial exception after the reset, both panels
+board's MAC (02:00:00:00:00:02) with esptool's usual serial exception after the reset, both panels
 were flashed over USB (the new one came up as COM7, the first as COM5), and `tools/two_panels.ps1`
 passed all 29 checks. Verified.
 

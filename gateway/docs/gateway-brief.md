@@ -41,7 +41,7 @@ Each panel accepts frames only from three MAC addresses (upstairs, downstairs an
 and only when the message's sender byte matches the MAC it came from. The gateway's sender byte
 is 2, for both message types. So:
 
-- The C6 needs both panels' Wi-Fi station MACs. The first panel's is 14:C1:9F:54:BE:20; which
+- The C6 needs both panels' Wi-Fi station MACs. The first panel's is 02:00:00:00:00:01; which
   floor it becomes isn't decided yet. The second panel hasn't arrived, so its MAC isn't known.
 - TComm needs the C6's Wi-Fi station MAC (`esp_read_mac(mac, ESP_MAC_WIFI_STA)`) for its
   `TCOMM_MAC_GATEWAY`. Print it on the serial port at boot, and on the C6's screen if that's
