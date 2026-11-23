@@ -15,7 +15,7 @@ namespace {
 Status g_timed = Status::Private;
 int g_dur_i = 3;  // 1 hr, the drawing's default
 uint32_t g_custom_s = 90 * 60;
-Status g_fallback = Status::Busy;
+Status g_fallback = Status::Open;
 lv_obj_t *g_dyn = nullptr;  // the part of the timer sheet rebuilt on every choice
 Art g_timer_badge;
 
@@ -220,8 +220,9 @@ void open_timer_sheet(Status s) {
   g_dur_i = default_dur();
   // Custom starts from the default time (an hour when the default is "until changed").
   g_custom_s = durations()[g_dur_i] ? durations()[g_dur_i] : 3600;
-  g_fallback = g_set.timer_fallback_default;  // HANDOFF: Busy
-  if (g_fallback == s) g_fallback = Status::Busy;
+  // THEN SWITCH TO starts on Open for both Private and Sleeping (Mike, 2026-11-23; it was the
+  // handoff's Busy, from Settings::timer_fallback_default, which the saved panels still hold).
+  g_fallback = Status::Open;
   theme::StatusColors sc = theme::status_colors((int)s, g_mode);
   g_timer_badge.make(art::kBadge, art::kBadge, true);
   art::badge(g_timer_badge.cv, (int)s, g_mode == Mode::Night ? k : sc.tile, theme::sheet_bg(g_mode));

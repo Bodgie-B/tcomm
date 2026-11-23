@@ -45,7 +45,9 @@ struct Settings {
   int16_t temp_offset_tenths_f = 0;  // local sensor correction, 1 F steps in the UI
 
   // Status rules
-  Status timer_fallback_default = Status::Busy;  // HANDOFF starting value
+  // No longer read: the timer sheet always starts on Open (Mike, 2026-11-23). Saved panels hold Busy
+  // here and nothing in Settings changes it, so the sheet doesn't use it. Kept for the saved layout.
+  Status timer_fallback_default = Status::Open;
   // No longer used: both dogs can be out (Mike, 2026-10-25), so each button always works. Kept so
   // saved settings keep their layout.
   bool dog_tap_blocked_when_other_out = true;
