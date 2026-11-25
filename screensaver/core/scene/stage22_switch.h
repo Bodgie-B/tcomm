@@ -24,10 +24,11 @@ int ssS22Switch();
 // serial step has landed (a named constant per piece in majors.cpp, flipped by that step: C2 tai chi,
 // C3 the long shot, C4 the herd, C5c the mushroom), so a stub major is never planned into an empty
 // beat. Memory::s22_preview lets a test plan as if a piece had landed (bit 7 set, then these bits);
-// the panel and every run leave it 0.
-enum S22Piece : uint8_t { S22_TAICHI = 1, S22_LONGSHOT = 2, S22_MUSHROOM = 4, S22_HERD = 8 };
+// the panel and every run leave it 0. S22_FROG (2026-11-25): the frog he licks, added later behind the
+// same switch (kFrogLanded in majors.cpp).
+enum S22Piece : uint8_t { S22_TAICHI = 1, S22_LONGSHOT = 2, S22_MUSHROOM = 4, S22_HERD = 8, S22_FROG = 0x10 };
 constexpr uint8_t S22_PREVIEW = 0x80;
-constexpr uint8_t S22_ALL = S22_TAICHI | S22_LONGSHOT | S22_MUSHROOM | S22_HERD;
+constexpr uint8_t S22_ALL = S22_TAICHI | S22_LONGSHOT | S22_MUSHROOM | S22_HERD | S22_FROG;
 
 // Whether `piece` plans: never with SS_S22 off (whatever the preview byte says, so the off build plans
 // exactly as before stage 22); otherwise the preview byte when its bit 7 is set, else `landed`.

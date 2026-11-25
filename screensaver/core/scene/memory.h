@@ -81,7 +81,8 @@ struct Memory {
   // Stage 22 (INTEGRATION_PLAN 3.1 point 3; Mike, 2026-11-18): four bytes, so the struct is 88 with no
   // tail padding. Only `mush` is ever printed (" mush=S" when its stage is not 0), so no pinned memory
   // string moves. taichi_next and mush also travel between screensaver runs in Inputs::carry.
-  uint8_t taichi_next;   // tai chi: bits 0-1 the next chapter; bit 2 done this morning; bit 7 valid
+  uint8_t taichi_next;   // tai chi: bits 0-1 the next chapter; bit 2 done this morning; bit 7 valid;
+                         // bit 3 (FROG_ASK, day_trip.h): the next dry midday loop by day plays frog_lick
   uint8_t herd_wait;     // midday loops before a herd may come again (the deer visit)
   uint8_t mush;          // the mushroom patch, packed as mush_patch.h says (stage, left, soak)
   // Zero on the panel and in every run (it also keeps the struct at 88 bytes on purpose). Tests only:

@@ -145,6 +145,13 @@ static const char* const kMidday1[10] = {
 // major a draw lands on (kite for fetch in loop 0; fetch and echo in loop 1), loop 2 plays the long shot where the
 // plinking was (the hillside rule), loop 3 is a deer visit (" herd=", two majors) and the later loops follow through
 // the loop seeds and the memory's ring. With SS_S22 off the lines above still hold, byte for byte.
+// 2026-11-25, the frog he licks (frog_lick, a midday pool row of weight 1.0): the midday S22 lines re-captured, the
+// morning's untouched (the frog weighs 0 there, and Rng::weighted skips a zero weight with the same draw). Loops 0 to 3
+// keep their seeds: the new row moves where the plan's weighted draws land (loop 0 map_chase, fish_leap, kite in that
+// order and a shorter fit, 594 s; loop 1 ants_cookie for pinecone; loop 2 ranger_ridge and frog_lick for ants_cookie
+// and the long shot; loop 3 the same deer visit and majors, 627 s with the new ring). From loop 4 the loop seeds
+// differ (loop 3's length changed the distant bird's draws, and with them the loop rng's last draw) and the later
+// loops follow. With SS_S22 off kMidday1 still holds, byte for byte.
 static const char* const kMorning1S22[10] = {
     "loop=0 seed=1 length=614s plan=family=morning stay=1 wake=0 coffee=2 pee=0 breakfast=0 wash=0 tidy=0 day_hike=0 fillers=stream_listen majors=taichi fog=12 memory=loop=1 cairn=0 shoe=1 stolen=shoe hole=0 rod=0 brave=chipmunk,squirrel,raccoon,owl,bear,dog ring=taichi",
     "loop=1 seed=545980955 length=649s plan=family=morning wake=2 coffee=0 bag_down=1 break_camp=1 douse=1 leave=1 fillers=stream_listen,read,cairn majors=squirrel_splash,echo,fishing_small fog=14 memory=loop=2 cairn=6 shoe=1 stolen=shoe hole=0 rod=1 brave=chipmunk,squirrel,raccoon,owl,bear,dog ring=taichi,squirrel_splash,echo,fishing_small",
@@ -158,16 +165,16 @@ static const char* const kMorning1S22[10] = {
     "loop=9 seed=2565594086 length=594s plan=family=morning stay=1 wake=2 coffee=3 pee=0 breakfast=2 wash=0 tidy=1 day_hike=0 fillers=stream_listen majors=fish_leap,deer_stick,echo fog=13 memory=loop=10 cairn=2 shoe=1 stolen=mug hole=0 rod=1 brave=raccoon,owl,bird,dog ring=fishing_log,ranger_ridge,pinecone,squirrel_splash,ants_cookie,fish_leap,deer_stick,echo",
 };
 static const char* const kMidday1S22[10] = {
-    "loop=0 seed=1 length=650s plan=family=midday return=2 lunch=0 wade=1 nap=0 map=0 afternoon=0 fillers=cloud_watch,stream_listen,cairn majors=fish_leap,map_chase,kite memory=loop=1 cairn=6 shoe=0 stolen=none hole=0 rod=0 brave=squirrel,frog,bird,mouse ring=fish_leap,map_chase,kite",
-    "loop=1 seed=3851155901 length=605s plan=family=midday return=1 lunch=1 wade=0 nap=1 map=1 afternoon=1 fillers=cairn,cloud_watch,skip_stone majors=fetch,echo,pinecone memory=loop=2 cairn=7 shoe=0 stolen=none hole=0 rod=0 brave=squirrel,frog,bird,mouse ring=fish_leap,map_chase,kite,fetch,echo,pinecone",
-    "loop=2 seed=3700665890 length=607s plan=family=midday return=2 lunch=1 wade=2 nap=0 map=1 afternoon=0 fillers=stream_listen,cairn majors=ants_cookie,longshot memory=loop=3 cairn=7 shoe=0 stolen=none hole=0 rod=0 brave=chipmunk,squirrel,frog,deer,raccoon,owl,bird,bear ring=fish_leap,map_chase,kite,fetch,echo,pinecone,ants_cookie,longshot",
-    "loop=3 seed=2419121647 length=599s plan=family=midday return=0 lunch=0 wade=1 nap=1 map=0 afternoon=1 herd=2 fillers=cairn majors=slackline,bike memory=loop=4 cairn=7 shoe=0 stolen=none hole=0 rod=0 brave=chipmunk,squirrel,frog,deer,raccoon,owl,bird,bear ring=kite,fetch,echo,pinecone,ants_cookie,longshot,slackline,bike",
-    "loop=4 seed=1193374392 length=612s plan=family=midday return=1 lunch=0 wade=0 nap=2 map=1 afternoon=0 fillers=skip_stone,read,cairn majors=deer_stick,bathe memory=loop=5 cairn=7 shoe=0 stolen=none hole=0 rod=0 brave=chipmunk,raccoon,bird,dog ring=echo,pinecone,ants_cookie,longshot,slackline,bike,deer_stick,bathe",
-    "loop=5 seed=3383422565 length=641s plan=family=midday return=2 lunch=1 wade=2 nap=1 map=0 afternoon=0 fillers=birds_on_water,stream_listen majors=fetch,ropes,ranger_ridge memory=loop=6 cairn=6 shoe=0 stolen=none hole=0 rod=0 brave=chipmunk,raccoon,bird,dog ring=longshot,slackline,bike,deer_stick,bathe,fetch,ropes,ranger_ridge",
-    "loop=6 seed=392076514 length=647s plan=family=midday return=0 lunch=0 wade=2 nap=2 map=1 afternoon=0 fillers=stream_listen,cairn,read majors=ants_cookie,bathe,map_chase memory=loop=7 cairn=7 shoe=0 stolen=none hole=0 rod=0 brave=chipmunk,frog,deer ring=deer_stick,bathe,fetch,ropes,ranger_ridge,ants_cookie,bathe,map_chase",
-    "loop=7 seed=3035157141 length=592s plan=family=midday return=0 lunch=1 wade=0 nap=0 map=0 afternoon=0 fillers=read majors=plink,archery memory=loop=8 cairn=6 shoe=0 stolen=none hole=0 rod=0 brave=chipmunk,frog,deer ring=fetch,ropes,ranger_ridge,ants_cookie,bathe,map_chase,plink,archery",
-    "loop=8 seed=1260552528 length=650s plan=family=midday return=2 lunch=0 wade=2 nap=2 map=1 afternoon=1 fillers=birds_on_water,stream_listen majors=longshot,pinecone,kite memory=loop=9 cairn=5 shoe=0 stolen=none hole=0 rod=0 brave=chipmunk,squirrel,frog,bear,mouse,dog ring=ants_cookie,bathe,map_chase,plink,archery,longshot,pinecone,kite",
-    "loop=9 seed=1771708354 length=618s plan=family=midday return=1 lunch=1 wade=1 nap=0 map=0 afternoon=0 fillers=birds_on_water,skip_stone,read majors=deer_stick,ropes memory=loop=10 cairn=4 shoe=0 stolen=none hole=0 rod=0 brave=chipmunk,squirrel,frog,bear,mouse,dog ring=map_chase,plink,archery,longshot,pinecone,kite,deer_stick,ropes",
+    "loop=0 seed=1 length=594s plan=family=midday return=2 lunch=0 wade=1 nap=0 map=0 afternoon=0 fillers=cloud_watch,stream_listen majors=map_chase,fish_leap,kite memory=loop=1 cairn=0 shoe=0 stolen=none hole=0 rod=0 brave=squirrel,frog,bird,mouse ring=map_chase,fish_leap,kite",
+    "loop=1 seed=3851155901 length=635s plan=family=midday return=1 lunch=1 wade=0 nap=1 map=1 afternoon=1 fillers=cairn,cloud_watch,skip_stone majors=fetch,echo,ants_cookie memory=loop=2 cairn=4 shoe=0 stolen=none hole=0 rod=0 brave=squirrel,frog,bird,mouse ring=map_chase,fish_leap,kite,fetch,echo,ants_cookie",
+    "loop=2 seed=3700665890 length=607s plan=family=midday return=2 lunch=1 wade=2 nap=0 map=1 afternoon=0 fillers=stream_listen majors=ranger_ridge,frog_lick memory=loop=3 cairn=3 shoe=0 stolen=none hole=0 rod=0 brave=chipmunk,squirrel,frog,deer,raccoon,owl,bird,bear ring=map_chase,fish_leap,kite,fetch,echo,ants_cookie,ranger_ridge,frog_lick",
+    "loop=3 seed=2419121647 length=627s plan=family=midday return=0 lunch=0 wade=1 nap=1 map=0 afternoon=1 herd=2 fillers=cairn majors=slackline,bike memory=loop=4 cairn=7 shoe=0 stolen=none hole=0 rod=0 brave=chipmunk,squirrel,frog,deer,raccoon,owl,bird,bear ring=kite,fetch,echo,ants_cookie,ranger_ridge,frog_lick,slackline,bike",
+    "loop=4 seed=2478457475 length=650s plan=family=midday return=2 lunch=1 wade=0 nap=0 map=1 afternoon=0 fillers=stream_listen,cairn,skip_stone,birds_on_water majors=archery,pinecone memory=loop=5 cairn=7 shoe=0 stolen=none hole=0 rod=0 brave=chipmunk,frog,deer,raccoon,bird,bear ring=echo,ants_cookie,ranger_ridge,frog_lick,slackline,bike,archery,pinecone",
+    "loop=5 seed=3529712419 length=635s plan=family=midday return=0 lunch=0 wade=1 nap=1 map=0 afternoon=1 herd=10 fillers=birds_on_water majors=ropes,bathe memory=loop=6 cairn=6 shoe=0 stolen=none hole=0 rod=0 brave=chipmunk,frog,deer,raccoon,bird,bear ring=ranger_ridge,frog_lick,slackline,bike,archery,pinecone,ropes,bathe",
+    "loop=6 seed=197146328 length=650s plan=family=midday return=1 lunch=1 wade=2 nap=1 map=1 afternoon=0 fillers=skip_stone,birds_on_water,read majors=kite,squirrel_splash,boomerang memory=loop=7 cairn=5 shoe=0 stolen=none hole=0 rod=0 brave=squirrel,deer,raccoon,mouse ring=bike,archery,pinecone,ropes,bathe,kite,squirrel_splash,boomerang boom=2",
+    "loop=7 seed=2857231282 length=650s plan=family=midday return=2 lunch=0 wade=2 nap=2 map=1 afternoon=1 fillers=cairn,skip_stone,read majors=fishing_log,ants_cookie,deer_stick memory=loop=8 cairn=7 shoe=0 stolen=none hole=0 rod=1 brave=squirrel,deer,raccoon,mouse ring=ropes,bathe,kite,squirrel_splash,boomerang,fishing_log,ants_cookie,deer_stick boom=1",
+    "loop=8 seed=1178173216 length=638s plan=family=midday return=1 lunch=1 wade=0 nap=1 map=0 afternoon=0 herd=3 fillers=cairn,read majors=echo,map_chase memory=loop=9 cairn=7 shoe=0 stolen=none hole=0 rod=1 brave=frog,raccoon,owl,bird,bear,dog ring=kite,squirrel_splash,boomerang,fishing_log,ants_cookie,deer_stick,echo,map_chase",
+    "loop=9 seed=3481750506 length=609s plan=family=midday return=0 lunch=0 wade=2 nap=2 map=0 afternoon=0 fillers=birds_on_water,cairn majors=kite,archery,bathe memory=loop=10 cairn=7 shoe=0 stolen=none hole=0 rod=1 brave=frog,raccoon,owl,bird,bear,dog ring=fishing_log,ants_cookie,deer_stick,echo,map_chase,kite,archery,bathe",
 };
 
 // One --loops line, as ss_preview's previewRunLoops writes it (less the
@@ -257,7 +264,7 @@ static bool isMajor(const char* name) {
                                        "firefly_jar",     "stargaze",      "fishing_small",  "fishing_log",  "fishing_good",
                                        "bathe",           "fetch",         "kite",        "boomerang",
                                        "bike",            "archery",       "slackline",   "ropes",         "plink",
-                                       "taichi",          "longshot",      "mushroom"};
+                                       "taichi",          "longshot",      "mushroom",     "frog_lick"};
   for (const char* k : kMajor)
     if (strcmp(name, k) == 0) return true;
   return false;
@@ -485,9 +492,13 @@ static void testMiddayIncremental() {
         ++frames;
         if (n > worst) worst = n;
       }
-      if (t % 397 == 0 || t == 260 || t == 300) {
-        appInvalidate(b.app);
-        appRender(b.app, b.surf);
+      // The twin renders every tick too: the trip's sky (the mushroom's, and the frog's since 2026-11-25, which seed 6's
+      // first loop plays) latches its cache bands per render (REVIEW_FIXES F28), so a twin drawn only at the checks
+      // would show an older sky. At a check it is invalidated and drawn whole.
+      const bool check = t % 397 == 0 || t == 260 || t == 300;
+      if (check) appInvalidate(b.app);
+      appRender(b.app, b.surf);
+      if (check) {
         ++checks;
         if (memcmp(a.fb, b.fb, (size_t)SS_WIDTH * SS_HEIGHT * sizeof(Pixel)) != 0) {
           long i = 0;

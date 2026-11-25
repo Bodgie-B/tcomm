@@ -2740,7 +2740,7 @@ int spinePauseSeconds(const LoopPlan& p, int beat_pauses) {
 void spineFitLength(LoopPlan& p, Memory& mem, const FitSpec& f) {
   // Loop length policy. Squeeze the pauses (round robin, a second at a time,
   // down to 8 s); while still too long, drop fillers down to one, majors down
-  // to two (one when the plan holds tai chi or the mushroom: INTEGRATION_PLAN
+  // to two (one when the plan holds tai chi, the mushroom or the frog: INTEGRATION_PLAN
   // 3.1 point 11), the last filler, then shorten the still beats round the
   // majors; then stretch the pauses (up to 20 s) until the loop is long enough.
   // A major majorKept names is never dropped, even below the floor's count.
@@ -2760,7 +2760,7 @@ void spineFitLength(LoopPlan& p, Memory& mem, const FitSpec& f) {
   while (total() > kAimMax && p.n_fillers > 1) dropFiller();
   int floor_n = 2;
   for (int i = 0; i < p.n_majors; ++i)
-    if (p.major[i] == MJ_TAICHI || p.major[i] == MJ_MUSHROOM) floor_n = 1;
+    if (p.major[i] == MJ_TAICHI || p.major[i] == MJ_MUSHROOM || p.major[i] == MJ_FROG_LICK) floor_n = 1;
   while (total() > kAimMax && p.n_majors > floor_n) {
     // Drop the last major, or an earlier one if that leaves a set of majors
     // one of the last loops played (memory) and another choice does not.

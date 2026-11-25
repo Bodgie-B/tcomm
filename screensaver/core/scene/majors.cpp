@@ -3692,6 +3692,9 @@ constexpr bool kTaichiLanded = true;      // step C2 (2026-11-19): the tai chi m
 constexpr bool kLongshotLanded = true;    // step C3 (2026-11-19): the long shot major is in
 constexpr bool kHerdLanded = true;        // step C4 (2026-11-19): the deer visit is in
 constexpr bool kMushroomLanded = true;    // step C5c
+// The frog he licks (2026-11-25; Mike: "the hiker goes over to the frog, picks it up, licks it ..."): a later
+// piece behind the same switch (S22_FROG), so with SS_S22 off every plan is what it was.
+constexpr bool kFrogLanded = true;
 // Tuned in step C6 (2026-11-19) against the plan's rates (INTEGRATION_PLAN 5.6) in real runs (ss_preview,
 // 400 seeds of 6 loops, memory kept). Tai chi 1.6 -> 2.4: its later morning loops went 17.0 % -> 19.5 %
 // over 6 loops, and 21.0 % -> 23.9 % over a 19-loop morning (25 % once the forced loop is far back): the
@@ -3769,8 +3772,11 @@ const MajorDef kMajors[MJ_COUNT] = {
     {"taichi", {143, 143}, kTaichiW, 1, kMorn, taichiMajorBegin, taichiMajorTick, {nullptr, nullptr}, {0, 0}},
     {"longshot", {109, 109}, kLongshotW, kOut, kMid, longshotMajorBegin, longshotMajorTick, {nullptr, nullptr}, {0, 0}},
     {"mushroom", {201, 201}, 0.f, 2 | 4, kMid, tripMajorBegin, tripMajorTick, {nullptr, nullptr}, {0, 0}},
+    // frog_lick (day_trip.cpp, on the mushroom's DAY_TRIP and its sky): midday after lunch or the wade, weight
+    // 1.0 (PROPOSED), the seconds from frogSeconds. Gated in majorsPlan.
+    {"frog_lick", {180, 180}, 1.0f, 2 | 4, kMid, frogMajorBegin, tripMajorTick, {nullptr, nullptr}, {0, 0}},
 };
-static_assert(MJ_COUNT == 28, "a row per major");
+static_assert(MJ_COUNT == 29, "a row per major");
 
 // The script for a major and variant (stargaze: one table per star count).
 void scriptOf(int id, int var, const Step*& s, uint8_t& n) {
@@ -3824,6 +3830,10 @@ void scriptOf(int id, int var, const Step*& s, uint8_t& n) {
   }
   if (id == MJ_MUSHROOM) {
     s = tripScript((uint8_t)var, n);
+    return;
+  }
+  if (id == MJ_FROG_LICK) {
+    s = frogScript((uint8_t)var, n);
     return;
   }
   const int v = var == 1 ? 1 : 0;
@@ -3917,7 +3927,7 @@ void majorEnd(SceneCtx& ctx) {
   else if (m.id == MJ_PLINK) plinkMajorEnd(w);        // the bag hung again and out of his hands, the day union zero
   else if (m.id == MJ_TAICHI) taichiMajorEnd(w);      // stage 22: each puts back what it took, the day union zero
   else if (m.id == MJ_LONGSHOT) longshotMajorEnd(w);
-  else if (m.id == MJ_MUSHROOM) tripMajorEnd(w);
+  else if (m.id == MJ_MUSHROOM || m.id == MJ_FROG_LICK) tripMajorEnd(w);   // (the frog's runs on DAY_TRIP too)
   if (w.hiker.carry == CARRY_ROD) hikerCarry(w.hiker, CARRY_NONE);
   m.on = false;
   w.busy = false;
@@ -3951,13 +3961,14 @@ int majorSeconds(int id, int var) {
   if (id == MJ_TAICHI) return taichiSeconds((uint8_t)var);
   if (id == MJ_LONGSHOT) return longshotSeconds((uint8_t)var);
   if (id == MJ_MUSHROOM) return tripSeconds((uint8_t)var);
+  if (id == MJ_FROG_LICK) return frogSeconds((uint8_t)var);
   return kMajors[id].seconds[var == 1 ? 1 : 0];
 }
 
-// A forced fetch, tai chi and the mushroom (INTEGRATION_PLAN 3.1 point 11): the fit never drops them. Tai chi
-// and the mushroom are only ever planned with SS_S22 on.
+// A forced fetch, tai chi, the mushroom and the frog (INTEGRATION_PLAN 3.1 point 11): the fit never drops them.
+// Tai chi, the mushroom and the frog are only ever planned with SS_S22 on.
 bool majorKept(int id, int var) {
-  if (id == MJ_TAICHI || id == MJ_MUSHROOM) return true;
+  if (id == MJ_TAICHI || id == MJ_MUSHROOM || id == MJ_FROG_LICK) return true;
   return id == MJ_FETCH && ((uint8_t)var & FETCH_FORCED) != 0;
 }
 
@@ -3968,6 +3979,7 @@ uint8_t majorsS22Plans(const Memory& mem) {
   if (s22Plans(S22_LONGSHOT, kLongshotLanded, mem.s22_preview)) m = (uint8_t)(m | S22_LONGSHOT);
   if (s22Plans(S22_MUSHROOM, kMushroomLanded, mem.s22_preview)) m = (uint8_t)(m | S22_MUSHROOM);
   if (s22Plans(S22_HERD, kHerdLanded, mem.s22_preview)) m = (uint8_t)(m | S22_HERD);
+  if (s22Plans(S22_FROG, kFrogLanded, mem.s22_preview)) m = (uint8_t)(m | S22_FROG);
   return m;
 }
 
@@ -4040,6 +4052,12 @@ void majorsPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem, const Majo
   const bool hill_rule = (s22 & S22_LONGSHOT) != 0;
   // The ripe patch plays this loop (mush_patch.h mushWillPlay; never with SS_S22 off).
   const bool ripe = (s22 & S22_MUSHROOM) != 0 && mushWillPlay(mem.mush, slots.family == SF_MIDDAY, night, wetKind(wk22));
+  // The frog he licks (2026-11-25): by day, not in the data's rain, snow or storm (the mushroom's rule), and
+  // never in a loop the ripe patch plays (never two trips in a loop). Its weight is the row's 1.0 otherwise.
+  if ((s22 & S22_FROG) == 0 || dusk || wetKind(wk22) || ripe) base[MJ_FROG_LICK] = 0.f;
+  // Asked for through the carry word (day_trip.h FROG_ASK): forced as the first pick (after a dog's fetch) when
+  // its gates pass. Never set in an ordinary run.
+  const bool frog_ask = base[MJ_FROG_LICK] > 0.f && (mem.taichi_next & FROG_ASK) != 0;
   // Midday (the heat of the day, a stream to hand): bathing comes up more often.
   if (slots.family == SF_MIDDAY) base[MJ_BATHE] *= 2.5f;
   // The ring buffer: anything picked in the last MEMORY_RING picks is much
@@ -4106,10 +4124,12 @@ void majorsPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem, const Majo
     const bool tai_first = k == 0 && slots.family == SF_MORNING && base0_taichi > 0.f && (mem.taichi_next & 4u) == 0;
     // The ripe patch: the first pick, or the second after a dog's fetch.
     const bool ripe_pick = ripe && k == (in.dog_out != 0 ? 1 : 0);
+    const bool frog_pick = frog_ask && k == (in.dog_out != 0 ? 1 : 0);
     if (house_dog) id = MJ_FETCH;
     else if (tai_first) id = MJ_TAICHI;
     else if (ripe_pick) id = MJ_MUSHROOM;
-    const bool forced = house_dog || tai_first || ripe_pick;
+    else if (frog_pick) id = MJ_FROG_LICK;
+    const bool forced = house_dog || tai_first || ripe_pick || frog_pick;
     if (k >= want || (sum <= 0.f && !forced)) continue;
     // Past the first two, a pick is optional: never one held back by the ring
     // or the recent sets (only that one was left, say for S4).
@@ -4153,6 +4173,7 @@ void majorsPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem, const Majo
     if (id == MJ_TAICHI) v = taichiPlanVar(r_var, mem, in.dog_out);      // the chapter, a gag, the guests (day_taichi.h)
     if (id == MJ_LONGSHOT) v = longshotPlanVar(r_var);                   // day_longshot.h
     if (id == MJ_MUSHROOM) v = tripPlanVar(r_var);                       // day_trip.h
+    if (id == MJ_FROG_LICK) v = frogPlanVar(r_var);                      // day_trip.h (no draw of its own)
     pick[n] = (uint8_t)id;
     have = (MajorSet)(have | (1u << id));
     slot[n] = (uint8_t)s;

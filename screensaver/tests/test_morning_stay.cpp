@@ -78,7 +78,7 @@ static bool isMajor(const char* name) {
                                        "raccoon_pack",    "ants_cookie",   "shadow_theater", "ranger_ridge", "echo",
                                        "firefly_jar",     "stargaze",      "fishing_small",  "fishing_log",  "fishing_good",
                                        "bathe",           "fetch",         "kite",           "boomerang",    "rain_shelter",
-                                       "taichi",          "longshot",      "mushroom"};
+                                       "taichi",          "longshot",      "mushroom",     "frog_lick"};
   for (const char* k : kMajor)
     if (strcmp(name, k) == 0) return true;
   return false;

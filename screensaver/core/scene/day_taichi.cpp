@@ -16,6 +16,7 @@
 //
 // Every look number is PROPOSED until Mike has seen the stills; nothing is checked on the panel.
 #include "day_taichi.h"
+#include "day_trip.h"
 
 #include <math.h>
 #include <string.h>
@@ -598,7 +599,7 @@ void taichiMajorBegin(World& w) {
   // The chapter this session plays is the memory's from now on, and the morning has had its tai chi: a
   // session that began counts (Mike, 2026-11-18), so a no-show or a form cut short can never force tai chi
   // into every morning loop. The chapter itself only advances when the form reaches its end (taichiMajorEnd).
-  mem.taichi_next = (uint8_t)(0x80u | 4u | (m.var & kVarChapter));
+  mem.taichi_next = (uint8_t)(0x80u | 4u | (m.var & kVarChapter) | (mem.taichi_next & FROG_ASK));   // (bit 3 is the frog's ask)
   // A rain the plan could not know of: he only looks at the sky (dayNoShowScript). The beat keeps its planned
   // seconds (the timeline was built at loop start, REVIEW_FIXES F27): he sits it out by the cold fire. Rare:
   // only a random rain, with no OUTSIDE reading.
@@ -663,7 +664,8 @@ void taichiMajorEnd(World& w) {
   if (w.day.kind == DAY_TAICHI) {
     DayTaichi& d = D(w);
     if (d.began && !d.finished) taichiFinish(d.t, w.hiker);   // an overrun: his feet and breath as the rig has them
-    if (d.done) mem.taichi_next = (uint8_t)(0x80u | 4u | ((d.t.chapter + 1u) & 3u));   // the next chapter, next time
+    if (d.done)   // the next chapter, next time; a waiting frog ask (bit 3) stays
+      mem.taichi_next = (uint8_t)(0x80u | 4u | ((d.t.chapter + 1u) & 3u) | (mem.taichi_next & FROG_ASK));
     if (d.dog >= 0) houseDogsGiveBack(w);
     if (d.heron) {
       streamHeronMirror(w, false);

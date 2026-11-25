@@ -61,7 +61,8 @@ struct Inputs {
   // What one screensaver run hands the next (stage 22; Mike, 2026-11-18): appStart copies it into the
   // new loop memory, the host keeps appCarry's word between runs. Low byte: the mushroom patch
   // (mush_patch.h). High byte: tai chi's next chapter and "done this morning" (scene/memory.h
-  // taichi_next). Zeroed: nothing carried, as before.
+  // taichi_next). Zeroed: nothing carried, as before. 0x0800 (taichi_next bit 3, FROG_ASK in scene/day_trip.h):
+  // the next midday loop by day and dry plays frog_lick once (to see it on the panel: `ss carry 2048`).
   uint16_t carry;
 };
 

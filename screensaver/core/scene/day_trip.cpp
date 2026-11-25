@@ -51,6 +51,10 @@ MajorState& M(World& w) { return w.major; }
 TripState& S(World& w) { return w.day.trip.t; }
 const TripState& S(const World& w) { return w.day.trip.t; }
 bool live(const World& w) { return w.day.kind == DAY_TRIP && w.major.on && w.major.id == MJ_MUSHROOM; }
+// The mushroom's play or the frog's (both run on DAY_TRIP and its sky).
+bool liveAny(const World& w) {
+  return w.day.kind == DAY_TRIP && w.major.on && (w.major.id == MJ_MUSHROOM || w.major.id == MJ_FROG_LICK);
+}
 inline float fl(int v) { return (float)v; }
 inline float clampf(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
 inline float minf(float a, float b) { return a < b ? a : b; }
@@ -403,7 +407,7 @@ void cueSky(World& w, float) {
   s.band = 0;
   s.phase = 0;
 }
-bool skyOver(const World& w) { return !live(w) || (w.major.cue & kSkyOver) != 0; }
+bool skyOver(const World& w) { return !liveAny(w) || (w.major.cue & kSkyOver) != 0; }
 bool crittersGone(const World& w) {
   for (int k = 0; k < 2; ++k) {
     const int c = w.major.c[k];
@@ -889,7 +893,8 @@ void skyTick(World& w, float dt) {
   h.breath_scale = lerp(1.f, 1.6f, deep);
   s.kg = easeInOut(clamp01((st - 14.f) / 10.f)) * out;
   dogTick(w, dt);
-  if (s.set == 0) set0Tick(w, dt);
+  if (s.frog) s.slow = 0;   // the frog's play: the sky alone, no visions, full pace
+  else if (s.set == 0) set0Tick(w, dt);
   else set1Tick(w, dt);
   // 88 to 97 on the sky clock: he lifts the near arm straight up and slowly traces one wave with it.
   const float tr = (st - kTraceAt) / kTraceS;
@@ -914,6 +919,246 @@ void skyTick(World& w, float dt) {
     m.cue = (uint16_t)(m.cue | kSkyOver);
   }
 }
+
+// ---- the frog he licks (MJ_FROG_LICK; 2026-11-25) --------------------------------------------------------------------
+//
+// The same DAY_TRIP, sky clock and free layers as the mushroom; TripState::frog marks the play, and skyTick runs no
+// visions for it. The frog is critter c[0] (CT_MAJOR, brave). While it sits on his near hand, tripDayStep puts its
+// feet there every tick (after his rig, so it is this tick's hand; also through the doorbell's freeze) and sorts it
+// in front of him; the director does not move it (it is not walking, and brave). Tuning PROPOSED; how it looks is
+// UNVERIFIED on the panel.
+
+enum : uint8_t { FR_IN = 0, FR_SIT, FR_HELD, FR_DOWN, FR_OFF, FR_GONE };
+constexpr float kFrogIn = 46.f;      // px/s hopping in (the frog_splash minor's 42)
+constexpr float kFrogOut = 56.f;     // hopping off after the fright
+constexpr float kFrogGap = 30.f;     // he stands this far left of it to pick it up
+constexpr float kGripS = 0.45f;      // it settles onto his palm over this long
+// Its size: at 1 (the frog_splash minor's) it is wider than his torso and four times his head; at 0.75 it reads
+// as a big frog in one hand (PROPOSED).
+constexpr float kFrogScale = 0.75f;
+constexpr int kFrogBeatS = 180;      // the beat's seconds: the script is done by about 166 s (the sky's 104 of them)
+
+bool liveFrog(const World& w) { return w.day.kind == DAY_TRIP && w.major.on && w.major.id == MJ_FROG_LICK && S(w).frog; }
+Critter* frogCritter(World& w) {
+  const int c = w.major.c[0];
+  return c >= 0 && w.crit[c].in_use && w.crit[c].tag == CT_MAJOR ? &w.critters[c] : nullptr;
+}
+void frogTo(World& w, uint8_t st) {
+  S(w).frog_st = st;
+  S(w).frog_t = 0.f;
+}
+// The frog's feet on his palm: his hand this tick plus the grip (it settles from where he took it), lowered to the
+// ground as he sets it down, never under the ground.
+Vec2 frogOnHand(const World& w) {
+  const TripState& s = S(w);
+  const Hiker& h = w.hiker;
+  const Vec2 hand = hikerHandPos(h, 0);
+  const Vec2 rest{(float)h.facing * 1.f, 3.f};
+  const float k = easeInOut(s.grip_k);
+  Vec2 f{hand.x + lerp(s.grip0.x, rest.x, k), hand.y + lerp(s.grip0.y, rest.y, k)};
+  const float gy = scriptGroundAt(w, f.x, h.feet.y);
+  if (s.lower > 0.f) f.y = lerp(f.y, gy, easeInOut(s.lower));
+  if (f.y > gy) f.y = gy;
+  return Vec2{floorf(f.x * 2.f + 0.5f) * 0.5f, floorf(f.y * 2.f + 0.5f) * 0.5f};
+}
+// tripDayStep: the frog rides his hand. Frozen by the doorbell his hand still moves (the hop), so this runs then
+// too, and marks the frog's bounds itself (the director does not run then).
+void frogFollow(World& w, bool frozen) {
+  TripState& s = S(w);
+  const int c = w.major.c[0];
+  if (!s.held || c < 0 || !w.crit[c].in_use) return;
+  if (!frozen && s.grip_k < 1.f) s.grip_k = minf(1.f, s.grip_k + SS_TICK_DT / kGripS);
+  Critter& f = w.critters[c];
+  f.feet = frogOnHand(w);
+  f.facing = -w.hiker.facing;   // it looks at him
+  w.crit[c].sort_y = (int16_t)(floorf(w.hiker.feet.y) + 2.f);   // in front of him (his hands' things are at + 1)
+  w.crit[c].path_on = false;
+  if (frozen) {
+    const Rect r = critterBounds(f);
+    f.visible = r.x1 > 0 && r.x0 < SS_WIDTH;
+    w.critter_rect[c] = f.visible ? r : Rect{0, 0, 0, 0};
+  }
+}
+
+// The frog's own stages (the major's tick: frozen with the story).
+void frogTick(World& w, float dt) {
+  TripState& s = S(w);
+  s.frog_t += dt;
+  Critter* c = frogCritter(w);
+  switch (s.frog_st) {
+    case FR_IN:
+      if (!c) { frogTo(w, FR_GONE); break; }
+      if (critterArrived(*c)) {
+        c->facing = w.hiker.feet.x < c->feet.x ? -1 : 1;
+        critterSetAction(*c, CA_LOOK, 0.4f);
+        frogTo(w, FR_SIT);
+      }
+      break;
+    case FR_SIT:   // it sits and blinks; it looks his way
+      if (!c) { frogTo(w, FR_GONE); break; }
+      if (crossed(s.frog_t, dt, 1.4f) || crossed(s.frog_t, dt, 4.6f)) critterSetAction(*c, CA_BLINK, 0.3f);
+      if (crossed(s.frog_t, dt, 2.2f) || crossed(s.frog_t, dt, 5.4f)) critterSetAction(*c, CA_IDLE, 0.3f);
+      if (crossed(s.frog_t, dt, 3.0f)) critterSetAction(*c, CA_LOOK, 0.4f);
+      if (!w.hiker.walking) c->facing = w.hiker.feet.x < c->feet.x ? -1 : 1;
+      break;
+    case FR_DOWN:   // set down: a startle, then off to the right in long hops
+      if (!c) { frogTo(w, FR_GONE); break; }
+      if (s.frog_t >= 0.55f) {
+        c->facing = 1;
+        critterSetAction(*c, CA_IDLE, 0.15f);
+        directorExit(w, w.major.c[0], 1, kFrogOut, CA_HOP);
+        CritterSlot& cs = w.crit[w.major.c[0]];   // along the camp side, never through the water
+        cs.path_y1 = directorDryY(w, c->feet, cs.path_x1);
+        frogTo(w, FR_OFF);
+      }
+      break;
+    case FR_OFF:   // the director lets it go once it is out of sight
+      if (!c) frogTo(w, FR_GONE);
+      break;
+    default: break;   // FR_HELD: tripDayStep has it, the acts give it its blink
+  }
+}
+
+// He has seen it: a lean and a look down at it, his head tipping as he watches.
+void actFrogSpot(World& w, float u) {
+  const float e = env(u, 0.2f, 0.25f);
+  w.fx.lean = 0.07f * e;
+  w.fx.head = (0.12f + 0.09f * easeInOut(clamp01((u - 0.45f) / 0.2f))) * e;
+  if (u >= 1.f) scriptFxRest(w);
+}
+// Crouched by it: the near arm reaches, scoops it up and comes back with it.
+void actFrogPick(World& w, float u) {
+  TripState& s = S(w);
+  w.fx.reach = easeInOut(clamp01(u / 0.32f)) * (1.f - easeInOut(clamp01((u - 0.62f) / 0.30f)));
+  w.fx.reach_to = 0.78f;
+  w.fx.head = 0.16f * env(u, 0.2f, 0.25f);
+  Critter* c = frogCritter(w);
+  if (u >= 0.42f && !s.held && c && s.frog_st == FR_SIT) {
+    s.held = 1;
+    s.grip_k = 0.f;
+    s.lower = 0.f;
+    s.grip0 = Vec2{c->feet.x - s.hand[0].x, c->feet.y - s.hand[0].y};
+    critterSetAction(*c, CA_IDLE, 0.2f);
+    reedsDropChew(w);   // a stem in his mouth falls as he takes it (it is going to his face)
+    frogTo(w, FR_HELD);
+  }
+  if (u >= 1.f) scriptFxRest(w);
+}
+// The tongue this tick: out by `k` (0..1) from his mouth toward the frog, a little down.
+void setTongue(World& w, float k) {
+  TripState& s = S(w);
+  if (k <= 0.12f) {
+    s.tongue = 0;
+    s.tongue_a = s.tongue_b = Vec2{0.f, 0.f};
+    return;
+  }
+  const Hiker& h = w.hiker;
+  const Vec2 m = hikerMouthPos(h);
+  const float f = (float)h.facing, len = 7.5f * k;
+  s.tongue = (uint8_t)(1.f + len);
+  s.tongue_a = Vec2{floorf(m.x * 2.f + 0.5f) * 0.5f, floorf(m.y * 2.f + 0.5f) * 0.5f};
+  s.tongue_b = Vec2{floorf((m.x + f * 0.94f * len) * 2.f + 0.5f) * 0.5f, floorf((m.y + 0.34f * len) * 2.f + 0.5f) * 0.5f};
+}
+// Up to the face (6.4 s): out at arm's length and a long look; to his mouth; two quick licks, the frog blinks;
+// a frozen beat; out again, one more look; and down to his side.
+constexpr float kExamS = 6.4f;
+constexpr float kOutSh = 1.25f, kOutEl = 0.35f;      // out ahead at chest height, a little down
+// The frog just in front of and below his mouth, its back at his lips: the hand 12 px ahead of the shoulder and
+// 2 below (the arm is 0.16 + 0.15 H: the elbow bends 2.24, the upper arm 0.35 from down; PROPOSED).
+constexpr float kMouthSh = 0.35f, kMouthEl = 2.24f;
+void actFrogLick(World& w, float u) {
+  TripState& s = S(w);
+  const float t = u * kExamS;
+  const float k = easeInOut(clamp01(t / 0.6f)) * (1.f - easeInOut(clamp01((t - 5.8f) / 0.6f)));
+  const float m = easeInOut(clamp01((t - 2.1f) / 0.7f)) * (1.f - easeInOut(clamp01((t - 4.7f) / 0.6f)));
+  scriptSetArm(w, 0, k, lerp(kOutSh, kMouthSh, m), lerp(kOutEl, kMouthEl, m));
+  // The licks: his head goes in and back, twice, quickly.
+  const float l1 = t > 2.85f && t < 3.30f ? sinT(0.5f * (t - 2.85f) / 0.45f) : 0.f;
+  const float l2 = t > 3.40f && t < 3.85f ? sinT(0.5f * (t - 3.40f) / 0.45f) : 0.f;
+  const float lick = l1 + l2;
+  const float look = (0.10f * k + 0.07f * sinT(clamp01((t - 1.0f) / 0.8f) * 0.5f)) * (1.f - m);   // at it; a cock of the head
+  const float stun = -0.07f * easeInOut(clamp01((t - 3.9f) / 0.2f)) * (1.f - easeInOut(clamp01((t - 4.6f) / 0.2f)));   // the frozen beat
+  w.fx.head = look + 0.22f * lick + stun;
+  w.fx.lean = 0.05f * lick;
+  setTongue(w, lick);
+  Critter* c = frogCritter(w);
+  if (c && s.held) {
+    if (crossed(t, SS_TICK_DT, 3.05f)) critterSetAction(*c, CA_BLINK, 0.25f);
+    if (crossed(t, SS_TICK_DT, 3.9f)) critterSetAction(*c, CA_IDLE, 0.4f);
+    if (crossed(t, SS_TICK_DT, 5.3f)) critterSetAction(*c, CA_LOOK, 0.4f);
+  }
+  if (u >= 1.f) {
+    setTongue(w, 0.f);
+    scriptFxRest(w);
+  }
+}
+// Crouched again: the hand goes down to the grass and opens. It startles; he draws his hand back.
+void actFrogDown(World& w, float u) {
+  TripState& s = S(w);
+  w.fx.reach = easeInOut(clamp01(u / 0.35f)) * (1.f - easeInOut(clamp01((u - 0.62f) / 0.30f)));
+  w.fx.reach_to = 0.78f;
+  w.fx.head = 0.14f * env(u, 0.2f, 0.25f);
+  if (s.held) s.lower = clamp01((u - 0.12f) / 0.30f);
+  if (u >= 0.45f && s.held) {
+    Critter* c = frogCritter(w);
+    if (c) {
+      c->feet = frogOnHand(w);
+      c->feet.y = scriptGroundAt(w, c->feet.x, w.hiker.feet.y);
+      c->facing = 1;
+      w.crit[w.major.c[0]].sort_y = 0;
+      critterSetAction(*c, CA_STARTLE, 0.12f);
+      frogTo(w, FR_DOWN);
+    } else {
+      frogTo(w, FR_GONE);
+    }
+    s.held = 0;
+    s.lower = 0.f;
+  }
+  if (u >= 1.f) scriptFxRest(w);
+}
+// The taste: he rears back, shakes his head hard four times, spits, and wipes his mouth with the back of his
+// near hand.
+void actYuck(World& w, float u) {
+  const float t = u * 3.6f;
+  const float back = easeInOut(clamp01(t / 0.25f)) * (1.f - easeInOut(clamp01((t - 1.8f) / 0.2f)));
+  const float shake_e = easeInOut(clamp01((t - 0.2f) / 0.15f)) * (1.f - easeInOut(clamp01((t - 1.65f) / 0.2f)));
+  const float shake = 0.34f * sinT(clamp01((t - 0.25f) / 1.6f) * 4.f) * shake_e;   // four in 1.6 s
+  const float spit = t > 1.95f && t < 2.35f ? sinT(0.5f * (t - 1.95f) / 0.4f) : 0.f;
+  const float wipe_k = easeInOut(clamp01((t - 2.35f) / 0.25f)) * (1.f - easeInOut(clamp01((t - 3.25f) / 0.3f)));
+  const float wipe = sinT(clamp01((t - 2.5f) / 0.75f) * 0.5f);   // across the mouth once, out and back in
+  w.fx.lean = -0.09f * back + 0.13f * spit;
+  w.fx.head = -0.12f * back + shake + 0.30f * spit + 0.08f * wipe_k;
+  scriptSetArm(w, 0, wipe_k, lerp(1.35f, 1.0f, wipe), lerp(1.9f, 2.55f, wipe));
+  if (u >= 1.f) scriptFxRest(w);
+}
+bool frogLanded(const World& w) { return !liveFrog(w) || S(w).frog_st != FR_IN; }
+bool frogHeld(const World& w) { return liveFrog(w) && S(w).held != 0; }
+
+const Step kFrog[] = {
+    // He notices it hopping in along the bank.
+    pose(POSE_STAND, 0.8f, 0.3f),
+    faceTo(AT_M2), act(actFrogSpot, 2.0f), until(frogLanded), still(0.4f),
+    // Over to it; crouch; pick it up.
+    go(AT_M1, kStroll), face(RIGHT), still(0.4f),
+    pose(POSE_CROUCH, 0.8f, 0.2f), act(actFrogPick, 1.6f),
+    pose(POSE_STAND, 0.8f, 0.2f),
+    // Held out, looked at, licked twice; a frozen beat; out again.
+    skipUnless(frogHeld, 1), act(actFrogLick, kExamS),
+    // Set down: it startles and hops off.
+    skipUnless(frogHeld, 3), pose(POSE_CROUCH, 0.8f, 0.2f), act(actFrogDown, 1.4f), pose(POSE_STAND, 0.8f, 0.2f),
+    // The taste.
+    act(actYuck, 3.6f),
+    pose(POSE_HANDS_ON_HIPS, 0.6f, 1.6f),
+    // He lies down where the mushroom has him lie; in a few seconds it comes on, and the sky lets go.
+    go(AT_LIE, kStroll),
+    face(RIGHT), pose(POSE_CROUCH, 0.7f, 0.2f), pose(POSE_SIT, 0.9f, 1.0f), pose(POSE_LIE, 1.6f, 1.0f),
+    still(1.0f), doit(cueOnset), still(2.5f), doit(cueSky), until(skyOver),
+    // After, as the mushroom's.
+    still(2.0f), act(actStir, 2.2f), pose(POSE_SIT, 1.4f, 1.2f), act(actRubEyes, 2.0f), act(actHeadShake, 1.4f),
+    pose(POSE_CROUCH, 0.6f, 0.2f), pose(POSE_STAND, 0.9f, 0.3f),
+    until(crittersGone),
+    go(AT_SIT, 30.f), face(TO_FIRE), pose(POSE_SIT, 0.9f, 0.6f),
+};
 
 // The band's rows may join the renderer's waiting repaints without making one of them taller than two
 // bands (REVIEW_FIXES F6, F28: Renderer::repaintRows keeps two bands and widens the second for a third).
@@ -984,13 +1229,82 @@ void tripMajorBegin(World& w) {
   m.p[3] = Vec2{lie.x + 30.f, bankY(w, lie.x + 30.f) - 3.f};
 }
 
+// ---- the frog he licks: the beat -------------------------------------------------------------------------------------
+
+uint8_t frogPlanVar(uint32_t) { return 0; }
+
+int frogSeconds(uint8_t) { return kFrogBeatS; }
+
+const Step* frogScript(uint8_t var, uint8_t& n) {
+  if (var & DAY_NOSHOW) return dayNoShowScript(n);
+  n = (uint8_t)(sizeof(kFrog) / sizeof(kFrog[0]));
+  return kFrog;
+}
+
+void frogMajorBegin(World& w) {
+  MajorState& m = M(w);
+  w.memory.taichi_next = (uint8_t)(w.memory.taichi_next & ~FROG_ASK);   // asked for once (the carry word): done
+  memset(static_cast<void*>(&w.day), 0, sizeof(DayState));   // the daytime majors share one union (day.h)
+  // Its place: on the camp side of the stream, left of the camp pine's corner and well left of the status chip
+  // (x 538 on), a little up the grass from the water's edge. He stands kFrogGap to its left to pick it up.
+  // The first of five places right of where he will lie that is clear of the camp bank's reeds and the cairn
+  // (in a clump it hides; PROPOSED), else the first.
+  const Vec2 lie = w.spine.camp.lie;
+  static const float kTry[5] = {120.f, 90.f, 150.f, 60.f, 180.f};
+  float fx = clampf(lie.x + kTry[0], 300.f, 500.f);
+  for (int k = 0; k < 5; ++k) {
+    const float x = clampf(lie.x + kTry[k], 300.f, 500.f);
+    bool clear = fabsf(w.spine.camp.cairn.x - x) >= 30.f && fabsf(w.spine.camp.cairn.x - (x - kFrogGap)) >= 22.f;
+    for (int c = 0; c < REED_CLUMPS && clear; ++c) {
+      ReedClumpInfo ri;
+      if (reedsClump(w, c, ri) && ri.present && fabsf(ri.base.x - x) < ri.half_w + 16.f) clear = false;
+    }
+    if (clear) {
+      fx = x;
+      break;
+    }
+  }
+  const float fy = scriptGroundAt(w, fx, bankY(w, fx) - 16.f);
+  m.p[0] = Vec2{fx, fy};
+  m.p[1] = Vec2{fx - kFrogGap, scriptGroundAt(w, fx - kFrogGap, fy)};
+  // A rain the plan could not know of: he only looks at the sky (dayNoShowScript), as the mushroom's does.
+  if (dayWet(w)) {
+    m.var = (uint8_t)(m.var | DAY_NOSHOW);
+    return;
+  }
+  // The frog: in from the right along the camp side. No free slot: the no-show too (rare).
+  const float ex = (float)SS_WIDTH + 16.f;
+  const Vec2 from{ex, directorDryY(w, m.p[0], ex)};
+  const int sl = directorSpawn(w, CR_FROG, from, -1);
+  m.c[0] = (int8_t)sl;
+  if (sl < 0) {
+    m.var = (uint8_t)(m.var | DAY_NOSHOW);
+    return;
+  }
+  w.crit[sl].tag = CT_MAJOR;
+  w.crit[sl].flags = CF_BRAVE;
+  memoryApplyPersona(w.memory, w.critters[sl]);
+  w.critters[sl].scale = kFrogScale;
+  directorWalk(w, sl, m.p[0], kFrogIn, CA_HOP);
+  m.p[2] = from;   // where he first looks
+  w.day.kind = DAY_TRIP;
+  TripState& s = S(w);
+  s.frog = 1;
+  s.pick_i = 3;
+  s.frog_st = FR_IN;
+}
+
 void tripMajorTick(World& w, float dt) {
-  if (!live(w)) return;
+  if (!liveAny(w)) return;
   TripState& s = S(w);
   MajorState& m = M(w);
-  tripStep(s, dt);
-  capsTick(w, dt);
-  wadeStride(w, dt);
+  if (s.frog) {
+    frogTick(w, dt);
+  } else {
+    tripStep(s, dt);
+    capsTick(w, dt);
+    wadeStride(w, dt);
+  }
   if (m.cue & kOnset) {   // it has come on: the field leans in one slow wave until the sky settles
     s.onset_t += dt;
     s.ks = easeInOut(clamp01(s.onset_t / 8.f)) * (1.f - easeInOut(clamp01((s.sky_t - 90.f) / 8.f)));
@@ -1011,6 +1325,7 @@ void tripMajorEnd(World& w) {
 }
 
 bool tripHandsFull(const World& w) {
+  if (liveFrog(w)) return S(w).held != 0;   // the frog on his hand
   if (!live(w)) return false;
   const TripState& s = S(w);
   return !s.bunch_down && (s.in_far > 0 || s.in_near != 0);
@@ -1034,7 +1349,10 @@ Rect tripDayBounds(const DayTrip& d) { return tripBounds(d.t); }
 
 void tripDayPose(World&) {}
 
-bool tripDayHoldsFacing(const World& w) { return S(w).sky_on && !S(w).solo; }   // he lies: the bell does not turn him
+// He lies: the bell does not turn him. The frog's play: from the time he lies down until he sits up.
+bool tripDayHoldsFacing(const World& w) {
+  return (S(w).sky_on && !S(w).solo) || (S(w).frog && w.hiker.target == POSE_LIE);
+}
 
 void tripDayStep(World& w, bool frozen) {
   TripState& s = S(w);
@@ -1042,6 +1360,8 @@ void tripDayStep(World& w, bool frozen) {
     // What the draws read from the world, written into the state so they stay a pure function of it.
     s.hand[0] = hikerHandPos(w.hiker, 0);
     s.hand[1] = hikerHandPos(w.hiker, 1);
+    if (s.frog) frogFollow(w, frozen);   // the frog on his hand (the frog's play)
+    if (frozen && s.tongue) setTongue(w, 0.f);   // the bell: the tongue goes in (the lick sets it again after)
     const MajorState& m = w.major;
     if (s.antler_q && m.c[1] >= 0 && w.crit[m.c[1]].in_use) {
       const Vec2 c = critterDeerCrown(w.critters[m.c[1]]);
@@ -1132,7 +1452,7 @@ bool tripDayPartY(const World& w, int part, int16_t& y) {
   const TripState& s = S(w);
   if (part < 0 || part >= TRIP_PARTS || tripPartBounds(s, part).empty()) return false;
   if (part == 0) y = s.ground_y;
-  else if (part == 1) y = (int16_t)(floorf(w.hiker.feet.y) + 1.f);   // in his hands: in front of him
+  else if (part == 1) y = (int16_t)(floorf(w.hiker.feet.y) + (s.frog ? 3.f : 1.f));   // in his hands: in front of him (the tongue over the frog)
   else y = s.vis_y;
   return true;
 }

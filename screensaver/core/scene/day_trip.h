@@ -39,8 +39,29 @@ void tripMajorBegin(World& w);
 void tripMajorTick(World& w, float dt);
 void tripMajorEnd(World& w);
 
-// Mushrooms or a bunch of them in his hands: no passer-by wave, the doorbell a hop and a look.
+// Mushrooms or a bunch of them in his hands, or the frog: no passer-by wave, the doorbell a hop and a look.
 bool tripHandsFull(const World& w);
+
+// ---- the frog he licks (majors.h MJ_FROG_LICK, name "frog_lick"; 2026-11-25) ----
+//
+// Mike: "the hiker goes over to the frog, picks it up, licks it, then sets the frog down, shakes his head
+// due to the terrible taste, then goes to lay down. in a few seconds the psychedelic sky routine starts
+// borrowed from the mushroom episode and runs." A frog (a director critter, CT_MAJOR, brave) hops in along
+// the camp side from the right; he walks over, crouches, picks it up, holds it out and looks at it, licks it
+// twice, sets it down (it startles and hops off out of frame) and shakes his head hard, spits and wipes his
+// mouth; he lies down at the mushroom's spot, the grass leans, and the sky lets go exactly as in the
+// mushroom's play (DAY_TRIP with TripState::frog set: no mushrooms, no visions; Lucy may come and lie by
+// him as there). Midday after lunch or the wade, weight 1.0, by day and dry, never with a ripe patch.
+// No-show (dayNoShowScript) when the begin hook finds rain or no free critter slot.
+uint8_t frogPlanVar(uint32_t r_var);   // 0 (one variant); takes no draw
+// Memory::taichi_next bit 3 (the carry word's 0x0800): the first midday loop that can play the frog (by day, the
+// data dry, no ripe patch, SS_S22 on) plays it, as its first major (second after a dog's fetch); frogMajorBegin
+// clears it. Zero in every ordinary run, so no plan moves. For Mike to see it on the panel: `ss carry 2048`.
+constexpr uint8_t FROG_ASK = 8;
+int frogSeconds(uint8_t var);
+const Step* frogScript(uint8_t var, uint8_t& n);
+void frogMajorBegin(World& w);
+// (Its tick and end are tripMajorTick and tripMajorEnd.)
 
 // ---- the sky's clock and its band repaint (step C5b) ----
 

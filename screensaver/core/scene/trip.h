@@ -12,6 +12,7 @@
 //   part 0  things on the ground: the three pickables while they are his but still standing, the bunch
 //           laid in the grass while he lies, the caps he tossed riding the stream away;
 //   part 1  what is in his hands: the bunch in the far hand, the one he sniffs and eats in the near hand;
+//           in the frog's play, only his tongue as he licks it (the frog is a critter);
 //   part 2  what he sees: the tree that grows from the deer's head (antlers, leaves, the small bird, the
 //           leaves letting go), and set 1's fish and smoke rings.
 // The three never need two sort lines at once inside a part (the pickables, the laid bunch and the
@@ -72,6 +73,13 @@ struct TripState {
   int16_t ground_y, vis_y;                  // part 0's and part 2's sort lines (day_trip.cpp sets them)
   ShroomLook look[3];                       // the lifted pickables as the cache drew them
   TripProp prop[TRIP_PROPS];
+  // The frog he licks (majors.h MJ_FROG_LICK; day_trip.cpp): the same DAY_TRIP and sky, no mushrooms, no
+  // visions. All zero in the mushroom's play. The frog itself is a director critter (MajorState::c[0]).
+  uint8_t frog, frog_st, held, tongue;      // the frog's play; its stage; it sits on his near hand; the tongue out (px)
+  float frog_t;                             // seconds in its stage
+  float grip_k, lower;                      // 0..1: it settles onto his palm; he sets it down on the ground
+  Vec2 grip0;                               // its feet less his hand when he took it
+  Vec2 tongue_a, tongue_b;                  // the tongue: from his mouth to its tip (half px)
 };
 
 // ---- the module (no World) ----

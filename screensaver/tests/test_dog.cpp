@@ -333,7 +333,11 @@ static void testPlan() {
       const LoopPlan& p = appWorld(r.app)->plan;
       const int i = fetchIndex(p);
       ++plans;
-      if (p.n_majors < 2 || p.n_majors > 4) ++bad_count;
+      // (One is allowed when the plan holds the frog he licks: the loop-length fit's floor is one major with it, as with
+      // the mushroom and tai chi, spine.cpp; 2026-11-25.)
+      bool frog = false;
+      for (int k = 0; k < p.n_majors; ++k) frog = frog || p.major[k] == MJ_FROG_LICK;
+      if (p.n_majors < (frog ? 1 : 2) || p.n_majors > 4) ++bad_count;
       if (dog != 0) {
         CHECK(i >= 0, "dog_out %d seed %d: the midday plan has no fetch", dog, (int)seed);
         if (i >= 0) {

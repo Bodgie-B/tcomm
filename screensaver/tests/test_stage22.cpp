@@ -3,7 +3,7 @@
 // test_day_trip, test_plink, test_longshot, test_plan_block); this one checks what crosses them:
 //
 //   [1] layout: sizeof(App) <= 29,992 (the test wire), Memory 88, LoopPlan 88, Reeds <= 224, each day member
-//       in DayBike's place, MJ_COUNT 28; printed with the Lookout's shared block
+//       in DayBike's place, MJ_COUNT 29 (frog_lick, 2026-11-25); printed with the Lookout's shared block
 //   [2] the evening untouched: whole loops 0..9 of seeds 1 and 7 at mood 4 and at night, printed as
 //       ss_preview --loops prints them, hash to the lines in reviews/stage22-baseline/loops.txt
 //   [3] never together: 400 midday seeds of 6 loops (memory kept), with and without a dog, with the data's
@@ -200,7 +200,7 @@ static void testLayout() {
   CHECK(sizeof(DayPlink) <= sizeof(DayBike) && sizeof(DayTaichi) <= sizeof(DayBike) && sizeof(DayHerd) <= sizeof(DayBike) &&
             sizeof(DayTrip) <= sizeof(DayBike),
         "a day member is bigger than the bike's place");
-  CHECK(MJ_COUNT == 28, "MJ_COUNT %d", (int)MJ_COUNT);
+  CHECK(MJ_COUNT == 29, "MJ_COUNT %d", (int)MJ_COUNT);
 }
 
 // ---- [2] the evening untouched ---------------------------------------------------------------------------------

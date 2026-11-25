@@ -59,6 +59,9 @@ enum MajorId : uint8_t {
   // rifle) and the mushrooms after rain (day_trip.h, midday, weight 0: forced when the patch is ripe).
   // Their weights stay 0 until the plan block (step C0), and with SS_S22 off (stage22_switch.h).
   MJ_TAICHI, MJ_LONGSHOT, MJ_MUSHROOM,
+  // The frog he licks (day_trip.h; Mike, 2026-11-25): midday, a stage 22 piece (S22_FROG) that borrows the
+  // mushroom's sky. Never in a loop with a ripe patch.
+  MJ_FROG_LICK,
   MJ_COUNT
 };
 // Memory keeps a loop's majors as a MajorSet (memory.h sets, spine.cpp): one

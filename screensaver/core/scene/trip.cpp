@@ -90,6 +90,19 @@ ShroomLook capLook(const TripProp& p) {
   return m;
 }
 
+// ---- the frog's play: his tongue (2026-11-25) --------------------------------------------------------------
+
+// A short pink stroke from his mouth to its tip while he licks (TripState::tongue, the frog's play only). Pink
+// is not a palette slot: lit like the sky's pastels (skyTripLit), so it dims with the mood (PROPOSED).
+constexpr uint32_t kTongue = 0xE36F8C;
+constexpr float kTongueW = 2.2f;
+Rect tongueBounds(const TripState& t) {
+  if (!t.tongue) return kNone;
+  const float x0 = t.tongue_a.x < t.tongue_b.x ? t.tongue_a.x : t.tongue_b.x, x1 = t.tongue_a.x < t.tongue_b.x ? t.tongue_b.x : t.tongue_a.x;
+  const float y0 = t.tongue_a.y < t.tongue_b.y ? t.tongue_a.y : t.tongue_b.y, y1 = t.tongue_a.y < t.tongue_b.y ? t.tongue_b.y : t.tongue_a.y;
+  return boxOf(x0 - kTongueW - 1.f, y0 - kTongueW - 1.f, x1 + kTongueW + 1.f, y1 + kTongueW + 1.f);
+}
+
 // ---- the tree on the deer's head (plan 5.5 set 0, cut down by REVIEW_FIXES F3 to one strip's height) -------
 
 // Two stems that fork twice: 14 limbs, 28 px tall and about 40 across at full (PROPOSED). Limb k of a side:
@@ -237,6 +250,7 @@ uint32_t partKey(const TripState& t, int part) {
     h = add(h, t.in_near);
     if (far_n) { h = add(h, t.hand[1].x); h = add(h, t.hand[1].y); }
     if (t.in_near) { h = add(h, t.hand[0].x); h = add(h, t.hand[0].y); h = add(h, t.bite); }
+    if (t.tongue) { h = add(h, t.tongue); h = add(h, t.tongue_a.x); h = add(h, t.tongue_a.y); h = add(h, t.tongue_b.x); h = add(h, t.tongue_b.y); }
   } else {
     h = add(h, t.antler_q);
     if (t.antler_q) { h = add(h, t.antler_x); h = add(h, t.antler_y); h = add(h, t.leaves); }
@@ -307,6 +321,7 @@ Rect tripPartBounds(const TripState& t, int part) {
     if (!t.bunch_down)
       for (int j = 0; j < (int)t.in_far; ++j) r = join(r, patchShroomBounds(fanLook(t.hand[1], j, t.in_far, kHandScale)));
     if (t.in_near) r = join(r, patchShroomBounds(nearLook(t)));
+    r = join(r, tongueBounds(t));
   } else {
     r = antlerBounds(t);
     if (t.antler_q && t.leaves) r = join(r, boxOf(fl(t.antler_x) - 30.f, fl(t.antler_y) - 36.f, fl(t.antler_x) + 30.f, fl(t.antler_y)));
@@ -347,6 +362,7 @@ void tripDraw(const TripState& t, int part, Surface& s, const Rect& clip, const 
     if (!t.bunch_down)
       for (int j = 0; j < (int)t.in_far; ++j) patchShroomDraw(fanLook(t.hand[1], j, t.in_far, kHandScale), s, pal, clip);
     if (t.in_near) patchShroomDraw(nearLook(t), s, pal, clip);
+    if (t.tongue && !tongueBounds(t).clipped(clip).empty()) strokeCapsule(s, t.tongue_a, t.tongue_b, kTongueW, skyTripLit(pal, kTongue), clip);
   } else if (t.antler_q) {
     Limb lm[kLimbs];
     const int n = antlerLimbs(t, lm);

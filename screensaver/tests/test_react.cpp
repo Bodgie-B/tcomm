@@ -22,7 +22,9 @@
 // tick) moments the review contact sheets are made from ("SHEET ..." lines).
 // Plain executable; returns non-zero on failure.
 #include "ss_app.h"
+#include "scene/day_plink.h"
 #include "scene/day_taichi.h"
+#include "scene/day_trip.h"
 #include "scene/hiker.h"
 #include "scene/react.h"
 #include "scene/spine.h"
@@ -206,8 +208,12 @@ static ReactReport runReaction(Rig& r, const char* label) {
   }
   rep.pre_facing = w->hiker.facing;
   rep.pre_carry = (int)w->hiker.carry;
-  rep.hands_full = w->hiker.carry != CARRY_NONE || taichiHatInHand(*w);   // (his hat in his hand: an Item, not a carry)
-  rep.look_only = taichiInForm(*w);
+  // As react.cpp decides (reactStart): the .22 in his hands is look-only like the tai chi form; the plinking's stick
+  // or sack and the trip's mushrooms or frog are hands full. (2026-11-25: the frog's new pool row moved midday seed
+  // 2's loop 0 onto the plinking, which this sweep had not met before.)
+  rep.look_only = taichiInForm(*w) || plinkRifleInHands(*w);
+  rep.hands_full = w->hiker.carry != CARRY_NONE || taichiHatInHand(*w) || rep.look_only || plinkHandsFullNow(*w) ||
+                   tripHandsFull(*w);   // (his hat in his hand: an Item, not a carry)
   rep.walking = w->hiker.walking;
   rep.pre_pose_sh0 = w->hiker.pose.shoulder[0];
   rep.max_pose_sh0 = -9.f;
