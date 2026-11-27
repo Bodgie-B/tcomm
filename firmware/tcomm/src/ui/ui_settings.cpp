@@ -700,6 +700,10 @@ void refresh_sheet() {
     case Sheet::Timer:
       if (idle > 30000) close_sheet();
       break;
+    case Sheet::Sub:  // the substatus menu: the status sheet's 15 s
+      if (idle > 15000) close_sheet();
+      else sub_sheet_refresh();
+      break;
     case Sheet::Settings:
       if (idle > 30000) { close_sheet(); break; }  // PROPOSED: back to the main view after 30 s
       for (int id = 0; id < kTiles; id++) {

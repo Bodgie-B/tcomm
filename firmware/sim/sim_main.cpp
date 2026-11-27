@@ -111,6 +111,7 @@ class Proxy : public ui::Actions {
  public:
   void choose_status(Status s) override { g_h->app.choose_status(s); }
   void start_timer(Status s, uint32_t t, Status f) override { g_h->app.start_timer(s, t, f); }
+  void choose_sub(Sub s) override { g_h->app.choose_sub(s); }
   void tap_bell() override { g_h->app.tap_bell(); }
   void tap_dog() override { g_h->app.tap_dog(); }
   void tap_mail() override { g_h->app.tap_mail(); }
@@ -672,10 +673,16 @@ int main(int argc, char **argv) {
   start(p4); ui::open_sheet(ui::Sheet::Status); pump(400); capture("07_status_sheet_day");
   start(p4); ui::open_sheet(ui::Sheet::Timer, Status::Private); pump(300); capture("08_timer_sheet_day");
   start(p4); g_h->panel.choose_status(Status::Away); pump(400); capture("09_status_changed");
-  start(p5); g_h->panel.tap_bell(); pump(300); capture("10_doorbell_delivered");
-  start(p5); g_h->panel.tap_bell(); pump(3500); capture("11_doorbell_come_on");
+  // Mike, 2026-11-26: a Private floor's bell is off (its DOORBELL reads DO NOT DISTURB), and a Private
+  // panel shows no banner; the ring shots use an Open floor instead of the boards' Private one.
+  Setup p5_open = p5;
+  p5_open.peer = Status::Open;
+  Setup p1_open = p1;
+  p1_open.mine = Status::Open;
+  start(p5_open); g_h->panel.tap_bell(); pump(300); capture("10_doorbell_delivered");
+  start(p5_open); g_h->panel.tap_bell(); pump(3500); capture("11_doorbell_come_on");
   start(p4); g_h->demo.peer_ring(); pump(500); capture("12_banner_day");
-  start(p1); g_h->demo.peer_ring(); pump(500); capture("13_banner_night");
+  start(p1_open); g_h->demo.peer_ring(); pump(500); capture("13_banner_night");
   {
     Setup s = p4;
     s.mine = Status::Away;
@@ -716,7 +723,7 @@ int main(int argc, char **argv) {
     capture("23_upstairs_unit_timer");
   }
   {
-    start(p5);
+    start(p5_open);
     g_h->demo.peer_toggle_unplugged();
     g_h->panel.tap_bell();
     pump(2000);
@@ -1197,7 +1204,7 @@ int main(int argc, char **argv) {
     tap(283, 257);  // Just this one
     int32_t d27 = (int32_t)days_from_civil(2026, 10, 27);
     uint32_t one = event_named("Piano");
-    check(ser->skips(d27) && one && st.find(one)->day == d27 && st.find(one)->start_min == 11 * 60 && !st.find(one)->repeats(),
+    check(ser && ser->skips(d27) && one && st.find(one)->day == d27 && st.find(one)->start_min == 11 * 60 && !st.find(one)->repeats(),
           "just this one: the series skips the 27th, an 11 AM event of its own takes its place");
     capture("cal_p6_after");
     std::printf("pickers by touch: %d failed\n", g_fails);
@@ -1691,6 +1698,136 @@ int main(int argc, char **argv) {
     ui::show_calendar(ui::CalView::Day, (int32_t)days_from_civil(2026, 9, 30)); pump(300); capture("cal_x_day_long_title");
     ui::show_calendar(ui::CalView::Week, (int32_t)days_from_civil(2026, 12, 31)); pump(300); capture("cal_x_week_new_year");
     ui::show_calendar(ui::CalView::Month, jan15); pump(300); capture("cal_x_month_six_weeks");
+  }
+
+  // Substatuses (Mike, 2026-11-26): a long press on the own status opens the menu for the status now,
+  // over the right side; an option applies at once (the own tile's badge and line change under it);
+  // the other panel's DOORBELL shows the rung floor's words. The Away names are the fallbacks here.
+  {
+    std::printf("substatus:\n");
+    namespace D = ui::detail;
+    const auto own_line = [](Floor f) { return std::string(g_h->panel.view().floor[(int)f].line); };
+    // (a) Open, by day: the long press, Courtesy ring outlined.
+    Setup s = p4;
+    s.mine = Status::Open;
+    s.peer = Status::Busy;
+    start(s);
+    tap(120, 330);  // a short tap on the own status: still the status sheet
+    check(D::g_sheet == ui::Sheet::Status, "a tap on the own status opens the status sheet");
+    ui::open_sheet(ui::Sheet::None);
+    pump(200);
+    long_press(120, 330, 900, 400);
+    check(D::g_sheet == ui::Sheet::Sub, "a long press opens the substatus menu, not the status sheet");
+    capture("sub_a_open_options_day");
+    // (b) Free passage, tapped in the menu: the tile's ring badge and line show at once, under it.
+    tap(600, 74 + 56 + 37);  // the first option
+    pump(300);
+    check(g_h->panel.own().sub == Sub::Free && D::g_sheet == ui::Sheet::Sub, "Free passage applied, the menu stays");
+    check(own_line(Floor::Downstairs).find("Free passage since ") == 0, "the line reads Free passage since");
+    capture("sub_b_open_free_menu_open");
+    tap(600, 74 + 328 + 32);  // Done
+    pump(300);
+    check(D::g_sheet == ui::Sheet::None, "Done closes the menu");
+    capture("sub_b_open_free_passage");
+    // The upstairs panel's view of it: COME ON IN on its doorbell (the demo's peer is this panel's other floor).
+    check(std::string(g_h->demo.peer().view().bell.words) == "COME ON IN", "the other panel's DOORBELL reads COME ON IN");
+    // A tap outside closes it too.
+    long_press(120, 330, 900, 400);
+    tap(200, 150);
+    check(D::g_sheet == ui::Sheet::None, "a tap outside the menu closes it");
+    // Private: a long press does nothing.
+    g_h->panel.choose_status(Status::Private);
+    pump(800);
+    long_press(120, 330, 900, 400);
+    check(D::g_sheet == ui::Sheet::None, "no menu for Private");
+    // (c) Busy, Prefer no passage: the red doorbell, by day; the long line wraps under the option.
+    s = p4;  // mine Busy
+    start(s);
+    g_h->panel.choose_sub(Sub::PreferNo);
+    pump(600);
+    capture("sub_c_busy_prefer_no_tile_day");
+    ui::open_sheet(ui::Sheet::Sub);
+    pump(400);
+    capture("sub_c_busy_prefer_no_day");
+    // (d) Sleeping: Quiet passage (its default, the bell with a slash) outlined.
+    s = p4;
+    s.mine = Status::Sleeping;
+    start(s);
+    ui::open_sheet(ui::Sheet::Sub);
+    pump(400);
+    capture("sub_d_sleeping_options_day");
+    // (e) Away, the upstairs panel: All out and the two fallback names.
+    s = p4;
+    s.me = Floor::Upstairs;
+    s.mine = Status::Away;
+    s.peer = Status::Open;
+    start(s);
+    ui::open_sheet(ui::Sheet::Sub);
+    pump(400);
+    capture("sub_e_away_upstairs_options");
+    g_h->panel.choose_sub(Sub::OneOut1);
+    pump(400);
+    check(own_line(Floor::Upstairs).find("Person 1 out since ") == 0, "the line reads Person 1 out since");
+    capture("sub_e_away_person_out");
+    // (f) The downstairs panel's DOORBELL for the upstairs floor's states.
+    struct Bw { Status st; Sub sub; const char *name, *words; };
+    const Bw bws[] = {{Status::Open, Sub::Quiet, "sub_f_doorbell_come_in_quietly", "COME IN QUIETLY"},
+                      {Status::Private, Sub::None, "sub_f_doorbell_do_not_disturb", "DO NOT DISTURB"},
+                      {Status::Busy, Sub::PreferNo, "sub_f_doorbell_only_if_needed", "ONLY IF NEEDED"},
+                      {Status::Open, Sub::Free, "sub_f_doorbell_come_on_in", "COME ON IN"}};
+    for (const Bw &b : bws) {
+      s = p4;
+      s.peer = b.st;
+      start(s);
+      if (b.sub != default_sub(b.st)) g_h->demo.peer().choose_sub(b.sub);
+      pump(600);
+      check(std::string(g_h->panel.view().bell.words) == b.words, b.words);
+      capture(b.name);
+    }
+    // A press on COME IN QUIETLY sends nothing.
+    s = p4;
+    s.peer = Status::Open;
+    start(s);
+    g_h->demo.peer().choose_sub(Sub::Quiet);
+    pump(600);
+    tap(663, 375);
+    pump(300);
+    check(g_h->panel.view().bell.out == BellOut::Idle, "a press with the other floor's bell off sends nothing");
+    // (g) By night: the menus and the doorbell words.
+    s = p1;  // night, mine Private
+    s.mine = Status::Busy;
+    start(s);
+    g_h->panel.choose_sub(Sub::PreferNo);
+    pump(600);
+    ui::open_sheet(ui::Sheet::Sub);
+    pump(400);
+    capture("sub_g_busy_prefer_no_night");
+    s = p1;
+    s.mine = Status::Open;
+    start(s);
+    g_h->panel.choose_sub(Sub::Free);
+    pump(600);
+    ui::open_sheet(ui::Sheet::Sub);
+    pump(400);
+    capture("sub_g_open_free_night");
+    s = p1;
+    s.mine = Status::Sleeping;
+    start(s);
+    ui::open_sheet(ui::Sheet::Sub);
+    pump(400);
+    capture("sub_g_sleeping_options_night");
+    s = p1;
+    s.peer = Status::Sleeping;  // the upstairs floor asleep, Prefer no passage
+    start(s);
+    g_h->demo.peer().choose_sub(Sub::PreferNo);
+    pump(600);
+    capture("sub_g_doorbell_only_if_needed_night");
+    s = p1;
+    s.peer = Status::Private;
+    start(s);
+    pump(300);
+    capture("sub_g_doorbell_do_not_disturb_night");
+    std::printf("substatus: %d failed\n", g_fails);
   }
   return 0;
 }

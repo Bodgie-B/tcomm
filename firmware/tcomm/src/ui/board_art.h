@@ -66,12 +66,14 @@ struct Paint {
 };
 
 gfx::Color colour(const Shape &s, const Paint &p);
-// One shape in a given colour, its points moved by (dx, dy), through whatever clip the canvas has.
-void draw_shape(gfx::Canvas &c, const Shape &s, gfx::Color col, float dx = 0, float dy = 0);
-// Paints the group's shapes with their points moved by (dx, dy). Shapes marked clip are painted
-// through status_zone, the others through outer (either may be null).
+// One shape in a given colour, its points scaled by k and then moved by (dx, dy), through whatever
+// clip the canvas has. k scales the radii and stroke widths too (the badge previews and the bell in a
+// badge, 2026-11-26).
+void draw_shape(gfx::Canvas &c, const Shape &s, gfx::Color col, float dx = 0, float dy = 0, float k = 1);
+// Paints the group's shapes with their points scaled by k and moved by (dx, dy). Shapes marked clip
+// are painted through status_zone, the others through outer (either may be null).
 void draw(gfx::Canvas &c, const Group &g, const Paint &p, float dx = 0, float dy = 0,
-          const gfx::RRect *outer = nullptr, const gfx::RRect *status_zone = nullptr);
+          const gfx::RRect *outer = nullptr, const gfx::RRect *status_zone = nullptr, float k = 1);
 
 extern const Group kUpTile, kDownTile, kOutsideTile, kSkyHills, kStripOut, kStripIn, kStripHolly;
 extern const Group kBadgeOpen, kBadgeBusy, kBadgePrivate, kBadgeSleeping, kBadgeAway, kBadgeNoSignal;

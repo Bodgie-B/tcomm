@@ -130,6 +130,11 @@ void open_note_editor();     // this panel's tile message: the keyboard (ui_note
 void open_outside_chart();   // the outside history chart (ui_outside.cpp), on either panel
 void comfort_refresh();      // its live reading, and its idle close (called from render)
 void open_timer_sheet(tc::Status s);
+// The substatus menu (Mike, 2026-11-26; ui_sheets.cpp): slides in over the right side, below the
+// header, for the current status (none for Private). animate false: in place, for a change of light.
+void open_sub_sheet(bool animate = true);
+void sub_sheet_refresh();  // render: the outline follows the choice; closes on a status change or idle
+void sub_sheet_closing();  // close_sheet's hook: the previews' pictures go
 void open_settings();
 void open_time_date();
 void open_test_panel();

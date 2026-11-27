@@ -37,6 +37,20 @@
 #if __has_include("src/config/secrets.h")
 #include "src/config/secrets.h"  // the location; the keys are only used by board_radio.cpp
 #endif
+// The two people of each floor for Away's "<name> out" (Mike, 2026-11-26): real names only in the
+// untracked secrets.h; these stand in without it (and in the tests and the simulator).
+#ifndef TCOMM_AWAY_UP_1
+#define TCOMM_AWAY_UP_1 "Person 1"
+#endif
+#ifndef TCOMM_AWAY_UP_2
+#define TCOMM_AWAY_UP_2 "Person 2"
+#endif
+#ifndef TCOMM_AWAY_DOWN_1
+#define TCOMM_AWAY_DOWN_1 "Person 3"
+#endif
+#ifndef TCOMM_AWAY_DOWN_2
+#define TCOMM_AWAY_DOWN_2 "Person 4"
+#endif
 
 // ---- Display tests (Settings > Test) ----
 // Mike sees streaks at the left and the picture shifted a row or two whenever a large area is
@@ -473,7 +487,11 @@ void setup() {
   settings.latitude = TCOMM_LATITUDE;
   settings.longitude = TCOMM_LONGITUDE;
 #endif
-  board::load_own(own);
+  tc::set_away_name(tc::Floor::Upstairs, 0, TCOMM_AWAY_UP_1);
+  tc::set_away_name(tc::Floor::Upstairs, 1, TCOMM_AWAY_UP_2);
+  tc::set_away_name(tc::Floor::Downstairs, 0, TCOMM_AWAY_DOWN_1);
+  tc::set_away_name(tc::Floor::Downstairs, 1, TCOMM_AWAY_DOWN_2);
+  board::load_own(own);  // a version 1 save (before the substatus) comes back with its default
   board::load_dog(dog);
   board::load_mail(mail);
   load_display_test();
@@ -791,7 +809,7 @@ static void command(char *s) {
   int v, t[6] = {0, 0, 0, 0, 0, 0};
   char ch;
   if (!strcmp(s, "help")) {
-    Serial.println("status N (0-4) | bell | dog | time YYYY-MM-DD HH:MM[:SS] (local) | demo N (0-7) | info | bench");
+    Serial.println("status N (0-4) | sub N (0-7) | bell | dog | time YYYY-MM-DD HH:MM[:SS] (local) | demo N (0-7) | info | bench");
     Serial.printf("ring N (0-%d, the place in the list): choose a ringtone and play it, as a tap does\n",
                   tc::kRingtoneCount - 1);
     Serial.println("sound tests: play N (0 chime, 1 soft, 2 come on, 3 not now) | listen | amp hold 0/1 | codec reopen");
@@ -949,6 +967,8 @@ static void command(char *s) {
   }
   if (!lvgl_port_lock(1000)) return;
   if (cmd_int(s, "status", v) && tc::status_valid((uint8_t)v)) g_ctrl.choose_status((tc::Status)v);
+  else if (cmd_int(s, "sub", v) && v >= 0 && v <= 7)  // the substatus (core/status.h Sub), as the menu picks it
+    Serial.printf("sub %d: %s\n", v, g_ctrl.choose_sub((tc::Sub)v) ? "chosen" : "not one of this status's options, or already chosen");
   else if (!strcmp(s, "bell")) g_ctrl.tap_bell();
   else if (!strcmp(s, "dog")) g_ctrl.tap_dog();
   else if (!strcmp(s, "mail")) Serial.println(g_ctrl.tap_mail() ? "mail: tapped" : "mail: nothing waiting to acknowledge");

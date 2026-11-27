@@ -1,6 +1,6 @@
 // Copy to secrets.h (same folder) and fill in. secrets.h is in .gitignore: never commit it.
-// The C6 gateway (../gateway/gateway-c6) and its listener are built from this same file; see
-// ../gateway/docs/gateway-c6.md.
+// The C6 gateway (firmware/gateway-c6) and its listener are built from this same file; see
+// docs/gateway-c6.md.
 // HANDOFF: the first version hard-codes both MAC addresses and the keys. Each panel learns its
 // floor from its own MAC: the one listed as UPSTAIRS is upstairs. Both panels and the gateway are
 // built from the same file.
@@ -28,3 +28,10 @@
 #define TCOMM_WIFI_SSID ""
 #define TCOMM_WIFI_PASS ""
 #define TCOMM_OTA_PASS  ""
+
+// The two people of each floor, for Away's "<name> out" options (Mike, 2026-11-26): short, written
+// as they should show ("Name out"). Leave them out to get Person 1 to Person 4.
+#define TCOMM_AWAY_UP_1   "Person 1"
+#define TCOMM_AWAY_UP_2   "Person 2"
+#define TCOMM_AWAY_DOWN_1 "Person 3"
+#define TCOMM_AWAY_DOWN_2 "Person 4"

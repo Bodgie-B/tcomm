@@ -5,6 +5,7 @@
 #pragma once
 #include "types.h"
 #include "settings.h"
+#include "status.h"
 
 namespace tc {
 
@@ -54,9 +55,32 @@ struct KnockAction {
   Chime chime = Chime::None;
   bool save = false;
   bool wake = false;  // HANDOFF: a doorbell wakes the screen at the current brightness level
+  // From the substatus rules (ring_rule, Mike 2026-11-26); knock_action leaves them as they were.
+  uint8_t volume_pct = 100;  // the chime at this share of the volume (after the quiet-hours cap)
+  bool push = false;         // the rung floor's phones are pushed (quiet hours and the clock still decide)
+  bool bell_off = false;     // the ringer's panel can't ring at all (its DOORBELL shows words instead)
 };
 
+// The table in Settings, by status alone. Since 2026-11-26 the doorbell itself goes by ring_rule;
+// the mail chime and the dog's dings still ask this one where a sound is allowed.
 KnockAction knock_action(const Settings &s, Status own);
+
+// Mike, 2026-11-26: what a ring does on the RUNG panel, by its status and substatus.
+//   Open    Courtesy ring    chime at the volume, banner, wake, phones
+//           Free / Quiet     bell off: nothing at all (a ring from older firmware is taken silently)
+//   Busy    Courtesy ring    soft chime at 75 % of the volume, banner, wake, phones
+//           Prefer no        soft chime at 50 %, banner, wake, phones
+//           Quiet passage    bell off
+//   Sleeping Quiet passage   bell off
+//           Prefer no        silent: no chime, banner, wake or phones; kept and shown when back
+//   Private                  bell off ("I've chosen no contact in private")
+//   Away    All out          kept and shown on return, as Away always was
+//           <name> out       as Open's courtesy ring: someone is home
+KnockAction ring_rule(Status own, Sub sub);
+
+// The words the ringer's DOORBELL tile shows for the rung floor's state (Mike, 2026-11-26), or
+// null for plain DOORBELL. With bell_off the tile can't ring; ONLY IF NEEDED still rings.
+const char *bell_words(Status st, Sub sub);
 
 enum class BannerKind : uint8_t { None, Knock, MissedWhileAway };
 
@@ -66,11 +90,20 @@ class BellReceiver {
 
   // Returns the action; duplicates of the knock being shown return an empty action.
   KnockAction on_knock(uint16_t knock_id, Floor from, const Settings &s, Status own, uint32_t mono_ms, uint32_t utc);
+  // The same with the action already worked out (ring_rule); own says why a saved one was kept
+  // (Away or Sleeping), for the banner's words when it comes back.
+  KnockAction on_knock(uint16_t knock_id, Floor from, const KnockAction &a, Status own, uint32_t mono_ms, uint32_t utc);
   // The owner answered. Returns the knock id to reply to, or 0.
   uint16_t answer(uint32_t mono_ms);
   void dismiss();
   // The owner's status changed; leaving Away brings back a saved knock.
   void status_changed(Status from, Status to, uint32_t mono_ms);
+  // The same by the rule: was_saving and now_saving say whether a ring was kept for later before and
+  // after the change (Away's All out, Sleeping's Prefer no passage; Mike, 2026-11-26). Leaving a
+  // keeping state brings back the saved knock, as leaving Away always did.
+  void saving_changed(bool was_saving, bool now_saving, uint32_t mono_ms);
+  // Why the knock on a MissedWhileAway banner was kept: Away, or Sleeping (its words differ).
+  Status saved_why() const { return why_; }
   void tick(uint32_t mono_ms);
 
   BannerKind banner() const { return banner_; }
@@ -94,6 +127,8 @@ class BellReceiver {
   uint16_t saved_id_ = 0;
   uint32_t saved_utc_ = 0;
   Floor saved_from_ = Floor::Upstairs;
+  Status saved_why_ = Status::Away;
+  Status why_ = Status::Away;
   bool missed_ = false;
   uint32_t missed_utc_ = 0;
 };

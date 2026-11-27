@@ -33,6 +33,9 @@ class Actions {
   virtual ~Actions() {}
   virtual void choose_status(tc::Status s) = 0;
   virtual void start_timer(tc::Status s, uint32_t seconds, tc::Status fallback) = 0;
+  // A substatus of the current status (Mike, 2026-11-26), from the menu a long press on the own
+  // status opens. A default body, so a build without it still links.
+  virtual void choose_sub(tc::Sub s) { (void)s; }
   virtual void tap_bell() = 0;
   virtual void tap_dog() = 0;
   virtual void tap_mail() = 0;
@@ -141,8 +144,9 @@ size_t icicles_bytes();
 void set_copy_pause(void (*pause)());
 
 // For the simulator: open sheets the way a touch would, and scroll the open one's list.
-// Voice: the badge recorder (docs/voice-notes/DESIGN.md 2.2), last so no other value moves.
-enum class Sheet { None, Status, Timer, Settings, TimeDate, Test, CleanScreen, Ringtone, Zambretti, Screensaver, Comfort, Chart, Note, Outside, Presence, Voice };
+// Voice: the badge recorder (docs/voice-notes/DESIGN.md 2.2), last so no other value moves. Sub: the
+// substatus menu (Mike, 2026-11-26), after it for the same reason.
+enum class Sheet { None, Status, Timer, Settings, TimeDate, Test, CleanScreen, Ringtone, Zambretti, Screensaver, Comfort, Chart, Note, Outside, Presence, Voice, Sub };
 void open_sheet(Sheet s, tc::Status timed = tc::Status::Private);
 void scroll_sheet(int y);
 void tap_gear();  // as a tap on the gear (Settings rolls down or up), for testing over serial

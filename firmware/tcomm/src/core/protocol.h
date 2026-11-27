@@ -5,6 +5,10 @@
 // Wire format, little-endian:
 //   header  ver u8 | type u8 | sender u8 | seq u16                              (5 bytes)
 //   STATE   status u8 | flags u8 | since u32 | until u32 | fallback u8 | clock u32 | clock_quality u8
+//           [| sub u8]   (Mike, 2026-11-26: the substatus, a Sub (status.h) that must be one of the status's
+//           options. Sent only to a panel whose own STATE carries kStateSubstatus: a panel from before
+//           2026-11-26 takes exactly 21 bytes of body and drops anything longer, and the sender would then
+//           mark it No signal. Without the byte the substatus is the status's default.)
 //   KNOCK   knock_id u16
 //   REPLY   knock_id u16 | answer u8   (bit 0: 1 = Come on, 0 = Not now; bit 1: answered from a phone
 //           (Mike, 2026-11-15), so the ringer's panel can say "(from phone)". The byte 4 alone (bit 2) =
@@ -18,7 +22,7 @@
 //   LUCY    out u8 | since u32
 //   OUTSIDE flags u8 | temp_tenths_f i16 | humidity u8 | forecast u8 | time u32 | phrase_len u8 | phrase
 //           (forecast: a Forecast code, types.h; a code the panel doesn't know shows as no forecast.
-//            phrase: WeatherGate's forecast text, shown as it comes. See ../gateway/docs/weathergate.md.)
+//            phrase: WeatherGate's forecast text, shown as it comes. See docs/weathergate.md.)
 //   EVENT   one calendar event, as event_write() lays it out (events.h)
 //   EVENT_SUM count u16 | digest u32 | flags u8   (the sender's calendar in brief; 1 = please reply)
 //   MAIL    waiting u8 | since u32 | ver u32   (mail for downstairs: upstairs marks it, downstairs
@@ -39,11 +43,11 @@
 //   UPDATE  reserved u8 (always 0)   (Mike, 2026-11-07: start your Wi-Fi updater; sent by the panel whose
 //           Settings > Update over Wi-Fi > Both panels was tapped, or by the gateway to the upstairs panel
 //           when the Pi sends it the serial line UPDATE (upstairs then does what that tap does).
-//           Not latest-wins. See docs/wifi-updates.md and ../gateway/docs/weathergate.md.)
+//           Not latest-wins. See docs/wifi-updates.md and docs/weathergate.md.)
 //   NOTICE  a house event for the Pi (Mike, 2026-11-11), UPSTAIRS to the gateway only, at most 1+1+2+4+1+40 = 49 bytes
 //           of body: kind u8 (1 to 8, see NoticeKind) | floor u8 | value i16 | time u32 (UTC, 0 = no clock) |
 //           text_len u8 | text bytes (at most kNoticeTextMax, printable ASCII, no NUL). The gateway ACKs it like a
-//           panel would and prints one serial line (../gateway/docs/gateway-c6.md). Never ACKed = dropped quietly.
+//           panel would and prints one serial line (docs/gateway-c6.md). Never ACKed = dropped quietly.
 //   PHONE_ANSWER floor u8 | knock_id u16 | come_on u8   (Mike, 2026-11-15: a phone answered a ring through ntfy
 //           and the Pi.) floor = the RUNG floor (0 upstairs, 1 downstairs); knock_id = that ring's id, never 0;
 //           come_on 0 or 1. The gateway sends it to the UPSTAIRS panel; when the rung floor is downstairs,
@@ -61,7 +65,7 @@
 //           down_temp_tenths_f i16 | down_hum_tenths u16 | time u32 (UTC, 0 = no clock). The readings are the ones
 //           the tiles show (offset applied); a value whose valid bit is clear means nothing. Type 32, not 31: the
 //           reach test sends type 31 to the gateway on the promise that nothing decodes it (voice_proto.h).
-//           Latest wins; the gateway ACKs it like a NOTICE and prints one serial line (../gateway/docs/gateway-c6.md).
+//           Latest wins; the gateway ACKs it like a NOTICE and prints one serial line (docs/gateway-c6.md).
 //           Like a NOTICE it waits behind panel traffic and is never counted as pending for the other panel.
 #pragma once
 #include "types.h"
@@ -83,7 +87,7 @@ enum class MsgType : uint8_t {
   Rooms = 32  // 20-30 are voice (voice_proto.h), 31 the reach test's
 };
 
-// The house events the upstairs panel reports to the Pi (Mike, 2026-11-11; ../gateway/docs/gateway-c6.md).
+// The house events the upstairs panel reports to the Pi (Mike, 2026-11-11; docs/gateway-c6.md).
 // The numbers are on the wire: never change one.
 //   Knock: floor = who rang; value 0 = nobody answered in the ring time, 1 = it rang while the
 //     other floor was Away (kept for later). Arrow: value +1 heat, -1 cooling. Mail: value 1 (value 3 with text NOMAIL is "no mail", Mike, 2026-11-18, same rules); from
@@ -123,9 +127,13 @@ inline uint8_t sender_id(Floor f) { return f == Floor::Upstairs ? kSenderUpstair
 // voice, so a C6 0.4 never gets a frame from downstairs.
 // kStateGwMulaw (Mike, 2026-11-21): with kStateGwVoice, the last hello upstairs heard was the mu-law one
 // (key kVoiceHelloKeyMulaw, C6 0.6 on), so downstairs records in mu-law too; without it, ADPCM.
+// kStateSubstatus (Mike, 2026-11-26): set in every STATE by a panel that reads the substatus byte, so
+// the other panel sends it the longer STATE; to a panel without it (older firmware, or not heard from
+// yet) the STATE stays the 21-byte one it always was, and that panel shows the status with its default
+// look. The last free bit: a later addition needs another way (a longer STATE behind this flag).
 enum StateFlags : uint8_t {
   kStatePleaseReply = 0x01, kStateClockValid = 0x02, kStateAwayDesk = 0x04, kStateNobodyNear = 0x08, kStateVoice = 0x10,
-  kStateGwVoice = 0x20, kStateGwMulaw = 0x40
+  kStateGwVoice = 0x20, kStateGwMulaw = 0x40, kStateSubstatus = 0x80
 };
 enum ReadingFlags : uint8_t { kReadingValid = 0x01 };
 // ROOMS (Mike, 2026-11-22). Occupied is only ever set with known: decode refuses it alone, and any higher bit.
@@ -141,7 +149,9 @@ struct Msg {
   uint8_t sender = 0;
   uint16_t seq = 0;
   union {
-    struct { uint8_t status, flags; uint32_t since, until; uint8_t fallback; uint32_t clock; uint8_t clock_quality; } state;
+    // has_sub: the frame carries the sub byte (encode writes it only when set; decode says which it got).
+    // Without it, decode gives the status's default substatus.
+    struct { uint8_t status, flags; uint32_t since, until; uint8_t fallback; uint32_t clock; uint8_t clock_quality; uint8_t sub, has_sub; } state;
     struct { uint16_t id; } knock;
     struct { uint16_t id; uint8_t come_on; uint8_t phone; uint8_t dismissed; } reply;  // each 0 or 1 (one wire byte)
     struct { uint16_t seq; uint8_t type; } ack;

@@ -5,6 +5,7 @@
 #include "../core/events.h"
 #include "../core/holidays.h"
 #include "../core/requests.h"
+#include "../core/status.h"
 #include "../core/types.h"
 #include "../gfx/canvas.h"
 
@@ -48,7 +49,15 @@ void mail(gfx::Canvas &c, bool solid, gfx::Color fg, gfx::Color bg);
 // keeps the slash clear of the envelope. With a disc colour the badge sits on a filled disc of it,
 // which is how the red one stays readable on any tile colour.
 void nomail(gfx::Canvas &c, gfx::Color ink, gfx::Color gap, const gfx::Color *disc);
-void badge(gfx::Canvas &c, int status_or_nosignal, gfx::Color fg, gfx::Color bg);  // 80 x 80
+// The status badge, 80 x 80 on the tiles and the timer sheet; a smaller square canvas draws it scaled
+// (the substatus menu's previews). Mike, 2026-11-26, the substatus marks:
+//   Ring     Open's Free passage: only the outer ring is left, hollow, in fg (no disc, no check)
+//   BellOff  Quiet passage: a doorbell with a slash in place of the check or hourglass, in bg
+//   BellRed  Prefer no passage: a red doorbell (red) in place of the hourglass
+enum class BadgeMark : uint8_t { Plain, Ring, BellOff, BellRed };
+BadgeMark badge_mark(tc::Status st, tc::Sub sub);
+void badge(gfx::Canvas &c, int status_or_nosignal, gfx::Color fg, gfx::Color bg, BadgeMark mark = BadgeMark::Plain,
+           gfx::Color red = gfx::Color{0xE0, 0x48, 0x3C});
 // A heat or cooling arrow (requests.h), filling a square canvas of any size (kArrow on the tile,
 // larger on the survey). The tenant's: a dark plum disc with the arrow in its colour (mild heat
 // light red, urgent heat red, mild cooling light blue, urgent cooling blue; urgent ones are two

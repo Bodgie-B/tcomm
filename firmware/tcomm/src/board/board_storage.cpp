@@ -28,7 +28,7 @@ static bool g_open = false;
 // tc::settings_from_old (core/settings_migrate.h, checked by the host tests), so an update keeps
 // everything saved.
 static constexpr uint16_t kSettingsVersion = 8;
-static constexpr uint16_t kOwnVersion = 1;
+// The own state's version is tc::kOwnVersion (core/status.h): 2 added the substatus (Mike, 2026-11-26).
 static constexpr uint16_t kDogVersion = 3;  // 2: change counter added; 3: each dog on its own
 static constexpr uint16_t kMailVersion = 2;  // 2: the no-mail flag added (Mike, 2026-11-18); 1 is read below
 static constexpr uint16_t kComfortVersion = 1;
@@ -109,14 +109,19 @@ bool load_settings(tc::Settings &s) {
 }
 void save_settings(const tc::Settings &s) { save_blob("settings", kSettingsVersion, s); }
 
+// Version 1 (before 2026-11-26) is the same 16 bytes without the substatus: an update keeps the saved
+// status, with its default substatus (tc::own_from_saved, checked by the host tests).
 bool load_own(tc::OwnState &s) {
+  if (!g_open) return false;
+  uint8_t buf[sizeof(tc::OwnState) + 4];
+  if (g_prefs.getBytesLength("own") != sizeof(buf) || g_prefs.getBytes("own", buf, sizeof(buf)) != sizeof(buf)) return false;
+  const uint16_t ver = (uint16_t)(buf[0] | (buf[1] << 8)), size = (uint16_t)(buf[2] | (buf[3] << 8));
   tc::OwnState tmp;
-  if (!load_blob("own", kOwnVersion, tmp)) return false;
-  if (!tc::status_valid((uint8_t)tmp.status) || !tc::status_valid((uint8_t)tmp.fallback)) return false;
+  if (!tc::own_from_saved(ver, buf + 4, size, tmp)) return false;
   s = tmp;
   return true;
 }
-void save_own(const tc::OwnState &s) { save_blob("own", kOwnVersion, s); }
+void save_own(const tc::OwnState &s) { save_blob("own", tc::kOwnVersion, s); }
 
 bool load_dog(tc::DogState &d) {
   tc::DogState tmp;

@@ -1,6 +1,6 @@
-// Host tests for the TComm core and controller. Build and run (Git Bash, from the firmware folder):
-//   g++ -std=c++17 -O1 -Wall -Wextra -I tcomm/src tests/test_core.cpp
-//       tcomm/src/core/*.cpp tcomm/src/app/*.cpp -o "$LOCALAPPDATA/tcomm/host/tests.exe"
+// Host tests for the TComm core and controller. Build and run (Git Bash, from the project folder):
+//   g++ -std=c++17 -O1 -Wall -Wextra -I firmware/tcomm/src tests/test_core.cpp
+//       firmware/tcomm/src/core/*.cpp firmware/tcomm/src/app/*.cpp -o "$LOCALAPPDATA/tcomm/host/tests.exe"
 //   (one command; split here for reading)
 //   "$LOCALAPPDATA/tcomm/host/tests.exe" docs/sounds
 // The optional argument is a folder for WAV exports of the four synthesized sounds.
@@ -320,7 +320,7 @@ static void test_protocol() {
   m.type = MsgType::State;
   m.sender = kSenderUpstairs;
   m.seq = 513;
-  m.u.state = {3, kStateClockValid, 111, 222, 1, 333, kClockManual};
+  m.u.state = {3, kStateClockValid, 111, 222, 1, 333, kClockManual, 0, 0};
   size_t n = encode(m, buf, sizeof(buf));
   CHECK(n == 21);
   CHECK(decode(buf, n, d));
@@ -790,10 +790,13 @@ static void test_doorbell() {
 }
 
 static void test_knock_rules() {
+  // Mike, 2026-11-26: Busy's soft chime is 75 % of the volume (90 -> 68; it was the volume less 15, 75),
+  // and Sleeping and Private show no banner and wake nothing any more (they did). A downstairs press
+  // isn't even sent to them: their bell is off (Sleeping's default is Quiet passage).
   struct Case { Status st; bool banner; bool chime; Sound snd; };
   const Case cases[] = {{Status::Busy, true, true, Sound::SoftChime},
-                        {Status::Private, true, false, Sound::Chime},
-                        {Status::Sleeping, true, false, Sound::Chime},
+                        {Status::Private, false, false, Sound::Chime},
+                        {Status::Sleeping, false, false, Sound::Chime},
                         {Status::Away, false, false, Sound::Chime}};
   for (const Case &c : cases) {
     Pair p;
@@ -806,7 +809,7 @@ static void test_knock_rules() {
     p.run(100);
     CHECK((p.b.view().banner.kind == BannerKind::Knock) == c.banner);
     CHECK(!p.pb.played.empty() == c.chime);
-    if (c.chime) CHECK(p.pb.played.back().first == c.snd && p.pb.played.back().second == 75);
+    if (c.chime) CHECK(p.pb.played.back().first == c.snd && p.pb.played.back().second == 68);
     if (c.st == Status::Away) {
       p.b.choose_status(Status::Open);  // back home: the saved knock appears
       p.run(100);
@@ -5876,7 +5879,9 @@ static void test_phone_ring_notice() {
     p.b.tap_bell();
     p.run(500);
     bool want = st == Status::Open || st == Status::Busy;
-    CHECK(g_knock_seen != 0);
+    // Mike, 2026-11-26: Private and Sleeping (its default, Quiet passage) have the bell off, so the
+    // ring isn't sent at all (it was sent, and only the push held back).
+    CHECK((g_knock_seen != 0) == (st != Status::Private && st != Status::Sleeping));
     CHECK(rings_with(p, "RING") == (want ? 1 : 0));
     const Msg *m = last_notice(p, NoticeKind::Ring);
     if (want) {
@@ -5952,6 +5957,489 @@ static void test_phone_ring_notice() {
     p.run(500);
     CHECK(notices_of(p, NoticeKind::Ring) == 0);
   }
+}
+
+
+// ---------------------------------------------------------------------------------------------
+// Substatuses (Mike, 2026-11-26): the options under each status, their ring rules, STATE and NVS.
+
+// A panel from before 2026-11-26, as seen from the new one: its STATE is the 21-byte one and has no
+// kStateSubstatus. Sent straight into c from the other floor.
+static void old_state(Controller &c, FakePlatform &pc, Floor from, Status st, uint8_t flags = 0) {
+  Msg m;
+  m.type = MsgType::State;
+  m.sender = sender_id(from);
+  m.seq = g_gw_seq++;
+  m.u.state.status = (uint8_t)st;
+  m.u.state.flags = (uint8_t)(kStateClockValid | flags);
+  m.u.state.fallback = (uint8_t)Status::Open;
+  m.u.state.clock = pc.w.utc;
+  m.u.state.clock_quality = kClockManual;
+  uint8_t buf[kMaxMsg];
+  size_t n = encode(m, buf, sizeof(buf));
+  CHECK(n == 21);
+  c.on_radio(buf, n);
+}
+
+// The last STATE frame c sent, raw (length and bytes), or an empty vector.
+static std::vector<uint8_t> last_state_frame(FakePlatform &pc) {
+  for (auto it = pc.out.rbegin(); it != pc.out.rend(); ++it)
+    if (it->bytes.size() > 2 && it->bytes[1] == (uint8_t)MsgType::State) return it->bytes;
+  return {};
+}
+
+static void test_substatus_model() {
+  // Defaults per status, and the options in Mike's order.
+  CHECK(default_sub(Status::Open) == Sub::Courtesy && default_sub(Status::Busy) == Sub::Courtesy);
+  CHECK(default_sub(Status::Sleeping) == Sub::Quiet && default_sub(Status::Away) == Sub::AllOut);
+  CHECK(default_sub(Status::Private) == Sub::None);
+  Sub o[kSubMax];
+  CHECK(sub_options(Status::Open, o) == 3 && o[0] == Sub::Free && o[1] == Sub::Courtesy && o[2] == Sub::Quiet);
+  CHECK(sub_options(Status::Busy, o) == 3 && o[0] == Sub::Quiet && o[1] == Sub::Courtesy && o[2] == Sub::PreferNo);
+  CHECK(sub_options(Status::Sleeping, o) == 2 && o[0] == Sub::Quiet && o[1] == Sub::PreferNo);
+  CHECK(sub_options(Status::Away, o) == 3 && o[0] == Sub::AllOut && o[1] == Sub::OneOut1 && o[2] == Sub::OneOut2);
+  CHECK(sub_options(Status::Private, o) == 0);
+  for (int st = 0; st < kStatusCount; st++) {
+    CHECK(sub_valid((Status)st, (uint8_t)default_sub((Status)st)));
+    CHECK(!sub_valid((Status)st, 8) && !sub_valid((Status)st, 255));
+  }
+  CHECK(!sub_valid(Status::Open, (uint8_t)Sub::PreferNo) && !sub_valid(Status::Sleeping, (uint8_t)Sub::Courtesy));
+  CHECK(!sub_valid(Status::Private, (uint8_t)Sub::Courtesy) && !sub_valid(Status::Busy, (uint8_t)Sub::None));
+  // Labels: the Away names are the fallbacks here (secrets.h is only read by tcomm.ino).
+  char b[32];
+  sub_label(b, sizeof(b), Sub::Free, Floor::Upstairs);
+  CHECK_STR(b, "Free passage");
+  sub_label(b, sizeof(b), Sub::PreferNo, Floor::Upstairs);
+  CHECK_STR(b, "Prefer no passage");
+  sub_label(b, sizeof(b), Sub::OneOut1, Floor::Upstairs);
+  CHECK_STR(b, "Person 1 out");
+  sub_label(b, sizeof(b), Sub::OneOut2, Floor::Downstairs);
+  CHECK_STR(b, "Person 4 out");
+  for (Sub s : {Sub::Courtesy, Sub::Free, Sub::Quiet, Sub::PreferNo, Sub::AllOut, Sub::OneOut1}) CHECK(sub_effect(Status::Busy, s)[0]);
+
+  // The model: an option sticks and restarts "since"; any status choice resets it.
+  StatusModel m;
+  WallTime w{true, 100000, kClockManual};
+  CHECK(m.state().sub == Sub::Courtesy);
+  CHECK(!m.choose_sub(Sub::PreferNo, w, 0));  // not one of Open's
+  CHECK(!m.choose_sub(Sub::Courtesy, w, 0));  // already
+  CHECK(m.choose_sub(Sub::Free, {true, 100500, kClockManual}, 0));
+  CHECK(m.state().sub == Sub::Free && m.state().since == 100500);
+  CHECK(m.choose(Status::Open, {true, 100600, kClockManual}, 0));  // the same status from the sheet: back to the default
+  CHECK(m.state().sub == Sub::Courtesy && m.state().since == 100600);
+  CHECK(!m.choose(Status::Open, w, 0));  // nothing left to change
+  CHECK(m.choose(Status::Busy, w, 0) && m.state().sub == Sub::Courtesy);
+  CHECK(m.choose_sub(Sub::PreferNo, w, 0));
+  CHECK(m.choose(Status::Sleeping, w, 0) && m.state().sub == Sub::Quiet);
+  CHECK(m.choose_sub(Sub::PreferNo, w, 0));
+  // A timer keeps the option; its end gives the fallback's default.
+  CHECK(m.choose_timed(Status::Sleeping, 600, Status::Away, {true, 101000, kClockManual}));
+  CHECK(m.state().sub == Sub::Quiet);  // the timer sheet is a status choice too
+  CHECK(m.choose_sub(Sub::PreferNo, {true, 101100, kClockManual}, 0));
+  CHECK(m.state().until == 101600 && m.state().sub == Sub::PreferNo);
+  CHECK(m.tick({true, 101600, kClockManual}));
+  CHECK(m.state().status == Status::Away && m.state().sub == Sub::AllOut);
+  CHECK(!m.choose_sub(Sub::None, w, 0));
+  // Private: no options.
+  CHECK(m.choose(Status::Private, w, 0) && m.state().sub == Sub::None);
+  CHECK(!m.choose_sub(Sub::Courtesy, w, 0) && !m.choose_sub(Sub::Quiet, w, 0));
+  // A restore with a substatus that doesn't belong gets the status's default.
+  OwnState bad;
+  bad.status = Status::Sleeping;
+  bad.sub = Sub::Free;
+  m.restore(bad);
+  CHECK(m.state().sub == Sub::Quiet);
+}
+
+static void test_substatus_storage() {
+  // Version 1 of the saved own state: the same 16 bytes, the substatus byte was padding.
+  OwnStateV1 v1;
+  memset((void *)&v1, 0xAB, sizeof(v1));  // padding is whatever was in memory
+  v1.status = Status::Sleeping;
+  v1.since = 1234;
+  v1.until = 5678;
+  v1.fallback = Status::Busy;
+  uint8_t raw[sizeof(OwnState)];
+  memcpy(raw, &v1, sizeof(v1));
+  OwnState o;
+  CHECK(own_from_saved(1, raw, sizeof(raw), o));
+  CHECK(o.status == Status::Sleeping && o.since == 1234 && o.until == 5678 && o.fallback == Status::Busy);
+  CHECK(o.sub == Sub::Quiet);  // the default, whatever the old padding held
+  v1.status = Status::Open;
+  memcpy(raw, &v1, sizeof(v1));
+  CHECK(own_from_saved(1, raw, sizeof(raw), o) && o.status == Status::Open && o.sub == Sub::Courtesy);
+  // Version 2 round-trips, and is checked.
+  OwnState s2;
+  s2.status = Status::Busy;
+  s2.sub = Sub::PreferNo;
+  s2.since = 99;
+  memcpy(raw, &s2, sizeof(s2));
+  CHECK(own_from_saved(kOwnVersion, raw, sizeof(raw), o) && o.status == Status::Busy && o.sub == Sub::PreferNo && o.since == 99);
+  s2.sub = Sub::Free;  // not one of Busy's
+  memcpy(raw, &s2, sizeof(s2));
+  CHECK(!own_from_saved(kOwnVersion, raw, sizeof(raw), o));
+  s2.sub = Sub::Courtesy;
+  s2.status = (Status)9;
+  memcpy(raw, &s2, sizeof(s2));
+  CHECK(!own_from_saved(kOwnVersion, raw, sizeof(raw), o));
+  v1.fallback = (Status)7;
+  memcpy(raw, &v1, sizeof(v1));
+  CHECK(!own_from_saved(1, raw, sizeof(raw), o));
+  CHECK(!own_from_saved(3, raw, sizeof(raw), o) && !own_from_saved(0, raw, sizeof(raw), o));
+  CHECK(!own_from_saved(kOwnVersion, raw, sizeof(raw) - 1, o));
+  CHECK(kOwnVersion == 2);
+}
+
+static void test_substatus_wire() {
+  uint8_t buf[kMaxMsg];
+  Msg m, d;
+  m.type = MsgType::State;
+  m.sender = kSenderDownstairs;
+  m.seq = 9;
+  m.u.state.status = (uint8_t)Status::Busy;
+  m.u.state.flags = kStateClockValid | kStateSubstatus;
+  m.u.state.fallback = (uint8_t)Status::Open;
+  m.u.state.sub = (uint8_t)Sub::PreferNo;
+  // Without has_sub: the 21-byte body every panel takes. It reads as the status's default.
+  m.u.state.has_sub = 0;
+  size_t n = encode(m, buf, sizeof(buf));
+  CHECK(n == 21);
+  CHECK(decode(buf, n, d) && !d.u.state.has_sub && d.u.state.sub == (uint8_t)Sub::Courtesy);
+  CHECK((d.u.state.flags & kStateSubstatus) != 0);  // the flag alone: the old decoder never checked unknown bits
+  // With it: one byte more, and the substatus comes through.
+  m.u.state.has_sub = 1;
+  n = encode(m, buf, sizeof(buf));
+  CHECK(n == 22 && buf[21] == (uint8_t)Sub::PreferNo);
+  CHECK(decode(buf, n, d) && d.u.state.has_sub && d.u.state.sub == (uint8_t)Sub::PreferNo && d.u.state.status == (uint8_t)Status::Busy);
+  // A substatus that isn't the status's: refused on both sides.
+  buf[21] = (uint8_t)Sub::Free;
+  CHECK(!decode(buf, n, d));
+  buf[21] = 200;
+  CHECK(!decode(buf, n, d));
+  m.u.state.sub = (uint8_t)Sub::Free;
+  CHECK(encode(m, buf, sizeof(buf)) == 0);
+  // Two bytes more is malformed still.
+  m.u.state.sub = (uint8_t)Sub::Quiet;
+  n = encode(m, buf, sizeof(buf));
+  buf[n] = 0;
+  CHECK(!decode(buf, n + 1, d));
+  // Private: only None goes in the byte.
+  m.u.state.status = (uint8_t)Status::Private;
+  m.u.state.sub = (uint8_t)Sub::None;
+  n = encode(m, buf, sizeof(buf));
+  CHECK(n == 22 && decode(buf, n, d) && d.u.state.sub == (uint8_t)Sub::None);
+  // An old (21-byte) Sleeping STATE: the default, Quiet passage.
+  m.u.state.status = (uint8_t)Status::Sleeping;
+  m.u.state.has_sub = 0;
+  n = encode(m, buf, sizeof(buf));
+  CHECK(n == 21 && decode(buf, n, d) && d.u.state.sub == (uint8_t)Sub::Quiet);
+}
+
+// A new panel and an old one, one updated before the other: the new one sends the old one only the
+// 21-byte STATE (else it drops it and gets marked No signal), and the long one once the other says
+// it reads it.
+static void test_substatus_mixed_versions() {
+  FakePlatform pa;
+  pa.w = {true, 1792627200u, kClockManual};
+  Controller a(pa);
+  Settings sa;
+  sa.floor = Floor::Upstairs;
+  OwnState own;
+  own.status = Status::Open;
+  own.sub = Sub::Free;
+  a.begin(sa, own, DogState());
+  pa.mono += 20;
+  a.tick();
+  std::vector<uint8_t> f = last_state_frame(pa);
+  CHECK(f.size() == 21);  // nothing heard yet: the old form
+  CHECK(f.size() > 6 && (f[6] & kStateSubstatus));
+  // The old downstairs panel answers with its own (old) STATE.
+  pa.out.clear();
+  old_state(a, pa, Floor::Downstairs, Status::Busy, kStatePleaseReply);
+  pa.mono += 20;
+  a.tick();
+  f = last_state_frame(pa);
+  CHECK(f.size() == 21);  // still the old form: it hasn't said it reads the byte
+  CHECK(a.view().floor[(int)Floor::Downstairs].substatus == Sub::Courtesy);  // and its own reads as the default
+  CHECK(!a.view().bell.words[0]);
+  // It is updated, restarts and says so: our Free passage goes to it at once, without being asked.
+  pa.out.clear();
+  {
+    Msg m;
+    m.type = MsgType::State;
+    m.sender = kSenderDownstairs;
+    m.seq = g_gw_seq++;
+    m.u.state.status = (uint8_t)Status::Busy;
+    m.u.state.flags = kStateClockValid | kStateSubstatus;
+    m.u.state.fallback = (uint8_t)Status::Open;
+    m.u.state.clock = pa.w.utc;
+    m.u.state.clock_quality = kClockManual;
+    m.u.state.sub = (uint8_t)Sub::PreferNo;
+    m.u.state.has_sub = 1;
+    uint8_t buf[kMaxMsg];
+    size_t n = encode(m, buf, sizeof(buf));
+    a.on_radio(buf, n);
+  }
+  pa.mono += 20;
+  a.tick();
+  f = last_state_frame(pa);
+  CHECK(f.size() == 22 && f[21] == (uint8_t)Sub::Free);
+  CHECK(a.view().floor[(int)Floor::Downstairs].substatus == Sub::PreferNo);
+  CHECK_STR(a.view().bell.words, "ONLY IF NEEDED");
+  // Back to old firmware (a downgrade): the short form again.
+  old_state(a, pa, Floor::Downstairs, Status::Busy);
+  pa.out.clear();
+  CHECK(a.choose_sub(Sub::Quiet));
+  pa.mono += 20;
+  a.tick();
+  f = last_state_frame(pa);
+  CHECK(f.size() == 21);
+
+  // The old panel's ring, while this one's bell is off: taken silently.
+  pa.played.clear();
+  {
+    Msg k;
+    k.type = MsgType::Knock;
+    k.sender = kSenderDownstairs;
+    k.seq = g_gw_seq++;
+    k.u.knock.id = 4242;
+    uint8_t buf[16];
+    a.on_radio(buf, encode(k, buf, sizeof(buf)));
+  }
+  a.tick();
+  CHECK(pa.played.empty() && a.view().banner.kind == BannerKind::None && !a.view().bell.alert);
+}
+
+static void test_substatus_two_panels() {
+  // Both new: the substatus goes over and shows on the other panel's tile and badge.
+  Pair p;
+  p.begin();
+  p.run(300);
+  CHECK(p.a.choose_sub(Sub::Free));
+  p.run(200);
+  const FloorView &up_on_b = p.b.view().floor[(int)Floor::Upstairs];
+  CHECK(up_on_b.substatus == Sub::Free && up_on_b.sub_line);
+  CHECK(std::string(up_on_b.line).find("Free passage since ") == 0);
+  CHECK_STR(p.a.view().floor[(int)Floor::Upstairs].line, up_on_b.line);
+  CHECK(p.pa.saved_own.sub == Sub::Free);
+  CHECK_STR(p.b.view().bell.words, "COME ON IN");
+  CHECK(p.b.view().bell.off);
+  // The ringer can't send: nothing goes out, the tile stays idle.
+  watch_knocks(p);
+  p.b.tap_bell();
+  p.run(300);
+  CHECK(g_knock_seen == 0 && p.b.view().bell.out == BellOut::Idle);
+  // Courtesy ring (the default): plain DOORBELL and "since", and the ring goes again.
+  CHECK(p.a.choose_sub(Sub::Courtesy));
+  p.run(200);
+  CHECK(!p.b.view().bell.words[0] && !p.b.view().bell.off);
+  CHECK(std::string(p.b.view().floor[(int)Floor::Upstairs].line).find("since ") == 0);
+  CHECK(!p.b.view().floor[(int)Floor::Upstairs].sub_line);
+  p.b.tap_bell();
+  p.run(300);
+  CHECK(g_knock_seen != 0 && p.a.view().banner.kind == BannerKind::Knock);
+  p.a.answer_banner(true);
+  p.run(BellSender::kRepeatIgnoreMs + 200);
+  // Words for each state, on the ringer's panel.
+  struct W { Status st; Sub sub; const char *words; bool off; };
+  const W ws[] = {{Status::Open, Sub::Quiet, "COME IN QUIETLY", true},    {Status::Busy, Sub::Quiet, "COME IN QUIETLY", true},
+                  {Status::Sleeping, Sub::Quiet, "COME IN QUIETLY", true}, {Status::Busy, Sub::PreferNo, "ONLY IF NEEDED", false},
+                  {Status::Sleeping, Sub::PreferNo, "ONLY IF NEEDED", false}, {Status::Busy, Sub::Courtesy, "", false},
+                  {Status::Away, Sub::AllOut, "", false},                  {Status::Away, Sub::OneOut2, "", false}};
+  for (const W &x : ws) {
+    p.a.choose_status(x.st);
+    if (x.sub != default_sub(x.st)) CHECK(p.a.choose_sub(x.sub));
+    p.run(200);
+    CHECK_STR(p.b.view().bell.words, x.words);
+    CHECK(p.b.view().bell.off == x.off);
+  }
+  p.a.choose_status(Status::Private);
+  p.run(200);
+  CHECK_STR(p.b.view().bell.words, "DO NOT DISTURB");
+  CHECK(p.b.view().bell.off);
+  // A timer's "until" line wins over the option's.
+  p.a.choose_status(Status::Busy);
+  CHECK(p.a.start_timer(Status::Sleeping, 3600, Status::Open));
+  CHECK(p.a.choose_sub(Sub::PreferNo));
+  p.run(200);
+  CHECK(p.b.view().floor[(int)Floor::Upstairs].timer && !p.b.view().floor[(int)Floor::Upstairs].sub_line);
+  CHECK(std::string(p.b.view().floor[(int)Floor::Upstairs].line).find("until ") == 0);
+  CHECK(p.b.view().floor[(int)Floor::Upstairs].substatus == Sub::PreferNo);
+  // Its end: the fallback's default, on both panels.
+  p.pa.w.utc += 3600;
+  p.pb.w.utc += 3600;
+  p.run(200);
+  CHECK(p.a.own().status == Status::Open && p.a.own().sub == Sub::Courtesy);
+  CHECK(p.b.view().floor[(int)Floor::Upstairs].substatus == Sub::Courtesy);
+  // The Away names on the line, by the floor whose status it is.
+  CHECK(p.b.choose_status(Status::Away) && p.b.choose_sub(Sub::OneOut1));
+  p.run(200);
+  CHECK(std::string(p.a.view().floor[(int)Floor::Downstairs].line).find("Person 3 out since ") == 0);
+  // A Private long press has nothing to choose.
+  CHECK(p.a.choose_status(Status::Private) && !p.a.choose_sub(Sub::Courtesy));
+}
+
+// Every status and option on the rung panel (upstairs here): chime, volume, banner, wake, saved,
+// phones. The ringer (downstairs) is told the rule too, so the bell-off cases send nothing at all.
+static void test_substatus_ring_rules() {
+  struct Case {
+    Status st;
+    Sub sub;
+    bool sent;       // the ringer could send
+    int sound;       // -1 none, else a Sound
+    int vol;         // the volume played (the set 90, by day)
+    bool banner, saved, push;
+  };
+  const int kChime = (int)Sound::Chime, kSoft = (int)Sound::SoftChime;
+  const Case cases[] = {
+      {Status::Open, Sub::Courtesy, true, kChime, 90, true, false, true},
+      {Status::Open, Sub::Free, false, -1, 0, false, false, false},
+      {Status::Open, Sub::Quiet, false, -1, 0, false, false, false},
+      {Status::Busy, Sub::Courtesy, true, kSoft, 68, true, false, true},  // 75 % of 90, rounded
+      {Status::Busy, Sub::PreferNo, true, kSoft, 45, true, false, true},  // 50 %
+      {Status::Busy, Sub::Quiet, false, -1, 0, false, false, false},
+      {Status::Sleeping, Sub::Quiet, false, -1, 0, false, false, false},
+      {Status::Sleeping, Sub::PreferNo, true, -1, 0, false, true, false},
+      {Status::Private, Sub::None, false, -1, 0, false, false, false},
+      {Status::Away, Sub::AllOut, true, -1, 0, false, true, false},
+      {Status::Away, Sub::OneOut1, true, kChime, 90, true, false, true},
+      {Status::Away, Sub::OneOut2, true, kChime, 90, true, false, true},
+  };
+  const uint8_t ring = notice_bit(NoticeKind::Ring) | notice_bit(NoticeKind::Knock);
+  for (const Case &c : cases) {
+    Pair p;
+    notice_start(p, ring);
+    if (c.st != Status::Open) CHECK(p.a.choose_status(c.st));
+    if (c.sub != default_sub(c.st)) CHECK(p.a.choose_sub(c.sub));
+    p.run(300);
+    // The table itself.
+    KnockAction r = ring_rule(c.st, c.sub);
+    CHECK(r.bell_off == !c.sent && r.banner == c.banner && r.wake == c.banner && r.save == c.saved && r.push == c.push);
+    p.gw.clear();
+    p.pa.played.clear();
+    watch_knocks(p);
+    p.b.tap_bell();
+    p.run(500);
+    CHECK((g_knock_seen != 0) == c.sent);
+    CHECK((p.a.view().banner.kind == BannerKind::Knock) == c.banner);
+    if (c.sound < 0) {
+      CHECK(p.pa.played.empty());
+    } else {
+      CHECK(p.pa.played.size() == 1 && (int)p.pa.played[0].first == c.sound && p.pa.played[0].second == c.vol);
+    }
+    CHECK(rings_with(p, "RING") == (c.push ? 1 : 0));
+    // Away's saved ring still tells the Pi it rang while away (value 1); Sleeping's tells nobody.
+    int knock1 = 0;
+    for (const Msg &m : p.gw)
+      if (m.u.notice.kind == (uint8_t)NoticeKind::Knock && m.u.notice.value == 1) knock1++;
+    CHECK(knock1 == (c.st == Status::Away && c.saved ? 1 : 0));
+    // Back at the panel: a saved one shows ("while you were away" / "sleeping").
+    if (c.saved) {
+      CHECK(p.a.view().banner.kind == BannerKind::None);
+      CHECK(p.a.choose_status(Status::Open));
+      p.run(100);
+      CHECK(p.a.view().banner.kind == BannerKind::MissedWhileAway);
+      CHECK(std::string(p.a.view().banner.sub).find(c.st == Status::Sleeping ? "while you were sleeping" : "while you were away") !=
+            std::string::npos);
+    }
+  }
+  // The other way: upstairs rings downstairs; the push goes by downstairs's rule as upstairs heard it.
+  for (const Case &c : cases) {
+    Pair p;
+    notice_start(p, notice_bit(NoticeKind::Ring));
+    if (c.st != Status::Open) CHECK(p.b.choose_status(c.st));
+    if (c.sub != default_sub(c.st)) CHECK(p.b.choose_sub(c.sub));
+    p.run(300);
+    p.gw.clear();
+    p.pb.played.clear();
+    watch_knocks(p);
+    p.a.tap_bell();
+    p.run(500);
+    CHECK((g_knock_seen != 0) == c.sent);
+    CHECK((p.b.view().banner.kind == BannerKind::Knock) == c.banner);
+    CHECK(rings_with(p, "RING") == (c.push ? 1 : 0));
+    if (c.sound >= 0) CHECK(p.pb.played.size() == 1 && p.pb.played[0].second == c.vol);
+    else CHECK(p.pb.played.empty());
+  }
+}
+
+// Sleeping, Prefer no passage: the ring arrives silently (no sound, banner, wake, red bell or phones)
+// and shows once the status no longer keeps rings, as Away's return does.
+static void test_substatus_sleeping_saved() {
+  Pair p;
+  notice_start(p, notice_bit(NoticeKind::Ring) | notice_bit(NoticeKind::Knock));
+  p.pa.offset = p.pb.offset = 2 * 3600;  // 2 AM: night
+  CHECK(p.a.choose_status(Status::Sleeping) && p.a.choose_sub(Sub::PreferNo));
+  p.run(40000);  // well past the touch wake
+  uint8_t dark = p.a.view().backlight;
+  p.gw.clear();
+  p.pa.played.clear();
+  p.b.tap_bell();
+  p.run(500);
+  CHECK(p.b.view().bell.out == BellOut::Delivered);  // it went, and was taken
+  CHECK(p.pa.played.empty() && p.a.view().banner.kind == BannerKind::None && !p.a.view().bell.alert);
+  CHECK(p.a.view().backlight == dark);  // no wake
+  CHECK(p.gw.empty());                  // no phones, no knock notice
+  // Still sleeping a while later: nothing yet; the ringer's tile gives up quietly.
+  p.run(130000);
+  CHECK(p.a.view().banner.kind == BannerKind::None);
+  // Morning: Open. The kept ring shows, with the time it rang.
+  CHECK(p.a.choose_status(Status::Open));
+  p.run(100);
+  CHECK(p.a.view().banner.kind == BannerKind::MissedWhileAway);
+  CHECK(std::string(p.a.view().banner.sub).find("Rang at ") == 0);
+  CHECK(std::string(p.a.view().banner.sub).find("while you were sleeping") != std::string::npos);
+  p.a.dismiss_banner();
+  // Switching the option back to Quiet passage also counts as back.
+  CHECK(p.a.choose_status(Status::Sleeping) && p.a.choose_sub(Sub::PreferNo));
+  p.run(BellSender::kRepeatIgnoreMs + 200);
+  p.b.tap_bell();
+  p.run(500);
+  CHECK(p.a.view().banner.kind == BannerKind::None);
+  CHECK(p.a.choose_sub(Sub::Quiet));
+  p.run(100);
+  CHECK(p.a.view().banner.kind == BannerKind::MissedWhileAway);
+  // A timer ending is a status change too.
+  p.a.dismiss_banner();
+  CHECK(p.a.choose_status(Status::Busy));
+  CHECK(p.a.start_timer(Status::Sleeping, 600, Status::Open));
+  CHECK(p.a.choose_sub(Sub::PreferNo));
+  p.run(BellSender::kRepeatIgnoreMs + 200);
+  p.b.tap_bell();
+  p.run(500);
+  CHECK(p.a.view().banner.kind == BannerKind::None);
+  p.pa.w.utc += 600;
+  p.pb.w.utc += 600;
+  p.run(200);
+  CHECK(p.a.own().status == Status::Open && p.a.view().banner.kind == BannerKind::MissedWhileAway);
+}
+
+// Away, one person out: rings like Open (chime, banner, wake, phones), and a ring kept during All out
+// shows when one of them is home again.
+static void test_substatus_away_one_out() {
+  Pair p;
+  notice_start(p, notice_bit(NoticeKind::Ring) | notice_bit(NoticeKind::Knock));
+  CHECK(p.a.choose_status(Status::Away));
+  p.run(300);
+  p.b.tap_bell();  // All out: kept
+  p.run(500);
+  CHECK(p.a.view().banner.kind == BannerKind::None && notices_of(p, NoticeKind::Knock) == 1);
+  CHECK(p.a.choose_sub(Sub::OneOut2));  // one is back
+  p.run(100);
+  CHECK(p.a.view().banner.kind == BannerKind::MissedWhileAway);
+  CHECK(std::string(p.a.view().floor[(int)Floor::Upstairs].line).find("Person 2 out since ") == 0);
+  p.a.dismiss_banner();
+  p.run(BellSender::kRepeatIgnoreMs + 200);
+  p.pa.played.clear();
+  p.gw.clear();
+  p.b.tap_bell();
+  p.run(500);
+  CHECK(p.a.view().banner.kind == BannerKind::Knock);
+  CHECK(p.pa.played.size() == 1 && p.pa.played[0].first == Sound::Chime && p.pa.played[0].second == 90);
+  CHECK(rings_with(p, "RING") == 1);
+  p.a.answer_banner(true);
+  p.run(200);
+  CHECK(p.b.view().bell.out == BellOut::ComeOn);
 }
 
 static void test_phone_answered_notice() {
@@ -6597,6 +7085,14 @@ int main(int argc, char **argv) {
   test_spare_loan();
   test_rooms_wire();
   test_rooms();
+  test_substatus_model();
+  test_substatus_storage();
+  test_substatus_wire();
+  test_substatus_mixed_versions();
+  test_substatus_two_panels();
+  test_substatus_ring_rules();
+  test_substatus_sleeping_saved();
+  test_substatus_away_one_out();
   std::printf("%d passed, %d failed\n", g_pass, g_fail);
   return g_fail ? 1 : 0;
 }

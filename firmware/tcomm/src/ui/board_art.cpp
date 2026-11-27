@@ -28,10 +28,10 @@ Color colour(const Shape &s, const Paint &p) {
   return p.fg;
 }
 
-void draw_shape(Canvas &c, const Shape &s, Color col, float dx, float dy) {
+void draw_shape(Canvas &c, const Shape &s, Color col, float dx, float dy, float sc) {
   switch (s.kind) {
-    case kDisc: c.fill_circle(s.cx + dx, s.cy + dy, s.r, col); return;
-    case kRing: c.ring(s.cx + dx, s.cy + dy, s.r + s.w * 0.5f, s.r - s.w * 0.5f, col); return;
+    case kDisc: c.fill_circle(s.cx * sc + dx, s.cy * sc + dy, s.r * sc, col); return;
+    case kRing: c.ring(s.cx * sc + dx, s.cy * sc + dy, (s.r + s.w * 0.5f) * sc, (s.r - s.w * 0.5f) * sc, col); return;
     case kFill:
     case kStroke: break;
   }
@@ -45,11 +45,11 @@ void draw_shape(Canvas &c, const Shape &s, Color col, float dx, float dy) {
     const Sub &sb = kSubs[s.sub0 + k];
     for (int j = 0; j < sb.npt; j++) {
       const int16_t *q = kPts + 2 * (sb.pt0 + j);
-      pts[n + j] = Pt{q[0] / 16.0f + dx, q[1] / 16.0f + dy};
+      pts[n + j] = Pt{q[0] / 16.0f * sc + dx, q[1] / 16.0f * sc + dy};
     }
     if (s.kind == kStroke) {  // round caps and round joins: a capsule per segment
-      for (int j = 1; j < sb.npt; j++) c.line(pts[n + j - 1].x, pts[n + j - 1].y, pts[n + j].x, pts[n + j].y, s.w, col);
-      if (sb.npt == 1) c.fill_circle(pts[n].x, pts[n].y, s.w * 0.5f, col);
+      for (int j = 1; j < sb.npt; j++) c.line(pts[n + j - 1].x, pts[n + j - 1].y, pts[n + j].x, pts[n + j].y, s.w * sc, col);
+      if (sb.npt == 1) c.fill_circle(pts[n].x, pts[n].y, s.w * 0.5f * sc, col);
     } else {
       lens[rings++] = sb.npt;
       n += sb.npt;
@@ -60,11 +60,11 @@ void draw_shape(Canvas &c, const Shape &s, Color col, float dx, float dy) {
 }
 
 void draw(Canvas &c, const Group &g, const Paint &p, float dx, float dy, const gfx::RRect *outer,
-          const gfx::RRect *status_zone) {
+          const gfx::RRect *status_zone, float k) {
   for (int i = 0; i < g.n; i++) {
     const Shape &s = g.shapes[i];
     c.set_clip(s.clip ? status_zone : outer);
-    draw_shape(c, s, colour(s, p), dx, dy);
+    draw_shape(c, s, colour(s, p), dx, dy, k);
   }
   c.set_clip(nullptr);
 }

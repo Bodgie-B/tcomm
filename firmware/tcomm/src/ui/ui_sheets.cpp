@@ -209,6 +209,111 @@ void open_status_sheet() {
   anim(panel, 480, 480 - 300, 200, set_y);  // slides up from the bottom, about 200 ms
 }
 
+// ---------------------------------------------------------------------------------------------
+// The substatus menu (Mike, 2026-11-26): a long press on the own status. It slides in over the right
+// side (the Outside and Doorbell tiles, below the header), so the owner's tile stays in view and its
+// badge and line change as an option is tapped. One large button per option: a small picture of the
+// badge it gives, its name and what it does; the chosen one outlined. Done, a tap outside or 15 s
+// without a touch close it.
+
+namespace {
+
+constexpr int kSubX = 404, kSubY = 74, kSubW = 800 - kSubX, kSubH = 480 - kSubY;  // the panel's box
+constexpr int kSubPrev = 60;  // the badge preview, drawn at this size (art::badge scales)
+Art g_sub_prev[kSubMax];      // made as the menu opens, freed as it closes (sub_sheet_closing)
+lv_obj_t *g_sub_btn[kSubMax] = {};
+Sub g_sub_opt[kSubMax] = {};
+int g_sub_n = 0;
+Status g_sub_status = Status::Open;  // the status the menu is for
+Sub g_sub_shown = Sub::None;         // the option outlined
+
+void slide_x(void *o, int32_t v) { lv_obj_set_x((lv_obj_t *)o, (lv_coord_t)v); }
+
+void sub_root_clicked(lv_event_t *e) {
+  if (lv_event_get_target(e) == g_sheet_root) close_sheet();  // a tap outside the panel
+}
+
+void sub_done(lv_event_t *) { close_sheet(); }
+
+void sub_picked(lv_event_t *e) {
+  // Applied at once; the menu stays, and its outline moves on the next render (sub_sheet_refresh).
+  Sub s = (Sub)(intptr_t)lv_event_get_user_data(e);
+  if (g_act) g_act->choose_sub(s);
+}
+
+void sub_outline(Sub chosen) {
+  for (int i = 0; i < g_sub_n; i++) {
+    if (g_sub_opt[i] == chosen) outline(g_sub_btn[i], ink());
+    else lv_obj_set_style_outline_width(g_sub_btn[i], 0, 0);
+  }
+  g_sub_shown = chosen;
+}
+
+}  // namespace
+
+void open_sub_sheet(bool animate) {
+  const Status st = g_f.own.status;
+  Sub opts[kSubMax];
+  const int n = sub_options(st, opts);
+  if (n == 0) return;  // Private: a long press does nothing
+  lv_obj_t *root = new_sheet(Sheet::Sub, false);
+  lv_obj_add_flag(root, LV_OBJ_FLAG_CLICKABLE);  // no dimming: the own tile shows the change live
+  lv_obj_add_event_cb(root, sub_root_clicked, LV_EVENT_CLICKED, nullptr);
+  g_sub_status = st;
+  g_sub_n = n;
+  const Color k = ink();
+  const theme::Palette &pal = theme::palette(g_mode);
+  const theme::StatusColors sc = theme::status_colors((int)st, g_mode);
+  // 24 px more each way than shows, so only its left corners are rounded.
+  lv_obj_t *panel = box(root, animate ? 800 : kSubX, kSubY, kSubW + 24, kSubH + 24, theme::sheet_bg(g_mode), 24);
+  lv_obj_add_flag(panel, LV_OBJ_FLAG_CLICKABLE);  // a tap on the panel's own background doesn't close it
+  char title[32];
+  snprintf(title, sizeof(title), "%s options", status_word(st));
+  label(panel, J30, k, 20, 12, title);
+  // The previews as on the tile, on the buttons' face: the badge in the status's colour (by night the
+  // light ink, as the timer sheet draws its badge), its symbol in the face's.
+  const Color face = chip();
+  const Color fg = g_mode == Mode::Night ? k : sc.tile;
+  const int bh = 80, gap = 10, y0 = 56;
+  for (int i = 0; i < n; i++) {
+    g_sub_opt[i] = opts[i];
+    lv_obj_t *b = button(panel, 20, y0 + i * (bh + gap), kSubW - 40, bh, face, k, "", B20, sub_picked, (void *)(intptr_t)opts[i]);
+    g_sub_btn[i] = b;
+    if (g_sub_prev[i].make(kSubPrev, kSubPrev, true)) {
+      art::badge(g_sub_prev[i].cv, (int)st, fg, face, art::badge_mark(st, opts[i]), pal.bell_red);
+      lv_obj_t *img = image(b, 12, (bh - 6 - kSubPrev) / 2);
+      g_sub_prev[i].show(img);
+    }
+    char name[kAwayNameMax + 8];
+    sub_label(name, sizeof(name), opts[i], g_set.floor);
+    label(b, B22, k, 12 + kSubPrev + 14, 8, name);
+    label(b, B16, k, 12 + kSubPrev + 14, 40, sub_effect(st, opts[i]));
+  }
+  // Done at the foot, wherever the options end (Sleeping has two).
+  button(panel, 20, kSubH - 14 - 64, kSubW - 40, 64, sc.tile, sc.text, "Done", J30, sub_done, nullptr);
+  sub_outline(g_f.own.sub);
+  if (animate) anim(panel, 800, kSubX, 200, slide_x);  // slides in from the right, about 200 ms
+}
+
+void sub_sheet_refresh() {
+  if (g_sheet != Sheet::Sub || !g_sheet_root) return;
+  // The status itself changed (a timer ended, the other sheet, the serial line): these aren't its options.
+  if (g_f.own.status != g_sub_status) {
+    close_sheet();
+    return;
+  }
+  if (g_f.own.sub != g_sub_shown) sub_outline(g_f.own.sub);
+}
+
+void sub_sheet_closing() {
+  for (Art &a : g_sub_prev) {
+    if (!a.cv.ok()) continue;
+    lv_img_cache_invalidate_src(&a.dsc);  // its images are hidden now and deleted after this event
+    a.cv.destroy();
+  }
+  g_sub_n = 0;
+}
+
 void open_timer_sheet(Status s) {
   lv_obj_t *root = new_sheet(Sheet::Timer, false);
   g_dyn = nullptr;

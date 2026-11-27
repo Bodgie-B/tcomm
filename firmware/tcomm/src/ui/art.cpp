@@ -284,7 +284,16 @@ void nomail(Canvas &c, Color ink, Color gap, const Color *disc) {
   c.line(m - r_ink * k, m - r_ink * k, m + r_ink * k, m + r_ink * k, s * 0.085f, ink);
 }
 
-void badge(Canvas &c, int st, Color fg, Color bg) {
+BadgeMark badge_mark(tc::Status st, tc::Sub sub) {
+  using tc::Status;
+  using tc::Sub;
+  if (st == Status::Open && sub == Sub::Free) return BadgeMark::Ring;
+  if (sub == Sub::Quiet && (st == Status::Open || st == Status::Busy || st == Status::Sleeping)) return BadgeMark::BellOff;
+  if (sub == Sub::PreferNo && (st == Status::Busy || st == Status::Sleeping)) return BadgeMark::BellRed;
+  return BadgeMark::Plain;
+}
+
+void badge(Canvas &c, int st, Color fg, Color bg, BadgeMark mark, Color red) {
   static const boardart::Group *const kBadges[6] = {&boardart::kBadgeOpen,     &boardart::kBadgeBusy,
                                                     &boardart::kBadgePrivate,  &boardart::kBadgeSleeping,
                                                     &boardart::kBadgeAway,     &boardart::kBadgeNoSignal};
@@ -292,7 +301,38 @@ void badge(Canvas &c, int st, Color fg, Color bg) {
   Paint pt{};
   pt.fg = fg;
   pt.bg = bg;
-  boardart::draw(c, *kBadges[st >= 0 && st < 6 ? st : 5], pt);
+  const float k = (float)c.width() / kBadge;  // the boards' badge is 80 px
+  const bool open = st == (int)tc::Status::Open;
+  const bool marked = mark != BadgeMark::Plain && (open || st == (int)tc::Status::Busy || st == (int)tc::Status::Sleeping);
+  const boardart::Group &g = *kBadges[st >= 0 && st < 6 ? st : 5];
+  if (!marked) {
+    boardart::draw(c, g, pt, 0, 0, nullptr, nullptr, k);
+    return;
+  }
+  if (mark == BadgeMark::Ring) {
+    // Free passage (Mike, 2026-11-26): only a ring remains, the disc's own edge, as thick as the badge's
+    // inner ring.
+    c.ring(40 * k, 40 * k, 40 * k, (40 - 5.625f) * k, fg);
+    return;
+  }
+  // The outer shape (Open's disc, the shield) as drawn; the doorbell where the symbol was. The
+  // board's doorbell (54 px, the bell's box at 9-45 x 5.6-50.6) scaled into the symbol's place:
+  // the disc's inner ring (r 22.5) for Open, the hourglass's box (x 31-49, y 22-50) for the shield.
+  boardart::draw_shape(c, g.shapes[0], fg, 0, 0, k);
+  const bool red_bell = mark == BadgeMark::BellRed;
+  const float bs = open ? 0.74f : (red_bell ? 0.66f : 0.62f);  // the bell's scale: 33, 30 and 28 px tall
+  const float cx = 40, cy = open ? 40.5f : 37;                 // where its box's centre goes
+  const float bx = 27, by = 28.1f;                             // its box's centre on the board
+  const Color ink = red_bell ? red : bg;
+  boardart::draw_shape(c, boardart::kBell.shapes[0], ink, (cx - bx * bs) * k, (cy - by * bs) * k, bs * k);
+  if (mark == BadgeMark::BellOff) {
+    // The slash, top left to bottom right as on the no-mail badge: a stroke of the shape's colour
+    // keeps it clear of the bell, then the glyph's stroke (the shield's own 3.9).
+    // Open's is thinner than its check (4.5): the bell inside its disc is the larger, and must still show.
+    const float w = open ? 4.5f : 3.906f, r = open ? 20.0f : 17.0f, d = r * 0.7071f;
+    c.line((cx - d) * k, (cy - d) * k, (cx + d) * k, (cy + d) * k, (w + 3.5f) * k, fg);
+    c.line((cx - d) * k, (cy - d) * k, (cx + d) * k, (cy + d) * k, w * k, bg);
+  }
 }
 
 void forecast(Canvas &c, tc::Forecast f, bool night, Color ink) {

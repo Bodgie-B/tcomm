@@ -56,6 +56,7 @@ struct FloorTile {
   lv_obj_t *badge_hit = nullptr;
   int badge_live = -1;
   int key = -1;      // what the front art shows (status * 4 + mode); -1 = nothing yet
+  int badge_sig = -1;  // what the badge shows (key * 4 + its BadgeMark, Mike 2026-11-26); -1 = draw it again
   FloorView shown = {};  // the words that go with it, kept until the new art is ready
   int font_ns = -1;  // which state-word font is set: 1 = the 54 px one, for words over 8 letters
   int mine = -1;
@@ -158,6 +159,10 @@ struct Ice {
   uint32_t failed_at = 0;  // when that was
 } g_ice;
 lv_obj_t *g_bell_cont, *g_bell_img, *g_bell_word, *g_bell_line;
+// Mike, 2026-11-26: the other floor's substatus in words in DOORBELL's place (BellView::words), and
+// whether its bell is off (dim bell, no press). -1: not set yet.
+char g_bell_words[20] = "DOORBELL";
+int g_bell_off = -1;
 // The bell itself, over the tile's picture: it shakes for each ring sent or received, and it's red
 // while an incoming ring waits (Mike, 2026-10-26).
 lv_obj_t *g_bell_pic;
@@ -196,7 +201,10 @@ void center_x(lv_obj_t *o, int cx, int w) { set_x(o, cx - w / 2); }
 // ---------------------------------------------------------------------------------------------
 // Floor tiles
 
+// A tap opens the status sheet; a long press, the substatus menu for the status now (Mike, 2026-11-26;
+// nothing for Private). LVGL sends CLICKED after a long press too, so the tap listens for SHORT_CLICKED.
 void zone_clicked(lv_event_t *) { open_status_sheet(); }
+void zone_long(lv_event_t *) { open_sub_sheet(); }
 // Mike, 2026-11-06: a short tap on the downstairs INSIDE area opens the survey (downstairs panel only);
 // a long press opens the comfort chart on either panel. LVGL sends CLICKED after a long press too,
 // so the survey listens for SHORT_CLICKED.
@@ -298,11 +306,14 @@ void tile_build(FloorTile &t, Floor f, int x, int y) {
   t.hum = label(t.cont, B26, hex(0), 0, board_y(B26, 137));
   // On the own tile the whole status zone is the touch target (brief 10.2), not just the chevron.
   t.zone = plain(t.cont, 0, 0, art::kStatusW, art::kFloorH);
-  lv_obj_add_event_cb(t.zone, zone_clicked, LV_EVENT_CLICKED, nullptr);
+  lv_obj_add_event_cb(t.zone, zone_clicked, LV_EVENT_SHORT_CLICKED, nullptr);
+  lv_obj_add_event_cb(t.zone, zone_long, LV_EVENT_LONG_PRESSED, nullptr);
   // After the zone, so the line's area takes the tap there; before the arrows and the mail badge,
   // so theirs win (Mike, 2026-11-07).
   t.note_hit = plain(t.cont, kNoteHitX, kNoteHitY, kNoteHitW, art::kFloorH - kNoteHitY);
-  lv_obj_add_event_cb(t.note_hit, note_clicked, LV_EVENT_CLICKED, &t);
+  // The status line (and an option's name in it) sits here: a tap is the message, a long press the menu.
+  lv_obj_add_event_cb(t.note_hit, note_clicked, LV_EVENT_SHORT_CLICKED, &t);
+  lv_obj_add_event_cb(t.note_hit, zone_long, LV_EVENT_LONG_PRESSED, nullptr);
   // The badge (tile x 287-386, y 97-193, check fix C1): after the note's area, which ends at x 285, so
   // the small status text still opens the tile message editor; under the mail, no-mail and arrow
   // areas (y < 90). Mike, 2026-11-21: a LONG press opens the recorder (nothing records until its
@@ -311,7 +322,8 @@ void tile_build(FloorTile &t, Floor f, int x, int y) {
   lv_obj_add_flag(t.badge_hit, LV_OBJ_FLAG_PRESS_LOCK);
   lv_obj_add_event_cb(t.badge_hit, voice_badge_long, LV_EVENT_LONG_PRESSED, nullptr);
   lv_obj_add_flag(t.chev, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_add_event_cb(t.chev, chev_clicked, LV_EVENT_CLICKED, nullptr);
+  lv_obj_add_event_cb(t.chev, chev_clicked, LV_EVENT_SHORT_CLICKED, nullptr);
+  lv_obj_add_event_cb(t.chev, zone_long, LV_EVENT_LONG_PRESSED, nullptr);
   lv_obj_move_foreground(t.chev);  // in front of note_hit (it covers the chevron's place)
   // After the zone, so a tap on the arrows is theirs (upstairs, the zone is the own tile's).
   if (f == Floor::Upstairs) {
@@ -389,8 +401,7 @@ void tile_apply(FloorTile &t, int key, bool direct = false) {
     anim(t.img_top, 0, 255, 250, set_opa, tile_fade_done);
   }
   {
-    art::badge(t.badge_art.cv, st, sc.text, sc.tile);  // shape in the text colour, glyph in the tile's
-    t.badge_art.show(t.badge);
+    t.badge_sig = -1;  // drawn by tile_render with the substatus's mark, in these colours
     art::icon(t.chev_art.cv, art::Icon::Caret, sc.text);
     t.chev_art.show(t.chev_img);
     art::icon(t.drop_art.cv, art::Icon::DropIn, pal.humidity);
@@ -469,6 +480,20 @@ void tile_render(FloorTile &t, const FloorView &fv, bool acted = false) {
   // Until the new art is ready the tile keeps its old words, so words and colors change together.
   if (key == t.key) t.shown = fv;
   const FloorView &u = t.shown;
+  // The badge: shape in the text colour, glyph in the tile's; the substatus's mark (Mike, 2026-11-26)
+  // changes only this 80 px picture, not the tile.
+  if (t.key >= 0) {
+    const int ts = t.key / 4;
+    const art::BadgeMark mark = ts == theme::kNoSignal ? art::BadgeMark::Plain : art::badge_mark((Status)ts, u.substatus);
+    const int sig = t.key * 4 + (int)mark;
+    if (sig != t.badge_sig) {
+      const Mode bm = (Mode)(t.key % 4);
+      const theme::StatusColors bc = theme::status_colors(ts, bm);
+      art::badge(t.badge_art.cv, ts, bc.text, bc.tile, mark, theme::palette(bm).bell_red);
+      t.badge_art.show(t.badge);
+      t.badge_sig = sig;
+    }
+  }
   // The other floor's tile doesn't respond to touch (handoff), nor does the outside tile. The own
   // DOWNSTAIRS tile's weather zone opens the comfort survey (Mike, 2026-11-06); upstairs has none.
   if (t.mine != (int)fv.mine) {
@@ -539,7 +564,18 @@ void tile_render(FloorTile &t, const FloorView &fv, bool acted = false) {
       cut = true;
     }
   }
-  const char *plain_line = agenda_shown ? agenda : u.line;
+  // Mike, 2026-11-26: "Prefer no passage since 10:15 PM" is wider than the line has room for (before the
+  // chevron on the own tile, the badge on the other): the option on one line, "since ..." under it.
+  char subwrap[sizeof(u.line) + 2] = "";
+  if (u.sub_line && !note_shown && !acted && !agenda_shown) {
+    const int fit = u.mine ? 211 : 261;
+    const char *at = strstr(u.line, " since ");
+    if (at && text_width(u.line, B20) > fit) {
+      snprintf(subwrap, sizeof(subwrap), "%.*s\nsince%s", (int)(at - u.line), u.line, at + 6);
+      nl = 2;
+    }
+  }
+  const char *plain_line = subwrap[0] ? subwrap : (agenda_shown ? agenda : u.line);
   bool line_changed = strcmp(lv_label_get_text(t.line), plain_line) != 0;
   set_text(t.line, acted ? kActedText : (note_shown ? wrapped : plain_line));
   if (t.note_lines != nl) {  // two lines: the label moves up a line so both end where one did
@@ -556,7 +592,10 @@ void tile_render(FloorTile &t, const FloorView &fv, bool acted = false) {
     show(t.acted, acted);
   }
   show(t.chev, u.mine && !note_shown);
-  if (u.mine && line_changed && !note_shown) set_x(t.chev, 24 + text_width(plain_line, B20) + 14);
+  if (u.mine && line_changed && !note_shown) {  // after the last line (the second of a wrapped option)
+    const char *last = strrchr(plain_line, '\n');
+    set_x(t.chev, 24 + text_width(last ? last + 1 : plain_line, B20) + 14);
+  }
   if (strcmp(lv_label_get_text(t.temp), u.temp) != 0) {
     set_text(t.temp, u.temp);
     center_x(t.temp, 450, text_width(u.temp, J50));
@@ -1449,6 +1488,30 @@ void render_bell(const View &v) {
     set_text(g_bell_line, line);
     center_x(g_bell_line, art::kSideW / 2, text_width(line, B20));
   }
+  // The words: DOORBELL's J30 when they fit the tile with a margin, else the largest that does, on
+  // DOORBELL's baseline.
+  {
+    const char *want = v.bell.words[0] ? v.bell.words : "DOORBELL";
+    if (strcmp(want, g_bell_words) != 0) {
+      snprintf(g_bell_words, sizeof(g_bell_words), "%s", want);
+      const lv_font_t *const fonts[4] = {J30, J28, J24, J23};
+      const float sizes[4] = {30, 28, 24, 23};
+      int fi = 0;
+      while (fi < 3 && text_width(want, fonts[fi]) > art::kSideW - 24) fi++;
+      lv_obj_set_style_text_font(g_bell_word, fonts[fi], 0);
+      set_text(g_bell_word, want);
+      lv_obj_set_y(g_bell_word, board_y(fonts[fi], 125.3f + (30 - sizes[fi]) * 1.07f));
+      center_x(g_bell_word, art::kSideW / 2, text_width(want, fonts[fi]));
+    }
+    const int off = v.bell.off ? 1 : 0;
+    if (off != g_bell_off) {
+      // Its bell is off: drawn at 35 percent, and the tile takes no press (nothing would go out).
+      lv_obj_set_style_img_opa(g_bell_pic, off ? 90 : LV_OPA_COVER, 0);
+      if (off) lv_obj_clear_flag(g_bell_cont, LV_OBJ_FLAG_CLICKABLE);
+      else lv_obj_add_flag(g_bell_cont, LV_OBJ_FLAG_CLICKABLE);
+      g_bell_off = off;
+    }
+  }
   int warn = v.bell.out == BellOut::CouldntReach || v.bell.out == BellOut::NoAnswer || (!v.bell.line[0] && v.bell.missed[0]);
   if (warn != g_bell_warn) {
     set_text_color(g_bell_line, warn ? pal.gold : pal.cream);
@@ -1584,6 +1647,7 @@ void render(const Frame &f) {
     // Rebuild what's open in the new colors. The timer sheet and the clock editor hold choices in
     // progress, so they keep their old colors until closed.
     if (g_sheet == Sheet::Status) open_status_sheet();
+    else if (g_sheet == Sheet::Sub) open_sub_sheet(false);
     else if (g_sheet == Sheet::Settings) open_settings();
     else if (g_sheet == Sheet::Test) open_test_panel();
     else if (g_sheet == Sheet::Ringtone) open_ringtones();
@@ -1662,6 +1726,7 @@ void open_sheet(Sheet s, Status timed) {
     case Sheet::Outside: open_outside_chart(); break;
     case Sheet::CleanScreen: start_clean_screen(); break;
     case Sheet::Voice: open_voice_recorder(); break;
+    case Sheet::Sub: open_sub_sheet(false); break;
     default: close_sheet(); break;
   }
 }

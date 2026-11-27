@@ -97,7 +97,7 @@ void Controller::tick() {
   if (last_missed_ && ms_diff(now, missed_mono_) >= 3600000) bell_in_.clear_missed();  // PROPOSED: an hour
   if (ring_alert_ && ms_diff(now, ring_alert_at_) >= (int32_t)kRingAlertMs) ring_alert_ = false;
 
-  Status before = status_.state().status;
+  OwnState before = status_.state();
   if (status_.tick(w)) {
     snprintf(toast_, sizeof(toast_), "Timer ended. Now %s.", status_title(status_.state().status));
     toast_until_ = now + 6000;
@@ -192,6 +192,7 @@ void Controller::send_state(bool please_reply) {
   sent_pres_flags_ = presence_flags();
   m.u.state.flags = (uint8_t)(((please_reply || want_peer_state_) ? kStatePleaseReply : 0) | (w.valid ? kStateClockValid : 0) |
                               sent_pres_flags_ | kStateVoice |  // this firmware takes voice messages (SAY)
+                              kStateSubstatus |                 // and reads the substatus byte (2026-11-26)
                               (vgw_heard_ ? kStateGwVoice : 0) |  // only what this panel heard itself, never echoed
                               (vgw_heard_ && store_->vgw_mulaw ? kStateGwMulaw : 0));
   m.u.state.since = s.since;
@@ -199,6 +200,10 @@ void Controller::send_state(bool please_reply) {
   m.u.state.fallback = (uint8_t)s.fallback;
   m.u.state.clock = w.valid ? w.utc : 0;
   m.u.state.clock_quality = w.valid ? w.quality : (uint8_t)kClockNone;
+  // Mike, 2026-11-26: the substatus, only to a panel that said it reads it; an older one would drop
+  // the longer STATE and this panel would mark it No signal.
+  m.u.state.sub = (uint8_t)s.sub;
+  m.u.state.has_sub = peer_.sub_ok ? 1 : 0;
   send(m);
 }
 
@@ -657,6 +662,10 @@ void Controller::raise_notice(NoticeKind k, Floor floor, int16_t value, uint32_t
 // panels stay the real doorbell.
 bool Controller::phones_ok(Status rung_status) {
   if (rung_status != Status::Open && rung_status != Status::Busy) return false;
+  return phone_hours_ok();
+}
+
+bool Controller::phone_hours_ok() {
   WallTime w = p_.wall();
   return w.valid && !in_quiet_hours(settings_, minutes_of_day((int64_t)w.utc + p_.utc_offset(w.utc)));
 }
@@ -699,12 +708,27 @@ void Controller::tick_notices() {
   notice_banner_ = b;
 }
 
-void Controller::own_changed(Status before) {
-  p_.save_own(status_.state());
-  if (status_.state().status != before)
-    raise_notice(NoticeKind::Status, settings_.floor, 0, 0, status_word(status_.state().status));
+void Controller::own_changed(const OwnState &before) {
+  const OwnState &now = status_.state();
+  p_.save_own(now);
+  if (now.status != before.status) raise_notice(NoticeKind::Status, settings_.floor, 0, 0, status_word(now.status));
   send_state(false);
-  bell_in_.status_changed(before, status_.state().status, p_.mono_ms());
+  // A ring kept while Away (All out) or Sleeping (Prefer no passage) shows once the status or its
+  // substatus no longer keeps rings (Mike, 2026-11-26; Away's return, as before).
+  bell_in_.saving_changed(ring_rule(before.status, before.sub).save, ring_rule(now.status, now.sub).save, p_.mono_ms());
+}
+
+OwnState Controller::peer_now() {
+  OwnState st = peer_.st;
+  WallTime w = p_.wall();
+  // The other panel announces its own expiry, but if that message is late, show what it will say.
+  if (w.valid && st.until && w.utc >= st.until) {
+    st.status = st.fallback;
+    st.since = st.until;
+    st.until = 0;
+    st.sub = default_sub(st.status);
+  }
+  return st;
 }
 
 void Controller::heard_from_peer() {
@@ -824,6 +848,16 @@ void Controller::handle(const Msg &m) {
       peer_.st.since = m.u.state.since;
       peer_.st.until = m.u.state.until;
       peer_.st.fallback = (Status)m.u.state.fallback;
+      peer_.st.sub = (Sub)m.u.state.sub;  // the status's default from a panel that doesn't send it
+      {
+        // It reads the substatus byte now (just updated, or first heard): if ours isn't the default,
+        // the STATE it last had from us didn't say so. A STATE asking for a reply gets ours below.
+        const bool was_ok = peer_.sub_ok;
+        peer_.sub_ok = (m.u.state.flags & kStateSubstatus) != 0;
+        if (peer_.sub_ok && !was_ok && !(m.u.state.flags & kStatePleaseReply) &&
+            status_.state().sub != default_sub(status_.state().status))
+          send_state(false);
+      }
       peer_.away = (m.u.state.flags & kStateAwayDesk) != 0;
       peer_.nobody_near = (m.u.state.flags & kStateNobodyNear) != 0;
       vpeer_voice_ = (m.u.state.flags & kStateVoice) != 0;
@@ -844,23 +878,32 @@ void Controller::handle(const Msg &m) {
     }
     case MsgType::Knock: {
       if (m.sender != peer) return;
-      KnockAction a = bell_in_.on_knock(m.u.knock.id, other_floor(settings_.floor), settings_, status_.state().status, now,
-                                        w.valid ? w.utc : 0);
-      if (a.save) raise_notice(NoticeKind::Knock, other_floor(settings_.floor), 1, w.valid ? w.utc : 0);
+      // Mike, 2026-11-26: by this panel's status and substatus (ring_rule, bell.h). A ring with the
+      // bell off can only come from older firmware: taken silently, nothing shows or sounds.
+      const OwnState &me = status_.state();
+      const KnockAction rule = ring_rule(me.status, me.sub);
+      if (rule.bell_off) {
+        p_.log("doorbell: a ring with the bell off (substatus), taken silently");
+        break;
+      }
+      KnockAction a = bell_in_.on_knock(m.u.knock.id, other_floor(settings_.floor), rule, me.status, now, w.valid ? w.utc : 0);
+      // Kept for Away's return, as before; one kept while Sleeping tells nobody (no phones).
+      const bool away_save = a.save && me.status == Status::Away;
+      if (away_save) raise_notice(NoticeKind::Knock, other_floor(settings_.floor), 1, w.valid ? w.utc : 0);
       if (a.banner) {
         ring_resolved_ = false;
         // A new ring on the banner (a duplicate returns no action): push this floor's phones.
-        if (phones_ok(status_.state().status)) ring_notice(settings_.floor, m.u.knock.id, w.valid ? w.utc : 0);
+        if (ring_push_ok(a)) ring_notice(settings_.floor, m.u.knock.id, w.valid ? w.utc : 0);
       }
-      if (a.banner || a.save || a.chime != Chime::None) {  // a new ring, not a repeat of one
+      if (a.banner || away_save || a.chime != Chime::None) {  // a new ring, not a repeat of one
         bell_shakes_++;
         ring_alert_ = true;
         ring_alert_at_ = now;
       }
-      if (a.chime == Chime::Normal) p_.play(Sound::Chime, current_volume());
-      if (a.chime == Chime::Soft) {
-        uint8_t v = current_volume();
-        p_.play(Sound::SoftChime, v > settings_.soft_chime_drop ? (uint8_t)(v - settings_.soft_chime_drop) : 0);
+      if (a.chime != Chime::None) {
+        // Busy's soft chime at 75 % (Courtesy ring) or 50 % (Prefer no passage) of the volume.
+        const uint8_t v = current_volume();
+        p_.play(a.chime == Chime::Normal ? Sound::Chime : Sound::SoftChime, (uint8_t)((v * a.volume_pct + 50) / 100));
       }
       break;
     }
@@ -1168,7 +1211,7 @@ void Controller::touch() {
 
 bool Controller::choose_status(Status s) {
   touch();
-  Status before = status_.state().status;
+  OwnState before = status_.state();
   if (!status_.choose(s, p_.wall(), p_.mono_ms())) return false;
   own_changed(before);
   return true;
@@ -1176,14 +1219,28 @@ bool Controller::choose_status(Status s) {
 
 bool Controller::start_timer(Status s, uint32_t duration_s, Status fallback) {
   touch();
-  Status before = status_.state().status;
+  OwnState before = status_.state();
   if (!status_.choose_timed(s, duration_s, fallback, p_.wall())) return false;
+  own_changed(before);
+  return true;
+}
+
+bool Controller::choose_sub(Sub s) {
+  touch();
+  OwnState before = status_.state();
+  if (!status_.choose_sub(s, p_.wall(), p_.mono_ms())) return false;
   own_changed(before);
   return true;
 }
 
 void Controller::tap_bell() {
   touch();
+  // Mike, 2026-11-26: the other floor's bell is off (Free or Quiet passage, Private): its DOORBELL
+  // shows the words and a press sends nothing. Not when it can't be heard from: then it tries.
+  const bool peer_live = peer_.known && !peer_.no_signal;
+  const OwnState ps = peer_now();
+  const KnockAction peer_rule = ring_rule(ps.status, ps.sub);
+  if (peer_live && peer_rule.bell_off) return;
   uint16_t id = bell_out_.tap(p_.mono_ms(), next_knock_);
   if (!id) return;
   // The tenant ringing while upstairs says nobody is near its panel: the toast says so while the
@@ -1199,7 +1256,7 @@ void Controller::tap_bell() {
   send(m);
   ring_dismissed_id_ = 0;  // a new ring: nobody has dismissed it yet
   // Upstairs ringing downstairs: push the tenants' phones by downstairs's last known status.
-  if (settings_.floor == Floor::Upstairs && peer_.known && phones_ok(peer_.st.status)) {
+  if (settings_.floor == Floor::Upstairs && peer_.known && ring_push_ok(peer_rule)) {
     WallTime w = p_.wall();
     ring_notice(Floor::Downstairs, id, w.valid ? w.utc : 0);
   }
@@ -2317,25 +2374,27 @@ void Controller::fill_floor(FloorView &fv, bool mine) {
       }
       return;
     }
-    st = peer_.st;
-    // The other panel announces its own expiry, but if that message is late, show what it will say.
-    if (w.valid && st.until && w.utc >= st.until) {
-      st.status = st.fallback;
-      st.since = st.until;
-      st.until = 0;
-    }
+    st = peer_now();
   }
   fv.status = st.status;
+  fv.substatus = st.sub;
   snprintf(fv.word, sizeof(fv.word), "%s", status_word(st.status));
   if (st.until) {
     format_clock(when, sizeof(when), st.until);
     snprintf(fv.line, sizeof(fv.line), "until %s", when);
     fv.timer = true;
-  } else if (st.since) {
-    format_clock(when, sizeof(when), st.since);
-    snprintf(fv.line, sizeof(fv.line), "since %s", when);
   } else {
-    snprintf(fv.line, sizeof(fv.line), "since --:--");
+    if (st.since) format_clock(when, sizeof(when), st.since);
+    else snprintf(when, sizeof(when), "--:--");
+    // Mike, 2026-11-26: an option other than the status's default names itself, "Free passage since 4:10 PM".
+    if (st.sub != default_sub(st.status)) {
+      char name[kAwayNameMax + 8];
+      sub_label(name, sizeof(name), st.sub, fv.floor);
+      snprintf(fv.line, sizeof(fv.line), "%.20s since %.20s", name, when);  // 47 at most: it fits
+      fv.sub_line = true;
+    } else {
+      snprintf(fv.line, sizeof(fv.line), "since %s", when);
+    }
   }
 }
 
@@ -2643,6 +2702,14 @@ void Controller::build_view() {
   bool by_phone = bell_out_.from_phone() && (v.bell.out == BellOut::ComeOn || v.bell.out == BellOut::NotNow);
   // "Come on (from phone)" is 212 px in B20, inside the 250 px tile (Mike, 2026-11-15).
   snprintf(v.bell.line, sizeof(v.bell.line), "%s%s", kBell[(int)v.bell.out], by_phone ? " (from phone)" : "");
+  // Mike, 2026-11-26: the other floor's substatus in words on DOORBELL, while it can be heard from.
+  if (peer_.known && !peer_.no_signal) {
+    const OwnState ps = peer_now();
+    if (const char *words = bell_words(ps.status, ps.sub)) {
+      snprintf(v.bell.words, sizeof(v.bell.words), "%s", words);
+      v.bell.off = ring_rule(ps.status, ps.sub).bell_off;
+    }
+  }
   bool missed = bell_in_.missed();
   if (missed && !last_missed_) missed_mono_ = now;  // the note stays an hour (cleared in tick)
   last_missed_ = missed;
@@ -2729,7 +2796,7 @@ void Controller::build_view() {
   for (int f = 0; f < 2; f++) {
     FloorView &fv = v.floor[f];
     const Agenda &a = agenda_[f];
-    if (!a.on || fv.no_signal || fv.note || fv.timer || fv.away_desk) continue;
+    if (!a.on || fv.no_signal || fv.note || fv.timer || fv.away_desk || fv.sub_line) continue;
     if (v.req.acted && f == (int)Floor::Upstairs) continue;
     fv.agenda = true;
     snprintf(fv.agenda_title, sizeof(fv.agenda_title), "%s", a.title);
@@ -2744,7 +2811,8 @@ void Controller::build_view() {
       char when[24];
       if (bell_in_.knock_utc()) format_clock(when, sizeof(when), bell_in_.knock_utc());
       else snprintf(when, sizeof(when), "an unknown time");
-      snprintf(v.banner.sub, sizeof(v.banner.sub), "Rang at %s while you were away", when);
+      snprintf(v.banner.sub, sizeof(v.banner.sub), "Rang at %s while you were %s", when,
+               bell_in_.saved_why() == Status::Sleeping ? "sleeping" : "away");
     }
   }
 

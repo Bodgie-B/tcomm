@@ -161,6 +161,11 @@ struct FloorView {
   char sub[48];         // No signal only: last known state and how long ago, "was BUSY, 17 min ago"
   char line[48];        // "since 10:15 PM", "until 7:10 PM", "last seen 7:08 PM"
   bool timer;           // line shows "until"
+  // The floor's substatus (status.h, Mike 2026-11-26): its badge's look. With one that isn't the
+  // status's default and no timer, `line` reads "Free passage since 4:10 PM" (sub_line); a timer's
+  // "until" line wins. The calendar item doesn't take that line's place.
+  Sub substatus;
+  bool sub_line;
   // The floor's tile message (note.h, Mike 2026-11-07): when set, it shows instead of `line`, in
   // up to two lines (the screen wraps it). Downstairs' view of the UPSTAIRS tile shows "Action taken
   // on temperature" (RequestView acted) in that spot instead while it shows.
@@ -201,6 +206,11 @@ struct BellView {
   // incoming ring turns it red until it's answered (or the banner dismissed), for 2 min at most.
   uint16_t shakes;      // one more for each ring sent or received
   bool alert;           // an incoming ring not yet answered: the bell shows red
+  // Mike, 2026-11-26: the other floor's substatus in words in place of DOORBELL ("COME ON IN", "COME IN
+  // QUIETLY", "DO NOT DISTURB", "ONLY IF NEEDED"; bell_words), empty for DOORBELL. off: its bell is off,
+  // so a press sends nothing and the bell is drawn dim (ONLY IF NEEDED still rings).
+  char words[20];
+  bool off;
 };
 
 struct DogView {
@@ -307,6 +317,11 @@ class Controller : public CalendarSource {
   void touch();                                  // any touch, for the backlight
   bool choose_status(Status s);
   bool start_timer(Status s, uint32_t duration_s, Status fallback);
+  // A substatus of the current status, from the menu a long press on the own status opens (Mike,
+  // 2026-11-26). False if it isn't one of the status's options or is already the one chosen.
+  bool choose_sub(Sub s);
+  // Upstairs or downstairs rings the other floor. Refused (nothing sent) while the other floor's
+  // substatus has its bell off (Mike, 2026-11-26: its DOORBELL shows the words instead).
   void tap_bell();
   bool tap_dog();
   // The mail badge: upstairs marks mail for downstairs, or takes it back; downstairs acknowledges
@@ -385,6 +400,8 @@ class Controller : public CalendarSource {
   const View &view() const { return view_; }
   const Settings &settings() const { return settings_; }
   const OwnState &own() const { return status_.state(); }
+  // The other floor's state as last heard, with an expired timer applied (as its tile shows it).
+  OwnState peer_now();
   const DogState &dog() const { return dog_.state(); }
   const MailState &mail() const { return mail_.state(); }
   bool peer_no_signal() const { return peer_.no_signal; }
@@ -571,6 +588,7 @@ class Controller : public CalendarSource {
     bool reading = false;
     int16_t temp = 0;
     uint16_t hum = 0;
+    bool sub_ok = false;       // STATE's kStateSubstatus: it reads the substatus byte, so ours goes with it
     bool away = false;         // STATE's kStateAwayDesk: upstairs is Busy and walking about
     bool nobody_near = false;  // STATE's kStateNobodyNear: no one near the upstairs panel for 15 min
   };
@@ -623,7 +641,7 @@ class Controller : public CalendarSource {
   void send_sum(bool please_reply);
   void events_changed();
   void tick_events(uint32_t now, const WallTime &w);
-  void own_changed(Status before);
+  void own_changed(const OwnState &before);
   void handle(const Msg &m);
   void heard_from_peer();
   void build_view();
@@ -636,6 +654,9 @@ class Controller : public CalendarSource {
   // The phones (Mike, 2026-11-15): a floor's phones are pushed only when its status is Open or Busy and
   // this panel's clock is not in quiet hours (no clock: not quiet).
   bool phones_ok(Status rung_status);
+  bool phone_hours_ok();  // the clock is set and not in quiet hours
+  // A ring's push for the rung floor's phones, by its rule (ring_rule's push, Mike 2026-11-26) and the hours.
+  bool ring_push_ok(const KnockAction &a) { return a.push && phone_hours_ok(); }
   void ring_notice(Floor rung, uint16_t knock_id, uint32_t utc);  // RING, and remembered for ANSWERED
   void ring_answered_here(Floor rung, uint16_t knock_id);  // ANSWERED, if that ring got a RING in time
   void on_phone_answer(const Msg &m);  // PHONE_ANSWER from the gateway or (downstairs) relayed by upstairs

@@ -13,6 +13,7 @@ class PanelApp : public ui::Actions {
 
   void choose_status(Status s) override { c_.choose_status(s); }
   void start_timer(Status s, uint32_t secs, Status fb) override { c_.start_timer(s, secs, fb); }
+  void choose_sub(Sub s) override { c_.choose_sub(s); }
   void tap_bell() override { c_.tap_bell(); }
   void tap_dog() override { c_.tap_dog(); }
   void tap_mail() override { c_.tap_mail(); }

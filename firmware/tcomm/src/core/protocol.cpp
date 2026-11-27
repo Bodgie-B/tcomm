@@ -1,4 +1,5 @@
 #include "protocol.h"
+#include "status.h"
 #include <string.h>
 
 namespace tc {
@@ -55,6 +56,10 @@ size_t encode(const Msg &m, uint8_t *out, size_t cap) {
     case MsgType::State:
       w.u8(m.u.state.status); w.u8(m.u.state.flags); w.u32(m.u.state.since); w.u32(m.u.state.until);
       w.u8(m.u.state.fallback); w.u32(m.u.state.clock); w.u8(m.u.state.clock_quality);
+      if (m.u.state.has_sub) {  // only to a panel that said it reads it (kStateSubstatus)
+        if (!sub_valid((Status)m.u.state.status, m.u.state.sub)) return 0;
+        w.u8(m.u.state.sub);
+      }
       break;
     case MsgType::Knock: w.u16(m.u.knock.id); break;
     case MsgType::Reply:
@@ -153,6 +158,16 @@ bool decode(const uint8_t *in, size_t len, Msg &m) {
       s.status = r.u8(); s.flags = r.u8(); s.since = r.u32(); s.until = r.u32();
       s.fallback = r.u8(); s.clock = r.u32(); s.clock_quality = r.u8();
       if (!status_valid(s.status) || !status_valid(s.fallback) || s.clock_quality > kClockNetwork) return false;
+      // Mike, 2026-11-26: the substatus byte, from a panel that knows we read it; the 21-byte STATE of
+      // older firmware means the status's default. A value that isn't one of the status's options is
+      // malformed.
+      if (r.ok && r.n < len) {
+        s.sub = r.u8();
+        s.has_sub = 1;
+        if (!sub_valid((Status)s.status, s.sub)) return false;
+      } else {
+        s.sub = (uint8_t)default_sub((Status)s.status);
+      }
       break;
     }
     case MsgType::Knock: m.u.knock.id = r.u16(); if (m.u.knock.id == 0) return false; break;
