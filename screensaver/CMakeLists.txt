@@ -14,10 +14,10 @@ endif()
 file(GLOB_RECURSE SS_CORE_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/core/*.cpp)
 add_library(ss_core STATIC ${SS_CORE_SOURCES})
 target_include_directories(ss_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/core)
-# The Christmas set (core/scene/xmas.h): on in the host builds, off by default in the code itself, so the
-# panel firmware (which compiles core/ with no defines) carries none of it. -DSS_XMAS=OFF builds the host
-# as the panel has it.
-option(SS_XMAS "Build the Christmas set (host only)" ON)
+# The Christmas season (core/scene/xmas.h; Mike, 2026-11-26): on, as the code's own default is for the panel
+# firmware (which compiles core/ with no defines). -DSS_XMAS=OFF builds the core without any of it: outside the
+# season (Nov 26 to Jan 1) every plan and frame must be the same either way.
+option(SS_XMAS "Build the Christmas season" ON)
 if(SS_XMAS)
   target_compile_definitions(ss_core PUBLIC SS_XMAS=1)
 else()

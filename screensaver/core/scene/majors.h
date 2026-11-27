@@ -62,6 +62,9 @@ enum MajorId : uint8_t {
   // The frog he licks (day_trip.h; Mike, 2026-11-25): midday, a stage 22 piece (S22_FROG) that borrows the
   // mushroom's sky. Never in a loop with a ripe patch.
   MJ_FROG_LICK,
+  // The Christmas season (xmas.h; Mike, 2026-11-26): a raccoon takes the low ornament off the decorated pine
+  // to its bush. Evening, in season only (weight 0 otherwise), never with raccoon_pack.
+  MJ_BAUBLE_THIEF,
   MJ_COUNT
 };
 // Memory keeps a loop's majors as a MajorSet (memory.h sets, spine.cpp): one

@@ -1,4 +1,5 @@
-// The Christmas mockups (stage 18, scene/xmas.h): drawings posed from a mock state, nothing scheduled.
+// The Christmas drawings (stage 18, scene/xmas.h) posed from a mock state. The season's story (the plan,
+// the decorating, the theft) is tested in test_xmas_story.cpp.
 //
 // (1) Nothing changes with the mock at zero: every family (and the Lookout and the sunrise, whose running
 //     state the mock shares) renders frame for frame what it rendered before the module existed. The
@@ -8,7 +9,15 @@
 // (3) Incremental rendering equals a full render while the mock is posed and changed (the critters'
 //     group follows his hand while the run of lights hangs from it); two runs draw the same frames.
 // (4) The mock costs no App bytes (it shares the Lookout's running state).
-// (5) The snow look (XE_SNOW) repaints the static cache: a large part of the ground changes.
+// (5) (The snow look is a mock left out of the build since the season was scheduled: SS_XMAS_MOCKS.)
+//
+// Re-captured 2026-11-26 (Mike: squirrel_splash, the three fishing majors and the evening's firewood beat
+// removed, the Christmas season scheduled). Outside the season (these runs give no date) the frames must
+// be what the tree with only those removals renders: the pins below were taken from that tree
+// (build-xmas-rm, before any of the season's code went in), and the build with the season passes them;
+// then evening_golden_s1 once more for the minors' quicker exit (minors.cpp exitAll, gone in 3 s), taken from
+// the build with the season compiled out (-DSS_XMAS=OFF), which the build with it must equal. kIdentPins (SS_S22
+// off) were taken from build-xmas2-s22off the same day.
 //
 // With the switch off (SS_XMAS 0, xmas_switch.h: the panel's build, and the host's -DSS_XMAS=OFF) there is
 // no mock to pose: only (1) and the size check run, and they prove the scene is the same frame for frame
@@ -77,15 +86,18 @@ static const IdentRun kIdentRuns[] = {
 // so the midday and morning runs have their own pins there (kIdentPinsS22); the evening, night, snow
 // and dusk runs are the same with the switch on or off.
 static const uint64_t kIdentPins[] = {
-    0x89CFD02E07342DA1ull, 0x7FD19CEDC9F3103Full, 0x7F041DA98255AB89ull, 0x71D5598DD910CFE8ull,
-    0x3F01A294CD74BCC4ull, 0xC2D74FD9EC26A374ull, 0xE5E267DCA1E35EE2ull, 0xEB9B09CB3FE81A1Cull,
+    0xDF43C928D7E1BA79ull, 0x4864141A70D1E5E0ull, 0xDD0D248F4CDA906Bull, 0x3AD94C30527173CDull,
+    0xD74E0365B8AFBAF5ull, 0xC2D74FD9EC26A374ull, 0xE5E267DCA1E35EE2ull, 0xC50D28C6300677D9ull,
 };
 // Step C2 (2026-11-19): with SS_S22 on, tai chi is forced into the day's first morning loop, so morning_s5's
 // plan opens with it and its frames differ: re-captured (was 742E339918DF65A4). With the switch off
 // kIdentPins holds unchanged, which is the proof that nothing else moved.
+// 2026-11-26: evening, night, midday, snow and dusk re-captured for the removals (the midday and morning
+// pools lost squirrel_splash and fishing_small/log, the evening's all four and its firewood beat); the
+// morning, Lookout and sunrise runs did not change.
 static const uint64_t kIdentPinsS22[] = {
-    0x89CFD02E07342DA1ull, 0x7FD19CEDC9F3103Full, 0x5709F5F45A28F52Eull, 0xB9C4C17898D2717Cull,
-    0x3F01A294CD74BCC4ull, 0xC2D74FD9EC26A374ull, 0xE5E267DCA1E35EE2ull, 0xEB9B09CB3FE81A1Cull,
+    0xDF43C928D7E1BA79ull, 0x4864141A70D1E5E0ull, 0x645568D5B28A94B6ull, 0xB9C4C17898D2717Cull,
+    0xD74E0365B8AFBAF5ull, 0xC2D74FD9EC26A374ull, 0xE5E267DCA1E35EE2ull, 0xC50D28C6300677D9ull,
 };
 
 static inline uint64_t identHash(uint64_t h, const Pixel* px, size_t n) {
@@ -195,7 +207,7 @@ static Inputs camp(float mood, bool night) {
 }
 
 // The mock states the stills pose.
-static const int kStates = 14;
+static const int kStates = 18;
 static XmasMock stateOf(int i) {
   XmasMock m{};
   m.gen = 1;
@@ -203,20 +215,24 @@ static XmasMock stateOf(int i) {
   m.wraps = XMAS_WRAPS;
   m.power = XP_ON;
   switch (i) {
-    case 0: m.wraps = 0; m.power = XP_OFF; break;
+    case 0: m.wraps = 0; m.power = XP_OFF; m.lift = 255; break;
     case 1: m.spark = 1; m.power = XP_DIM; break;
-    case 2: m.spark = 6; m.look = XL_MULTI; break;
-    case 3: m.wraps = 2; m.extras = XE_LADDER | XE_COIL; break;
+    case 2: m.spark = 6; break;
+    case 3: m.wraps = 2; m.extras = XE_LADDER | XE_COIL | XE_RUN; m.ladder = 255; break;
     case 4: m.power = XP_HALF_DEAD; m.garland = XG_FLYING; m.fly = 40; break;
     case 5: m.garland = XG_FLYING; m.fly = 230; break;
-    case 6: m.garland = XG_TANGLED; break;
-    case 7: m.garland = XG_PART; m.look = XL_MULTI; break;
+    case 6: m.garland = XG_TANGLED; m.fly = 90; break;
+    case 7: m.garland = XG_PART; m.fly = 30; break;
     case 8: m.garland = XG_DRAPED; m.orns = 0x7F; m.coon = XR_REACH; break;
     case 9: m.garland = XG_DRAPED; m.orns = 0x3F; m.extras = XE_GAP; m.coon = XR_CARRY; break;
-    case 10: m.garland = XG_DRAPED; m.orns = 0x3F; m.bush = 3; m.coon = XR_PROUD; break;
-    case 11: m.garland = XG_DRAPED; m.orns = 0x7F; m.extras = XE_STAR | XE_PRESENTS | XE_STOCKING | XE_SLEIGH; break;
-    case 12: m.garland = XG_DRAPED; m.orns = 0x7F; m.north = 1; m.extras = XE_STAR | XE_PRESENTS | XE_STOCKING | XE_SNOW; break;
-    default: m.garland = XG_DRAPED; m.orns = 0x7F; m.north = 3; m.coon = XR_REACH; m.extras = XE_STAR | XE_SNOW | XE_SLEIGH; break;
+    case 10: m.garland = XG_DRAPED; m.orns = 0x3F; m.bush = 4; m.coon = XR_PROUD; break;
+    case 11: m.garland = XG_DRAPED; m.orns = 0x7F; m.extras = XE_STAR | XE_STOCKING; m.gifts = 3; break;
+    case 12: m.garland = XG_DRAPED; m.orns = 0x7F; m.extras = XE_STAR | XE_STOCKING; m.gifts = XMAS_GIFTS_ALL; m.bush = 7; break;
+    case 13: m.garland = XG_LEAVING; m.fly = 120; m.extras = XE_LADDER; m.ladder = 0; break;
+    case 14: m.carry = 1; m.lift = 255; m.wraps = 0; m.power = XP_OFF; m.extras = XE_LADDER | XE_COIL; m.ladder = 0; break;
+    case 15: m.wraps = 1; m.extras = XE_LADDER | XE_COIL | XE_RUN; m.ladder = 120; m.lift = 140; m.power = XP_OFF; break;
+    case 16: m.garland = XG_DRAPED; m.orns = 0x3F; m.extras = XE_GAP | XE_STAR; m.gifts = 5; break;
+    default: m.garland = XG_DRAPED; m.orns = 0x7F; m.extras = XE_STAR | XE_STOCKING; m.gifts = 2; m.bush = 1; break;
   }
   return m;
 }
@@ -266,6 +282,8 @@ static void testBounds() {
         if (part == 0) {
           xmasDrawTree(w, s, all, pal);
           b = xmasTreeBounds(w);
+          const Rect c = xmasCritBounds(w);   // the coil (and its run) is the critters' group's
+          if (!c.empty()) b = Rect{b.x0 < c.x0 ? b.x0 : c.x0, b.y0 < c.y0 ? b.y0 : c.y0, b.x1 > c.x1 ? b.x1 : c.x1, b.y1 > c.y1 ? b.y1 : c.y1};
         } else if (part == 1) {
           xmasDrawSky(w, s, all, pal);
           b = xmasExtraBounds(w);
@@ -276,7 +294,7 @@ static void testBounds() {
           int16_t y;
           if (!xmasActorY(w, a, y)) continue;
           xmasDrawActor(w, a, s, all, pal);
-          b = a <= 1 ? xmasGenBounds(w) : (a == 4 || a == 5 ? xmasCritBounds(w) : xmasExtraBounds(w));
+          b = a <= 1 || a == 6 ? xmasGenBounds(w) : (a == 4 || a == 5 ? xmasCritBounds(w) : xmasExtraBounds(w));
         }
         const int n = outside(fb, bg, b);
         int drawn = 0;
@@ -337,24 +355,6 @@ static void testIncremental() {
   }
 }
 
-// ---- (5) the snow repaints the cache --------------------------------------------------------------------
-
-static void testSnow() {
-  Rig r;
-  CHECK(toMoment(r, 1, camp(3.f, false)), "start");
-  appInvalidate(r.app);
-  appRender(r.app, r.surf);
-  const std::vector<Pixel> before = r.fb;
-  r.w().xmas.m.extras = XE_SNOW;
-  appTick(r.app);
-  appRender(r.app, r.surf);   // incremental: the toggle invalidated the cache
-  int changed = 0;
-  for (int y = LS_GROUND_Y; y < SS_HEIGHT; ++y)
-    for (int x = 0; x < SS_WIDTH; ++x) changed += before[(size_t)y * SS_WIDTH + x] != r.fb[(size_t)y * SS_WIDTH + x];
-  CHECK(changed > 30000, "the snow changed only %d ground pixels", changed);
-  printf("  snow: %d of %d ground pixels changed\n", changed, (SS_HEIGHT - LS_GROUND_Y) * SS_WIDTH);
-  r.stop();
-}
 #endif  // SS_XMAS
 
 // ---- (4) memory ----------------------------------------------------------------------------------------
@@ -377,7 +377,6 @@ int main() {
 #if SS_XMAS
   testBounds();
   testIncremental();
-  testSnow();
 #endif
   testIdentity();
   printf("test_xmas: %d checks, %d failed\n", g_checks, g_fail);

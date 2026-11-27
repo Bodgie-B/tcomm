@@ -11,8 +11,8 @@
 // | shoe_back      | (this loop only) it came back: he keeps it in the tent tonight       |
 // | last_stolen    | the last thing a raccoon took (shoe, mug or book), ItemId + 1        |
 // | mouse_hole     | the tent has a bite out of its base until he patches it in setup     |
-// | rod_lost       | the rod went across (or down) the stream: the next fishing major     |
-// |                | uses a stick off the wood pile, and clears the flag                  |
+// | rod_lost       | (the fishing majors are gone, Mike 2026-11-26: always 0 now)         |
+// | xmas_bush      | the raccoon's stolen ornaments on its bush this season (xmas.h)      |
 // | boom_stuck     | the boomerang (boomerang major, variant C) is stuck in the camp     |
 // |                | pine: 2 when it sticks, one less at the end of each camp loop; while|
 // |                | it is up there the loop starts with it in the tree (day_boomerang.h)|
@@ -56,6 +56,11 @@ struct Memory {
   bool mouse_hole;       // the mice got into the tent (until he patches it)
   bool rod_lost;         // the fishing rod was thrown or towed away (fishing_small, fishing_log)
   uint8_t boom_stuck;    // camp loops the boomerang is still stuck in the camp pine (0 not; 2 just stuck; 1 the next loop)
+  // The Christmas season (xmas.h; Mike, 2026-11-26), in what was padding (the struct stays 88): ornaments the
+  // raccoon has taken to its bush this season (0 outside it), and which of this evening's two decorating
+  // windows the plan picked (XMAS_DECK_EARLY or _LATE; the decorate beat marks it in taichi_next).
+  uint8_t xmas_bush;
+  uint8_t xmas_window;
   uint32_t loop_count;   // loops started, this one included
   uint8_t last_stolen;   // ItemId + 1 of the last thing stolen, 0 none
   uint8_t ring[MEMORY_RING];   // majors picked, oldest first

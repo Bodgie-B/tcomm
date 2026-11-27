@@ -555,6 +555,10 @@ void worldTick(World& w, Rng& rng, Renderer& r) {
   ambientStep(w, rng);
   streamStep(w);   // ambient: the stream's life goes on through the doorbell and fire and ice too
   reedsStep(w);    // ambient too: the reeds sway and ring on through both (reeds.h)
+  // Whether the story holds this tick, taken before the hold's own step can end it: on the doorbell's last
+  // frozen tick reactStep clears react.active, and the reed pick below must not take a story step on it
+  // (it ran one tick ahead after every bell; found 2026-11-26 when a pick fell in test_react's window).
+  const uint32_t frozen_before = w.frozen;
   if (w.react.active) {
     // The doorbell reaction: he answers the bell while the camp holds still
     // (critters, minors and the director wait with the beats; react.h).
@@ -607,7 +611,7 @@ void worldTick(World& w, Rng& rng, Renderer& r) {
                           ? floorf(0.5f + 2.f * tent.shadow_jitter * sumSines(tk * 0.11f, 2))
                           : 0.f;
   weatherStep(w);
-  reedsStoryStep(w);   // the reed pick and the stem's ending; returns at once while the story is held (reeds.h)
+  if (w.frozen == frozen_before) reedsStoryStep(w);   // the reed pick and the stem's ending; returns at once while the story is held (reeds.h)
   weatherPlaceHeld(w);
   coverHiker(w);   // after everything that moved him this tick
   sortActors(w);
@@ -712,7 +716,8 @@ void worldTick(World& w, Rng& rng, Renderer& r) {
   streamTrack(w, r);
   reedsTrack(w, r);
 #if SS_XMAS
-  xmasTrack(w, r);   // the Christmas mockups (xmas.h): nothing unless posed
+  xmasAmbient(w);    // the Christmas season (xmas.h): the wheel's turn and the sparks; nothing outside it
+  xmasTrack(w, r);
 #endif
 }
 

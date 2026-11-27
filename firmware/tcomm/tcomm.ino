@@ -850,7 +850,8 @@ static void command(char *s) {
                    "from the next loop: ss seed N) | ss nightgain N (the night scene's brightness in tenths, 16 = 1.6; "
                    "0 = the PC look; until restart) | ss lookout N (0 round the real sunset, 1 on, 2 off) | "
                    "ss spread N (bands a frame for a medium palette step; 0 = at once, the default) | "
-                   "ss carry [N] (the word the next run starts from: mushrooms, tai chi; until restart)");
+                   "ss carry [N] (the word the next run starts from: mushrooms, tai chi; until restart) | "
+                   "ss deck (Christmas: the next evening loop decorates the pine)");
     return;
   }
   if (!strcmp(s, "bench")) {
@@ -1019,6 +1020,13 @@ static void command(char *s) {
   } else if (cmd_int(s, "ss nightgain", v)) {
     ui::screensaver_set_night_gain((float)v / 10.f);
     Serial.printf("screensaver: night gain %.1f\n", (double)ui::screensaver_night_gain());
+  } else if (!strcmp(s, "ss deck")) {   // the Christmas season: the next evening loop decorates the pine again
+    if (ui::screensaver_running()) {   // the running loop's memory would put the bits straight back
+      Serial.printf("screensaver: stop the screensaver first, then ss deck\n");
+    } else {
+      ui::screensaver_set_carry((uint16_t)(ui::screensaver_carry() & ~0x3000u));
+      Serial.printf("screensaver: decorating windows cleared; the next evening loop (from the next start) decorates\n");
+    }
   } else if (cmd_int(s, "ss carry", v)) {
     ui::screensaver_set_carry((uint16_t)(v & 0xFFFF));
     Serial.printf("screensaver: carry word %u from the next start\n", (unsigned)ui::screensaver_carry());

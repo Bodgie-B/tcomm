@@ -216,7 +216,10 @@ void exitAll(World& w, float speed) {
     if (!c) continue;
     int side = nearSide(c->feet.x);
     if (!clearOfHiker(w, c->feet.x, side < 0 ? 0.f : (float)SS_WIDTH, c->feet.y, 30.f)) side = -side;
-    leave(w, k, side, speed, CA_RUN);
+    // Quick enough to be gone in 3 s, so before a major's shortest still beat (4 s) ends (test_scene's
+    // majors-start-clear check; 2026-11-26, after the removals moved night seed 12's squirrel into one).
+    const float dist = side < 0 ? c->feet.x + 30.f : (float)SS_WIDTH + 30.f - c->feet.x;
+    leave(w, k, side, dist / 3.f > speed ? dist / 3.f : speed, CA_RUN);
   }
 }
 

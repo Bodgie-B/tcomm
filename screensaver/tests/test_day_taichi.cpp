@@ -119,7 +119,10 @@ static uint64_t findSeed(int chapter, int gag, int guests, int dog, uint64_t fro
     const World* w = appWorld(r.app);
     const int i = indexOf(w->plan, MJ_TAICHI);
     const uint8_t v = i >= 0 ? w->plan.major_var[i] : 0;
-    const bool hit = i >= 0 && (v & 3) == chapter && ((v >> 4) & 3) == gag && (guests < 0 || ((v & 64) != 0) == (guests != 0));
+    bool hit = i >= 0 && (v & 3) == chapter && ((v >> 4) & 3) == gag && (guests < 0 || ((v & 64) != 0) == (guests != 0));
+    // Chapter 4's deer stays away from a loop with deer_stick (one deer story a loop): such a seed shows no guest.
+    // (2026-11-26: the removals moved seed 2's morning plan onto deer_stick.)
+    if (hit && chapter == 3 && guests > 0 && indexOf(w->plan, MJ_DEER_STICK) >= 0) hit = false;
     r.stop();
     if (hit) return seed;
   }

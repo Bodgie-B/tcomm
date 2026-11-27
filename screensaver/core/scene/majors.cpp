@@ -46,6 +46,11 @@ using namespace sc;
 
 namespace {
 
+// Mike, 2026-11-26: squirrel_splash and the three fishing majors (fishing_small, fishing_log, fishing_good)
+// are gone, to make room for the Christmas set. Their ids stay (Memory stores ids; never reorder), their pool rows
+// weigh 0 in no family, and their code is compiled out here (0): flash and PSRAM on the panel.
+#define SS_REMOVED_MAJORS 0
+
 constexpr float kPi = 3.14159265f;
 const Rect kNoRect{0, 0, 0, 0};
 
@@ -147,8 +152,10 @@ float shapeReach(uint8_t sh) {
     case SH_CONE: return 5.5f;
     case SH_RABBIT: case SH_BIRD: case SH_DOG: return 20.f;
     case SH_BEAR: return 21.f;
+#if SS_REMOVED_MAJORS
     case SH_ROD: return 0.5f * kItemRodLen + 3.f;
     case SH_LOG: return 23.f;
+#endif
     case SH_DEADFISH: return 11.f;
     case SH_PERCH: return 8.f;
     case SH_CHIP: return 7.f;
@@ -347,6 +354,7 @@ void drawShape(const Glyph& g, Surface& s, const Rect& clip, const Palette& pal)
       polyX(s, X, ear, 3, c, clip);
       break;
     }
+#if SS_REMOVED_MAJORS
     case SH_ROD: {      // end over end: a thin line with its reel, or the stick
       const float h = 0.5f * kItemRodLen;
       if (g.k > 0.5f) {
@@ -363,6 +371,7 @@ void drawShape(const Glyph& g, Surface& s, const Rect& clip, const Palette& pal)
       fillCircle(s, X(-19.f, 0.f), 2.3f * g.scale, pal[GROUND_DARK], clip);
       break;
     }
+#endif
     case SH_DEADFISH: { // belly up: the fish upside down, a pale belly line on top, an x for an eye
       static const float body[8][2] = {{6.5f, 0.f},  {4.5f, 2.2f}, {0.f, 2.8f}, {-4.f, 1.8f},
                                        {-5.5f, 0.f}, {-4.f, -1.6f}, {0.f, -2.5f}, {4.5f, -2.f}};
@@ -615,6 +624,7 @@ void actRubHead(World& w, float u) {
 // stream; he laughs; it climbs out onto a rock, shakes off and sits as if
 // nothing happened.
 
+#if SS_REMOVED_MAJORS
 constexpr float kFallG = 700.f;
 
 void beginSplash(World& w) {
@@ -753,15 +763,19 @@ void tickSplash(World& w, float dt) {
   }
 }
 
+#endif
+
 #define SIT_HERE skipUnless(notSeated, 4), pose(POSE_STAND, 0.8f, 0.3f), go(AT_SIT, 30.f), face(TO_FIRE), pose(POSE_SIT, 0.9f, 0.4f)
 #define TO_SIT go(AT_SIT, 30.f), face(TO_FIRE), pose(POSE_SIT, 0.9f, 0.6f)
 #define FROM_REST pose(POSE_STAND, 0.8f, 0.3f)
 
+#if SS_REMOVED_MAJORS
 const Step kSplash[] = {
     SIT_HERE,      still(0.4f),       doit(cueGo),        still(1.5f), face(RIGHT), until(ev1),
     still(0.35f),  act(actLaugh, 2.8f), still(0.8f),      until(gone), still(0.5f), face(TO_FIRE),
     still(0.8f),
 };
+#endif
 
 // ---- 2. deer_stick ---------------------------------------------------------------------
 // A deer steps on a stick: a snap (a little dust); it startles; he laughs; it
@@ -2157,11 +2171,13 @@ float streamOn(const World& w, float s, float px_per_s, float dt) {
 float turnsAlong(Vec2 d, int facing) {
   return facing < 0 ? atan2f(-d.y, -d.x) / (2.f * kPi) : atan2f(d.y, d.x) / (2.f * kPi);
 }
+#if SS_REMOVED_MAJORS
 // The water's waterline y at x (the centreline, and its half width), or `fallback`.
 float waterMidY(const World& w, float x, float fallback) {
   float cy, half;
   return landscapeStreamSpan(w.land, x, cy, half) ? cy : fallback;
 }
+#endif
 
 // Rings age out; drops (GL_DOT with k 1, velocity in q) fall and stop at base_y;
 // a flying bit (GL_DOT with k 2, from q to the mode's target) is moved by its owner.
@@ -2186,6 +2202,7 @@ void dropAt(World& w, Vec2 p, Vec2 v, float ground) {
     g->k = 1.f;
   }
 }
+#if SS_REMOVED_MAJORS
 // A drip off him: from somewhere on his body (a repeatable spread), down to his feet.
 void dripFrom(World& w, uint32_t n) {
   const Hiker& h = w.hiker;
@@ -2194,6 +2211,7 @@ void dripFrom(World& w, uint32_t n) {
   const Vec2 p{h.feet.x + (a - 0.5f) * 16.f, h.feet.y - h.height * (0.25f + 0.4f * b)};
   dropAt(w, p, Vec2{(a - 0.5f) * 14.f, 6.f}, h.feet.y + 2.f);
 }
+#endif
 
 // The line's states (MajorState::mode, seconds in it: mt).
 enum LineMode : uint8_t {
@@ -2217,6 +2235,7 @@ void lineTo(World& w, uint8_t mode) {
   m.mt = 0.f;
 }
 
+#if SS_REMOVED_MAJORS
 // Where he fishes: on the bank below the camp, a little left of where he
 // cooled his hand, facing upstream (right). The float rests on the water
 // ahead of him in the camp-side half of the stream; a thrown rod lands on the
@@ -2698,18 +2717,6 @@ void actWring(World& w, float u) {
   if (u >= 1.f) w.fx.head = 0.f;
 }
 // And back on his head.
-void actHatOnM(World& w, float u) {
-  Hiker& h = w.hiker;
-  Item& hat = w.items[ITEM_HAT];
-  const float e = env(u, 0.4f, 0.4f);
-  scriptSetArm(w, 0, e, 2.75f, 2.0f);
-  if (u >= 0.45f && !h.hat_on) {
-    h.hat_on = true;
-    hat.held = hat.down = false;
-  }
-  if (u >= 1.f) scriptFxRest(w);
-}
-
 void tickFishLog(World& w, float dt) {
   MajorState& m = M(w);
   Hiker& h = w.hiker;
@@ -3054,6 +3061,21 @@ const Step kFishGood[] = {
     pose(POSE_STAND, 0.6f, 0.2f),
     TO_SIT,
 };
+#endif  // SS_REMOVED_MAJORS
+
+// The hat back on (bathe; it was fishing_log's too).
+void actHatOnM(World& w, float u) {
+  Hiker& h = w.hiker;
+  Item& hat = w.items[ITEM_HAT];
+  const float e = env(u, 0.4f, 0.4f);
+  scriptSetArm(w, 0, e, 2.75f, 2.0f);
+  if (u >= 0.45f && !h.hat_on) {
+    h.hat_on = true;
+    hat.held = hat.down = false;
+  }
+  if (u >= 1.f) scriptFxRest(w);
+}
+
 
 // ---- 16. bathe ---------------------------------------------------------------------------------
 // Hat off on the rock, into the middle of the stream, sits down in it,
@@ -3704,6 +3726,10 @@ constexpr bool kFrogLanded = true;
 constexpr float kTaichiW = 2.4f;
 constexpr float kLongshotW = 0.8f;
 
+// The removed majors' rows (never planned: weight 0, no family).
+void beginRemoved(World&) {}
+void tickRemoved(World&, float) {}
+
 struct MajorDef {
   const char* name;
   uint8_t seconds[2];    // per variant (0 and 1; others use 0's)
@@ -3717,7 +3743,8 @@ struct MajorDef {
 };
 
 const MajorDef kMajors[MJ_COUNT] = {
-    {"squirrel_splash", {31, 31}, 1.f, kOut, kDay, beginSplash, tickSplash, {kSplash, kSplash}, {N(kSplash), N(kSplash)}},
+    // Removed (Mike, 2026-11-26; SS_REMOVED_MAJORS above): weight 0, in no family, no code. The id stays.
+    {"squirrel_splash", {31, 31}, 0.f, 0, 0, beginRemoved, tickRemoved, {nullptr, nullptr}, {0, 0}},
     {"deer_stick", {42, 42}, 1.f, kOut, kDay, beginDeer, tickDeer, {kDeer, kDeer}, {N(kDeer), N(kDeer)}},
     {"pinecone", {30, 30}, 1.f, kOut, kDay, beginCone, tickCone, {kCone, kCone}, {N(kCone), N(kCone)}},
     {"map_chase", {43, 43}, 1.f, kOut, kDay, beginMap, tickMap, {kMap, kMap}, {N(kMap), N(kMap)}},
@@ -3732,12 +3759,10 @@ const MajorDef kMajors[MJ_COUNT] = {
     {"firefly_jar", {42, 42}, 1.5f, kOut, kEve, beginFireflies, tickFireflies, {kFireflies, kFireflies},
      {N(kFireflies), N(kFireflies)}},
     {"stargaze", {48, 48}, 1.5f, kOut, kEve, beginStars, tickStars, {kStars5, kStars5}, {N(kStars5), N(kStars5)}},
-    {"fishing_small", {60, 60}, 0.6f, kOut, kDay, beginFishing, tickFishSmall, {kFishSmall, kFishSmall},
-     {N(kFishSmall), N(kFishSmall)}},
-    // fishing_log: plus its variant's seconds of empty scene (8..12).
-    {"fishing_log", {56, 56}, 0.6f, kOut, kDay, beginFishLog, tickFishLog, {kFishLog, kFishLog}, {N(kFishLog), N(kFishLog)}},
-    {"fishing_good", {50, 50}, 0.6f, 2, kEve, beginFishGood, tickFishGood, {kFishGood, kFishGood},
-     {N(kFishGood), N(kFishGood)}},
+    // Removed (Mike, 2026-11-26), as squirrel_splash: the three fishing majors. fish_leap stays.
+    {"fishing_small", {60, 60}, 0.f, 0, 0, beginRemoved, tickRemoved, {nullptr, nullptr}, {0, 0}},
+    {"fishing_log", {56, 56}, 0.f, 0, 0, beginRemoved, tickRemoved, {nullptr, nullptr}, {0, 0}},
+    {"fishing_good", {50, 50}, 0.f, 0, 0, beginRemoved, tickRemoved, {nullptr, nullptr}, {0, 0}},
     {"bathe", {54, 54}, 0.6f, 2 | 4, kDay, beginBathe, tickBathe, {kBathe, kBathe}, {N(kBathe), N(kBathe)}},
     // A storm from the data only (majorsPlan gates it); after fire or dinner,
     // the morning's coffee (slot 1 only there, see majorsPlan). Heavy: a storm
@@ -3775,8 +3800,15 @@ const MajorDef kMajors[MJ_COUNT] = {
     // frog_lick (day_trip.cpp, on the mushroom's DAY_TRIP and its sky): midday after lunch or the wade, weight
     // 1.0 (PROPOSED), the seconds from frogSeconds. Gated in majorsPlan.
     {"frog_lick", {180, 180}, 1.0f, 2 | 4, kMid, frogMajorBegin, tripMajorTick, {nullptr, nullptr}, {0, 0}},
+    // bauble_thief (xmas_story.cpp): after fire, dinner (he watches from the fire) or the food bag (he is in the
+    // tent: var 1). Weight 1.0 (PROPOSED), only in season (majorsPlan); the script and seconds from xmas_story.
+#if SS_XMAS
+    {"bauble_thief", {25, 22}, 1.0f, 2 | 4 | 8, kEve, xmasTheftBegin, xmasTheftTick, {nullptr, nullptr}, {0, 0}},
+#else
+    {"bauble_thief", {25, 22}, 0.f, 0, 0, beginRemoved, tickRemoved, {nullptr, nullptr}, {0, 0}},
+#endif
 };
-static_assert(MJ_COUNT == 29, "a row per major");
+static_assert(MJ_COUNT == 30, "a row per major");
 
 // The script for a major and variant (stargaze: one table per star count).
 void scriptOf(int id, int var, const Step*& s, uint8_t& n) {
@@ -3836,6 +3868,12 @@ void scriptOf(int id, int var, const Step*& s, uint8_t& n) {
     s = frogScript((uint8_t)var, n);
     return;
   }
+#if SS_XMAS
+  if (id == MJ_BAUBLE_THIEF) {
+    s = xmasTheftScript((uint8_t)var, n);
+    return;
+  }
+#endif
   const int v = var == 1 ? 1 : 0;
   s = kMajors[id].steps[v];
   n = kMajors[id].n[v];
@@ -3949,7 +3987,6 @@ int majorSeconds(int id, int var) {
     const int n = var < 5 ? 5 : (var > 8 ? 8 : var);
     return 30 + (int)(kStarGap * (float)n + kRecountGap * (float)n + 0.5f);
   }
-  if (id == MJ_FISHING_LOG) return kMajors[id].seconds[0] + var;
   if (id == MJ_FETCH) return fetchSeconds((uint8_t)var);
   if (id == MJ_KITE) return kiteSeconds((uint8_t)var);
   if (id == MJ_BOOMERANG) return boomSeconds((uint8_t)var);
@@ -3962,6 +3999,9 @@ int majorSeconds(int id, int var) {
   if (id == MJ_LONGSHOT) return longshotSeconds((uint8_t)var);
   if (id == MJ_MUSHROOM) return tripSeconds((uint8_t)var);
   if (id == MJ_FROG_LICK) return frogSeconds((uint8_t)var);
+#if SS_XMAS
+  if (id == MJ_BAUBLE_THIEF) return xmasTheftSeconds((uint8_t)var);
+#endif
   return kMajors[id].seconds[var == 1 ? 1 : 0];
 }
 
@@ -3989,7 +4029,6 @@ Beat majorBeat(const LoopPlan& p, int i) {
 }
 
 namespace {
-bool isFishing(int id) { return id == MJ_FISHING_SMALL || id == MJ_FISHING_LOG || id == MJ_FISHING_GOOD; }
 // The plinking, the long shot and ranger_ridge all happen on the hills: at most one a loop (INTEGRATION_PLAN
 // 3.1 point 9; the rule is the long shot's, so it holds once the long shot plans).
 bool isHillside(int id) { return id == MJ_PLINK || id == MJ_LONGSHOT || id == MJ_RANGER_RIDGE; }
@@ -4058,6 +4097,8 @@ void majorsPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem, const Majo
   // Asked for through the carry word (day_trip.h FROG_ASK): forced as the first pick (after a dog's fetch) when
   // its gates pass. Never set in an ordinary run.
   const bool frog_ask = base[MJ_FROG_LICK] > 0.f && (mem.taichi_next & FROG_ASK) != 0;
+  // The Christmas raccoon: only an evening in the season, with the tree up (xmas.h LoopPlan::xmas).
+  if (!(p.xmas & XMAS_PLAN_ON) || slots.family != SF_EVENING) base[MJ_BAUBLE_THIEF] = 0.f;
   // Midday (the heat of the day, a stream to hand): bathing comes up more often.
   if (slots.family == SF_MIDDAY) base[MJ_BATHE] *= 2.5f;
   // The ring buffer: anything picked in the last MEMORY_RING picks is much
@@ -4097,15 +4138,13 @@ void majorsPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem, const Majo
       // back; the night after it brought it back, only the tent side.
       if (i == MJ_RACCOON_PACK && mem.shoe_taken) allowed &= kOut;
       if (i == MJ_RACCOON_PACK && sequel) allowed &= kTent;
-      // Fishing with a stick needs the wood pile, which only exists after the
-      // firewood beat, so a rod-less fishing major cannot go in slot 1.
-      if (mem.rod_lost && isFishing(i)) allowed &= (uint8_t)~1u;
       if (i == MJ_RAIN_SHELTER && slots.family == SF_MORNING) allowed &= 2u;   // the morning: after coffee
       wt[i] = allowed ? base[i] : 0.f;
       for (int j = 0; j < n; ++j) {
         if (pick[j] == i) wt[i] = 0.f;
-        if (isFishing(pick[j]) && isFishing(i)) wt[i] = 0.f;   // one rod: at most one fishing major a loop
         if (hill_rule && isHillside(pick[j]) && isHillside(i)) wt[i] = 0.f;   // one hillside major a loop
+        if ((pick[j] == MJ_RACCOON_PACK && i == MJ_BAUBLE_THIEF) || (pick[j] == MJ_BAUBLE_THIEF && i == MJ_RACCOON_PACK))
+          wt[i] = 0.f;   // one raccoon a loop
       }
       // A set of majors one of the last loops played (so far, as a prefix) only if nothing else fits.
       // rain_shelter is in the rule like the rest (its bit is 1u << 16; MajorSet is 32 bits wide).
@@ -4158,9 +4197,9 @@ void majorsPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem, const Majo
     uint8_t v = 0;
     if (id == MJ_FISH_LEAP) v = (r_var % 5u) < 2u ? 1 : 0;   // into the fire pit 2 times in 5
     if (id == MJ_RACCOON_PACK) v = s == 3 ? 1 : 0;           // in the tent: he is asleep
+    if (id == MJ_BAUBLE_THIEF) v = s == 3 ? 1 : 0;           // the same
     if (id == MJ_FIREFLY_JAR) v = (uint8_t)(12u + r_var % 9u);
     if (id == MJ_STARGAZE) v = (uint8_t)(5u + r_var % 4u);
-    if (id == MJ_FISHING_LOG) v = (uint8_t)(8u + r_var % 5u);   // seconds the scene sits empty
     if (id == MJ_BATHE) v = (uint8_t)(2u + r_var % 2u);         // dead fish that float past
     if (id == MJ_FETCH) v = fetchPlanVar(r_var, in.dog_out, house_dog);   // variant, a second dog, forced
     if (id == MJ_KITE) v = kitePlanVar(r_var);                           // serene, the kite wins, it won't fly

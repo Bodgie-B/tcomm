@@ -23,6 +23,7 @@ struct PreviewOptions {
   bool sunrise = false;         // --sunrise: inside the sunrise window (Inputs::sunrise_window)
   bool visitors = false;        // --visitors: the visiting couple may come (Inputs::visitors)
   int month = 0;                // --month N: the month for the stream's leaves, 1-12 (Inputs::month); 0 unknown
+  int mday = 0;                 // --date MM-DD sets it and the month (Inputs::mday): the Christmas season; 0 unknown
   uint16_t carry = 0;           // --carry N / --mush N: what the last run handed on (Inputs::carry); 0 nothing
   int spine = 0;                // 0 auto; 1 + SpineFamily forces it (--spine evening|morning|midday|lookout)
   int status = 0;

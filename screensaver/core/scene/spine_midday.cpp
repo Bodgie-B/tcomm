@@ -1750,7 +1750,8 @@ int beatSeconds(const LoopPlan& p, int b) {
 
 // The places the midday's beats use (SpineState::fp: AT_FAM0, AT_FAM1).
 // Where he lies in the shade: left of the camp pine's trunk, his head toward it.
-Vec2 napSpot(const World& w) { return Vec2{(float)w.land.camp_x - 50.f, 352.f}; }
+// In the Christmas season (xmas.h) the presents are under the tree: he lies further left, under the branch's end.
+Vec2 napSpot(const World& w) { return Vec2{(float)w.land.camp_x - ((w.plan.xmas & XMAS_PLAN_ON) ? 104.f : 50.f), 352.f}; }
 void beatPoints(World& w, int b) {
   SpineState& sp = w.spine;
   const CampLayout& c = sp.camp;

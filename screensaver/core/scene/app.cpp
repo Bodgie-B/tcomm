@@ -202,6 +202,9 @@ void beginLoop(App* a) {
   spinePlan(a->world.plan, a->rng, a->in, a->world.memory);
   memoryBeginLoop(a->world, a->rng);
   spineBeginLoop(a->world, a->rng);
+#if SS_XMAS
+  xmasBeginLoop(a->world);   // the Christmas season's start of loop (nothing outside it; no rng)
+#endif
   if (a->world.plan.family == SF_SUNRISE) sunriseInputs(a->world, a->in);   // a gray morning, the real sun's bearing, the dogs
   // The weather: its own rng stream from the loop seed (the loop rng never sees it).
   weatherPlan(a->world, a->loop_seed, a->in, spineLoopTicks(a->world.plan));

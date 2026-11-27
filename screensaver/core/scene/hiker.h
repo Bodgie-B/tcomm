@@ -51,6 +51,7 @@ enum HikerLook : uint8_t { LOOK_HIKER = 0, LOOK_ANN, LOOK_BEN, LOOK_COUNT };
 enum CarryId : uint8_t {
   CARRY_NONE, CARRY_WOOD, CARRY_MUG, CARRY_BOOK, CARRY_BAG, CARRY_STICK, CARRY_ROCK, CARRY_JAR,
   CARRY_ROD,   // a long thin rod in both hands, tip forward and up from the near hand (see Hiker::rod_*)
+  CARRY_XMAS,  // the Christmas generator in his arms (xmas.cpp draws it): nothing of the rig's, hands full
   CARRY_COUNT
 };
 

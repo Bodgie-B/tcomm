@@ -33,6 +33,9 @@ using namespace sc;
 
 namespace {
 
+// Dinner d, the fish fishing_good caught: gone with that major (Mike, 2026-11-26). Compiled out (0).
+#define SS_FISH_DINNER 0
+
 inline float minf(float a, float b) { return a < b ? a : b; }
 inline float maxf(float a, float b) { return a > b ? a : b; }
 
@@ -776,6 +779,7 @@ void actEatFork(World& w, float u) {
   if (u >= 1.f) fxRest(w);
 }
 
+#if SS_FISH_DINNER
 // Dinner d: the fish he caught (fishing_good) has been roasting on its stick.
 void doFishOffFire(World& w, float) {
   Item& f = w.items[ITEM_FISH];
@@ -836,6 +840,7 @@ void actPatStomach(World& w, float u) {
   w.fx.head = -0.12f * env;
   if (u >= 1.f) fxRest(w);
 }
+#endif  // SS_FISH_DINNER
 
 // ---- food bag -----------------------------------------------------------------------------
 
@@ -1323,6 +1328,13 @@ void layFallenBranch(World& w) {
   // Well left of where it stops to sniff (trunk + 96), so it walks on to it
   // and takes it facing the way it came.
   st.pos = Vec2{trunkX(w) + 20.f, groundAt(w, trunkX(w) + 20.f, kBearTreeY + 6.f)};
+  // The Christmas season (xmas.h): the generator, its wire and the presents are at the pine's foot, so the
+  // branch lies left of the fire pit instead, where the firewood beat's dragged stick used to lie (the
+  // bear's longer walk to it is in beatSeconds, as it was then).
+  if (w.plan.xmas & XMAS_PLAN_ON) {
+    const float x = w.fire.pos.x - 66.f;
+    st.pos = Vec2{x, groundAt(w, x, w.fire.pos.y + 2.f)};
+  }
 }
 
 // ---- the tent at night -------------------------------------------------------------------
@@ -1834,6 +1846,7 @@ const Step kDinnerC[] = {
     still(1.0f),
 };
 
+#if SS_FISH_DINNER
 // Dinner d (fish_dinner, only after fishing_good): the fish off the fire,
 // eaten off the stick in three bites, the bones into the fire, a pat on the stomach.
 const Step kDinnerD[] = {
@@ -1852,6 +1865,7 @@ const Step kDinnerD[] = {
     act(actPatStomach, 2.4f),
     still(1.0f),
 };
+#endif
 
 // Food bag, shared: out of the pack, over to the bag branch. Shared end: to
 // the tent door, in, and the lantern comes on.
@@ -2154,7 +2168,11 @@ const Script kScripts[SB_COUNT][4] = {
     {SCRIPT(kSetupA), SCRIPT(kSetupB), SCRIPT(kSetupC)},
     {SCRIPT(kFirewoodA), SCRIPT(kFirewoodB), SCRIPT(kFirewoodC)},
     {SCRIPT(kFireA), SCRIPT(kFireB), SCRIPT(kFireC)},
+#if SS_FISH_DINNER
     {SCRIPT(kDinnerA), SCRIPT(kDinnerB), SCRIPT(kDinnerC), SCRIPT(kDinnerD)},
+#else
+    {SCRIPT(kDinnerA), SCRIPT(kDinnerB), SCRIPT(kDinnerC), NO_SCRIPT},   // d went with fishing_good
+#endif
     {SCRIPT(kFoodbagA), SCRIPT(kFoodbagB), SCRIPT(kFoodbagC)},
     {SCRIPT(kBearA), SCRIPT(kBearB), SCRIPT(kBearC)},
     {SCRIPT(kCloseA), SCRIPT(kCloseB), SCRIPT(kCloseC)},
@@ -2182,7 +2200,7 @@ const uint8_t kDurations[SB_COUNT][4] = {
     {34, 50, 37, 0},    // close (the theft; the last 2.5 s fade to black)
 };
 
-// Bear c fetching the firewood stick from beside the fire walks much further.
+// Bear c fetching a stick from beside the fire walks much further (the Christmas season's branch).
 constexpr uint8_t kBearStickFarS = 17;
 // Setup with the mouse hole to patch (memory): a walk back and a crouch.
 constexpr uint8_t kPatchS = 7;
@@ -2191,8 +2209,8 @@ constexpr uint8_t kPatchS = 7;
 int beatSeconds(const LoopPlan& p, int b) {
   const uint8_t v = spineVariant(p, b);
   int s = kDurations[b][v];
-  if (b == SB_BEAR && v == 2 && p.firewood == 2) s += kBearStickFarS;
   if (b == SB_SETUP && p.patch) s += kPatchS;
+  if (b == SB_BEAR && v == 2 && (p.xmas & XMAS_PLAN_ON)) s += kBearStickFarS;   // the branch lies by the fire (layFallenBranch)
   return s;
 }
 
@@ -2425,7 +2443,8 @@ void beatBegin(SceneCtx& ctx) {
   World& w = *ctx.w;
   // Right after the build-up: a bear that will want a stick and a firewood
   // trip that brings none back get a fallen branch by the bag pine.
-  if (B == SB_ARRIVAL && w.plan.bear == 2 && w.plan.firewood != 2) layFallenBranch(w);
+  // (Mike, 2026-11-26: the firewood beat is gone, so no stick comes back with the wood any more.)
+  if (B == SB_ARRIVAL && w.plan.bear == 2) layFallenBranch(w);
   // Memory: last loop's cairn is still there, one stone shorter.
   if (B == SB_ARRIVAL && w.cairn.n == 0) {
     w.cairn.n = w.plan.cairn_start;
@@ -2530,6 +2549,24 @@ const EndFn kEnd[SB_COUNT] = {beatEnd, beatEnd, beatEnd, beatEnd, beatEndOwned<S
 const BeginFn kFillerBegin[FILL_COUNT] = {fillerBegin<0>, fillerBegin<1>, fillerBegin<2>, fillerBegin<3>,
                                           fillerBegin<4>, fillerBegin<5>, birdsFillerBegin};
 static_assert(SB_COUNT == 8 && FILL_COUNT == 7, "extend kBegin, kUpdate and kFillerBegin");
+
+// The evening's build beat: the build-up, and the small wood pile by the pit popping in with the plants
+// (Mike, 2026-11-26: the firewood beat is gone, so the pile the fire beat lights from is there from the
+// start, as the morning's is).
+void eveningBuildUpdate(SceneCtx& ctx, float t, float dt) {
+  kBuildBeat.update(ctx, t, dt);
+  World& w = *ctx.w;
+  Item& pile = w.items[ITEM_WOOD];
+  pile.down = true;
+  pile.size = maxf(0.f, buildPlantScale(w.build, pile.pos.x, pile.pos.y));
+}
+void eveningBuildEnd(SceneCtx& ctx) {
+  kBuildBeat.end(ctx);
+  Item& pile = ctx.w->items[ITEM_WOOD];
+  pile.down = true;
+  pile.size = 1.f;
+}
+const Beat kEveningBuild = {"build", SS_BUILD_SECONDS, nullptr, eveningBuildUpdate, eveningBuildEnd};
 
 // Picks the far-bank rock nearest the crossing for arrival c; false if none fits.
 bool pickRock(const World& w, Vec2& sit) {
@@ -2637,7 +2674,11 @@ namespace {
 // Whole seconds of everything but the pauses.
 int busySeconds(const LoopPlan& p) {
   int s = (int)(SS_BUILD_SECONDS + 0.5f);
-  for (int b = 0; b < SB_COUNT; ++b) s += beatSeconds(p, b);
+  for (int b = 0; b < SB_COUNT; ++b)
+    if (b != SB_FIREWOOD) s += beatSeconds(p, b);   // (the firewood beat is gone: eveningPlan)
+#if SS_XMAS
+  s += xmasEveningSeconds(p);   // the Christmas beat after setup (0 outside the season)
+#endif
   for (int i = 0; i < p.n_fillers; ++i) s += spineFillerSeconds(p, p.filler[i]);
   for (int i = 0; i < p.n_majors; ++i)
     s += majorSeconds(p.major[i], p.major_var[i]) + p.major_pre_s[i] + p.major_post_s[i];
@@ -2649,7 +2690,8 @@ int pauseSeconds(const LoopPlan& p) { return spinePauseSeconds(p, SB_COUNT - 1);
 // The pause slots in use, in timeline order, as pointers into the plan.
 int pauseSlots(LoopPlan& p, int beat_pauses, uint8_t* slot[SB_COUNT + SPINE_FILLER_MAX]) {
   int n = 0;
-  for (int b = 0; b < beat_pauses; ++b) slot[n++] = &p.pause_s[b];
+  for (int b = 0; b < beat_pauses; ++b)
+    if (!(p.family == SF_EVENING && b == SB_FIREWOOD)) slot[n++] = &p.pause_s[b];   // (gone with its beat)
   for (int i = 0; i < p.n_fillers; ++i) slot[n++] = &p.filler_pause_s[i];
   return n;
 }
@@ -2686,6 +2728,10 @@ void eveningPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
   for (uint8_t& s : p.pause_s) s = (uint8_t)rng.rangeInt(kPauseMin, kPauseMax);
   p.pause_s[SB_CLOSE] = 0;   // the loop ends with the close
   p.away_s = (uint8_t)rng.rangeInt(6, 10);
+  // Mike, 2026-11-26: the firewood beat (gathering more wood) is gone; a small pile lies by the pit from
+  // the start (spineLayout). Its variant and its away time are still drawn, so the draws stay as they
+  // were, but it never plays: no beat, no pause after it (the plan line still prints firewood=N).
+  p.pause_s[SB_FIREWOOD] = 0;
 
   // Fillers: 2 to 4 drawn, weighted, no repeats (the length policy below may
   // drop some). The sunset mug is likelier from golden hour on (mood 3.5 and up).
@@ -2717,13 +2763,7 @@ void eveningPlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
 
   static const MajorSlots kEveningSlots = {SF_EVENING, {SB_SETUP, SB_FIRE, SB_DINNER, SB_FOODBAG}, 1 | 2 | 4 | 8};
   majorsPlan(p, rng, in, mem, kEveningSlots);
-  // fishing_good leaves a fish roasting over the fire: dinner is the fish.
-  auto hasMajor = [&p](int id) {
-    for (int i = 0; i < p.n_majors; ++i)
-      if (p.major[i] == id) return true;
-    return false;
-  };
-  if (hasMajor(MJ_FISHING_GOOD)) p.dinner = SPINE_DINNER_FISH;
+  // (fishing_good, which made dinner the fish, is gone: Mike, 2026-11-26.)
 
   spineFitLength(p, mem, kEveningFit);
 }
@@ -2766,8 +2806,8 @@ void spineFitLength(LoopPlan& p, Memory& mem, const FitSpec& f) {
     // one of the last loops played (memory) and another choice does not.
     uint32_t all = 0;
     for (int i = 0; i < p.n_majors; ++i) all = (uint32_t)(all | (1u << p.major[i]));
-    // fishing_good stays (dinner is planned round it), and so does a fetch the house asked for (a dog is out).
-    auto kept = [&p](int i) { return p.major[i] == MJ_FISHING_GOOD || majorKept(p.major[i], p.major_var[i]); };
+    // A fetch the house asked for (a dog is out) stays, and the stage 22 pieces majorKept names.
+    auto kept = [&p](int i) { return majorKept(p.major[i], p.major_var[i]); };
     int drop = p.n_majors - 1;
     while (drop > 0 && kept(drop)) --drop;
     if (kept(drop)) break;   // every major left is kept (REVIEW_FIXES F26: a forced fetch and the mushroom)
@@ -2806,6 +2846,14 @@ void spineFitLength(LoopPlan& p, Memory& mem, const FitSpec& f) {
 
 void spinePlan(LoopPlan& p, Rng& rng, const Inputs& in, Memory& mem) {
   p.herd = 0;   // the deer visit is the midday's (middayPlan); every other family plans none
+  // The Christmas season (xmas.h): from the date alone, no rng; 0 outside it, so every plan is what it was.
+  p.xmas = 0;
+#if SS_XMAS
+  {
+    const uint8_t f = p.family == SF_MORNING || p.family == SF_MIDDAY || spineSetPiece(p.family) ? p.family : (uint8_t)SF_EVENING;
+    p.xmas = xmasPlanByte(in, mem, f);
+  }
+#endif
   // Tai chi's "done this morning" (Memory::taichi_next bit 2) lasts until the first evening or midday loop
   // (INTEGRATION_PLAN 3.1 point 7), and only while tai chi plans (stage22_switch.h).
   const bool camp_not_morning = p.family != SF_MORNING && p.family != SF_LOOKOUT && p.family != SF_SUNRISE;
@@ -2930,6 +2978,9 @@ void spineCritterScenes(World& w) {
   deerTick(w);
   chipTick(w);
   thiefTick(w);
+#if SS_XMAS
+  xmasStoryTick(w);   // the morning's and midday's tree follows the tent
+#endif
   if (w.plan.family == SF_MORNING) morningTick(w);
   if (w.plan.family == SF_MIDDAY) middayTick(w);
   // The bag's damped swing once something hit it (about 1 swing a second,
@@ -2955,9 +3006,14 @@ void spineBuildTimeline(Timeline& tl, const LoopPlan& p) {
   if (p.family == SF_MIDDAY) return middayBuildTimeline(tl, p);
   if (p.family == SF_LOOKOUT) return lookoutBuildTimeline(tl, p);
   if (p.family == SF_SUNRISE) return sunriseBuildTimeline(tl, p);
-  tl.add(kBuildBeat);
+  tl.add(kEveningBuild);
   for (int b = 0; b < SB_COUNT; ++b) {
+    if (b == SB_FIREWOOD) continue;   // gone (Mike, 2026-11-26): no beat, no pause; nothing is planned after it
     tl.add(Beat{kBeatNames[b], (float)beatSeconds(p, b), kBegin[b], kUpdate[b], kEnd[b]});
+#if SS_XMAS
+    // The Christmas season: the tent is up, the tree is decorated (decorate) or lit (lights_on).
+    if (b == SB_SETUP && (p.xmas & XMAS_PLAN_ON)) tl.add(xmasEveningBeat(p));
+#endif
     if (b == SB_CLOSE) break;   // the loop ends here
     tl.add(Beat{"pause", (float)p.pause_s[b], nullptr, nullptr, nullptr});
     for (int i = 0; i < p.n_fillers; ++i) {
@@ -2985,12 +3041,29 @@ uint32_t spineLoopTicks(const LoopPlan& p) {
   return build + (uint32_t)rest * SS_TICK_HZ;
 }
 
+namespace {
+int eveningFormatPlan(const LoopPlan& p, char* buf, size_t n);
+}  // namespace
+
 int spineFormatPlan(const LoopPlan& p, char* buf, size_t n) {
   if (!buf || n == 0) return 0;
-  if (p.family == SF_MORNING) return morningFormatPlan(p, buf, n);
-  if (p.family == SF_MIDDAY) return middayFormatPlan(p, buf, n);
-  if (p.family == SF_LOOKOUT) return lookoutFormatPlan(p, buf, n);
-  if (p.family == SF_SUNRISE) return sunriseFormatPlan(p, buf, n);
+  int k;
+  if (p.family == SF_MORNING) k = morningFormatPlan(p, buf, n);
+  else if (p.family == SF_MIDDAY) k = middayFormatPlan(p, buf, n);
+  else if (p.family == SF_LOOKOUT) return lookoutFormatPlan(p, buf, n);
+  else if (p.family == SF_SUNRISE) return sunriseFormatPlan(p, buf, n);
+  else k = eveningFormatPlan(p, buf, n);
+  // The Christmas season (only then, so a line outside it is what it was): " xmas=DAY", ",deck" when it decorates.
+  if ((p.xmas & XMAS_PLAN_ON) && k >= 0 && (size_t)k < n) {
+    const int m = snprintf(buf + k, n - (size_t)k, " xmas=%d%s", (int)(p.xmas & XMAS_PLAN_DAY),
+                           (p.xmas & XMAS_PLAN_DECK) ? ",deck" : "");
+    if (m > 0) k += m;
+  }
+  return k;
+}
+
+namespace {
+int eveningFormatPlan(const LoopPlan& p, char* buf, size_t n) {
   int k = snprintf(buf, n, "family=evening arrival=%d setup=%d firewood=%d fire=%d dinner=%d foodbag=%d bear=%d close=%d fillers=",
                    p.arrival, p.setup, p.firewood, p.fire, p.dinner, p.foodbag, p.bear, p.close);
   if (k < 0 || (size_t)k >= n) return k;
@@ -3012,5 +3085,6 @@ int spineFormatPlan(const LoopPlan& p, char* buf, size_t n) {
   }
   return k;
 }
+}  // namespace
 
 }  // namespace ss

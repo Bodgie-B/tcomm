@@ -58,6 +58,9 @@ struct Inputs {
   // leaves follow it (scene/stream.h: green and few in spring and summer, many and coloured in
   // autumn, a few brown ones in winter); 0 keeps the year-round mix.
   uint8_t month;
+  // The day of the month where the panel is, 1-31 from its clock in local time; 0 when the clock isn't valid.
+  // With `month` it gives the Christmas season (Nov 26 to Jan 1, scene/xmas.h): zeroed, no Christmas.
+  uint8_t mday;
   // What one screensaver run hands the next (stage 22; Mike, 2026-11-18): appStart copies it into the
   // new loop memory, the host keeps appCarry's word between runs. Low byte: the mushroom patch
   // (mush_patch.h). High byte: tai chi's next chapter and "done this morning" (scene/memory.h

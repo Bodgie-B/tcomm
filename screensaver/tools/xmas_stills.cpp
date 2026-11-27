@@ -1,3 +1,6 @@
+// STALE since 2026-11-26: the stage 18 mockup stills, from before the season was scheduled (xmas.h). The mock
+// lost look, north (now SS_XMAS_MOCKS only), XE_PRESENTS (now XmasMock::gifts) and XE_SLEIGH (the sleigh is gone):
+// it does not compile as it is. The season's own pictures come from ss_preview --date MM-DD.
 // Stills for Mike's stage 18 review: the Christmas set as MOCKUPS (scene/xmas.h), to pick from. Nothing
 // here is scheduled; each still runs the scene to a calm moment, then poses the mock state, the hiker
 // and the light by hand.

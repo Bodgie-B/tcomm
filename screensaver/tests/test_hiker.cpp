@@ -408,7 +408,8 @@ static void sheetCarry(const char* path) {
   // Row 1: POSE_CARRY with each item. Row 2: the item in the pose it is for.
   // Row 3: the same as row 1 at 60 px.
   static const PoseId kUse[CARRY_COUNT] = {POSE_STAND, POSE_CARRY, POSE_HOLD_MUG, POSE_READ,
-                                           POSE_STAND, POSE_CARRY, POSE_CROUCH, POSE_HOLD_MUG, POSE_FISH_STAND};
+                                           POSE_STAND, POSE_CARRY, POSE_CROUCH, POSE_HOLD_MUG, POSE_FISH_STAND,
+                                           POSE_CARRY};   // CARRY_XMAS draws nothing of the rig's
   const Palette& pal = moodKey(MOOD_GOLDEN);
   const int cw = 100, ch = 130;
   Frame f(cw * CARRY_COUNT, ch * 2 + 95, pal[GROUND]);

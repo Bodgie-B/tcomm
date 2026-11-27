@@ -1530,6 +1530,9 @@ constexpr uint8_t kPauseMin = 8, kPauseMax = 20;
 int busySeconds(const LoopPlan& p) {
   int s = (int)(SS_BUILD_SECONDS + 0.5f);
   for (int b = 0; b < MB_COUNT; ++b) s += beatSeconds(p, b);
+#if SS_XMAS
+  if ((p.xmas & XMAS_PLAN_ON) && !p.stay) s += xmasMorningSeconds();   // the lights off before break camp
+#endif
   for (int i = 0; i < p.n_fillers; ++i) s += spineFillerSeconds(p, p.filler[i]);
   for (int i = 0; i < p.n_majors; ++i)
     s += majorSeconds(p.major[i], p.major_var[i]) + p.major_pre_s[i] + p.major_post_s[i];
@@ -1717,6 +1720,10 @@ void morningBuildTimeline(Timeline& tl, const LoopPlan& p) {
   if (p.stay) return stayBuildTimeline(tl, p);
   tl.add(kMorningBuild);
   for (int b = 0; b < MB_COUNT; ++b) {
+#if SS_XMAS
+    // The Christmas season: the generator off and the wheel out before the tent (and the tree) come down.
+    if (b == MB_BREAK_CAMP && (p.xmas & XMAS_PLAN_ON)) tl.add(xmasMorningBeat());
+#endif
     tl.add(Beat{kBeatNames[b], (float)beatSeconds(p, b), kBegin[b], b == MB_LEAVE ? leaveUpdate : beatUpdate, beatEnd});
     if (b == MB_LEAVE) break;   // the loop ends here
     tl.add(Beat{"pause", (float)p.pause_s[b], nullptr, nullptr, nullptr});

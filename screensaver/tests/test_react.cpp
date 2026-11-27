@@ -548,7 +548,9 @@ static void testOutOfFrame() {
         r.start(seed, in);
         int t = 0;
         bool found = false;
-        for (; t < 9000; ++t) {
+        // (16,000 ticks: since the firewood beat went, 2026-11-26, the evening's first time out of frame is
+        // the tent after the food bag, not the wood trip.)
+        for (; t < 16000; ++t) {
           appTick(r.app);
           Rect rc;
           if (t > 400 && appBuildPhase(r.app) == 6 && !appHikerRect(r.app, &rc) && appFade(r.app) < 0.5f) {

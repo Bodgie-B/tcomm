@@ -122,6 +122,9 @@ struct LoopPlan {
   // Midday: the deer visit while he is away (day_herd.h): 0 none; otherwise the herd's variant and size
   // as step C4 packs them (the plan token " herd=N", printed only when not 0). Last, in what was tail padding, so LoopPlan stays 88 bytes (Mike, 2026-11-18).
   uint8_t herd;
+  // The Christmas season (xmas.h xmasPlanByte; Mike, 2026-11-26): 0 outside it; else XMAS_PLAN_ON, the
+  // season's day and, in an evening, XMAS_PLAN_DECK. The last byte of what was tail padding: still 88.
+  uint8_t xmas;
 };
 
 // Variants a beat draws from at random, and a plan's pick. (Dinner also has

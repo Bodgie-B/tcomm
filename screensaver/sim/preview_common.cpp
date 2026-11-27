@@ -48,6 +48,7 @@ Inputs previewInputsFromOptions(const PreviewOptions& o) {
   in.sunrise_window = o.sunrise;
   in.visitors = o.visitors;
   in.month = (uint8_t)(o.month >= 1 && o.month <= 12 ? o.month : 0);
+  in.mday = (uint8_t)(o.mday >= 1 && o.mday <= 31 ? o.mday : 0);
   in.spine_force = (uint8_t)o.spine;
   for (int i = 0; i < 3; i++) in.req[i] = o.req[i];
   in.carry = o.carry;
@@ -278,6 +279,8 @@ void previewUsage(const char* prog, FILE* to) {
           "  --sunrise           inside the sunrise window (the sunrise overlook)\n"
           "  --visitors          the visiting couple may drop by (about one camp loop in seven)\n"
          "  --month N           the month, 1-12, for the stream's leaves (default 0: unknown)\n"
+          "  --date MM-DD        today's date (the month too): Nov 26 to Jan 1 is the Christmas season\n"
+          "                      (default none: outside it, as before)\n"
           "  --carry N           the word the last run handed on (Inputs::carry, 0..65535): low byte the\n"
           "                      mushroom patch, high byte tai chi's chapter (default 0: nothing)\n"
           "  --mush N            the mushroom patch byte alone (the low byte of --carry, 0..255)\n"
@@ -382,6 +385,12 @@ void previewParseArgs(int argc, char** argv, PreviewOptions& o) {
     } else if (!strcmp(a, "--month")) {
       need(1);
       o.month = atoi(argv[++i]);
+    } else if (!strcmp(a, "--date")) {
+      need(1);
+      int mo = 0, d = 0;
+      if (sscanf(argv[++i], "%d-%d", &mo, &d) != 2 || mo < 1 || mo > 12 || d < 1 || d > 31) bad(prog, "bad MM-DD for", a);
+      o.month = mo;
+      o.mday = d;
     } else if (!strcmp(a, "--carry")) {
       need(1);
       const long long v = parseInt(prog, a, argv[++i]);

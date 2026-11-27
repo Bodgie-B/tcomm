@@ -8,6 +8,7 @@
 
 #include <house_weather.h>
 #include <mush_patch.h>
+#include <scene/xmas.h>
 #include <set_piece_day.h>
 #include <ss_app.h>
 
@@ -130,6 +131,13 @@ float g_mood = 3.f;
 // scene's old parked sun and moon) with no clock, or while a phase is forced for testing.
 ss::SkyInputs g_sky = {};
 uint8_t g_month = 0;                // the local month 1-12 for the scene's leaves (Inputs::month); 0 with no clock
+uint8_t g_mday = 0;                 // the local day of the month 1-31 (Inputs::mday): the Christmas season; 0 with no clock
+// The Christmas evening's two decorating windows (scene/xmas.h XMAS_DECK_*: carry bits 12 and 13) start over
+// each day at local noon, so the next evening decorates twice again (Mike, 2026-11-26). The day they last
+// started over: days since 1970 counted from local noon; -1 with no clock.
+int32_t g_deck_day = -1;
+int32_t g_noon_day = -1;
+constexpr uint16_t kDeckBits = (uint16_t)((ss::XMAS_DECK_EARLY | ss::XMAS_DECK_LATE) << 8);
 // Stage 22's carry word (ss_app.h Inputs::carry; Mike, 2026-11-19): what one run hands the next, so the
 // mushrooms ripen across runs and tai chi keeps its chapter and plays once a morning. Low byte the
 // mushroom patch (mush_patch.h), high byte tai chi (scene/memory.h taichi_next). RAM only: a restart
@@ -357,6 +365,7 @@ ss::Inputs buildInputs(const tc::View &v) {
   in.mood = g_mood_override >= 0.f ? g_mood_override : g_mood;
   if (g_mood_override < 0.f) in.sky = g_sky;
   in.month = g_month;
+  in.mday = g_mday;
   in.carry = g_carry;
   ss::OutsideReading r;
   r.valid = v.outside.valid;
@@ -755,10 +764,17 @@ void serviceCarry(uint32_t now) {
   if (g_app) {
     storeCarry(ss::appCarry(g_app), now);
     g_mush_at = now;
+    // A noon passed during the run is the run's own: a midday or morning loop in it clears the
+    // decorating bits, and any set after that are this evening's, so the end of the run keeps them.
+    if (g_noon_day >= 0) g_deck_day = g_noon_day;
     return;
   }
   uint16_t c = g_carry;
   if ((c & kTaichiDoneBit) && now - g_taichi_at >= kTaichiDoneMs) c = (uint16_t)(c & ~kTaichiDoneBit);
+  if (g_noon_day >= 0 && g_noon_day != g_deck_day) {   // past local noon: this evening may decorate twice again
+    c = (uint16_t)(c & ~kDeckBits);
+    g_deck_day = g_noon_day;
+  }
   const uint32_t since = now - g_mush_at;
   if (since >= 60000u) {
     // The real reading only: a weather set by hand (ss weather) is for testing and grows nothing.
@@ -879,6 +895,8 @@ void screensaver_service(const tc::View &v, const tc::Settings &s, const tc::Wal
     g_mood = phaseMood(v, s, w, utc_offset);
     g_sky = realSky(v, s, w, utc_offset);   // the sun moves about a pixel a minute: this often is plenty
     g_month = w.valid ? (uint8_t)tc::civil_from_seconds((int64_t)w.utc + utc_offset).month : 0;
+    g_mday = w.valid ? (uint8_t)tc::civil_from_seconds((int64_t)w.utc + utc_offset).day : 0;
+    g_noon_day = w.valid ? (int32_t)(((int64_t)w.utc + utc_offset - 43200) / 86400) : -1;
     g_mood_at = now;
     g_mood_known = true;
   }

@@ -37,7 +37,7 @@ AT_OS = {
         'sunrise', 'sunrise_land', 'fetch', 'lookout_land', 'mailbird', 'day_plink', 'trip',
         'day_taichi', 'patch', 'day_herd', 'skytrip', 'day_boomerang', 'memory', 'day_kite',
         'director', 'buildup', 'day_bike', 'day_slackline', 'day_archery', 'day_ropes',
-        'stage22_switch')
+        'stage22_switch', 'xmas_story')
 }
 
 

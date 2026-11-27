@@ -1,11 +1,19 @@
-// The Christmas set's mockup drawings. See xmas.h. Everything here is PROPOSED and unverified on the panel.
+// The Christmas set's drawings. See xmas.h. Unverified on the panel.
 #include "xmas.h"
 
 namespace ss {
 int ssXmasSwitch() { return SS_XMAS; }
+
+int xmasSeasonDay(uint8_t month, uint8_t mday) {
+  if (mday < 1 || mday > 31) return -1;
+  if (month == 11) return mday >= 26 && mday <= 30 ? mday - 26 : -1;
+  if (month == 12) return 4 + mday;
+  if (month == 1) return mday == 1 ? 36 : -1;
+  return -1;
+}
 }  // namespace ss
 
-#if SS_XMAS   // xmas_switch.h: the panel's build compiles none of this
+#if SS_XMAS   // xmas_switch.h
 
 #include <math.h>
 #include <string.h>
@@ -45,12 +53,12 @@ inline bool hits(const Rect& a, const Rect& clip) { return !a.clipped(clip).empt
 
 // ---- constants (the look: tune by eye) ------------------------------------------------------------
 
-// The lights. Warm white, or the classic five colours in turn.
-constexpr uint32_t kWarmCore = 0xFFE4A6, kWarmHalo = 0xFFB259;
+// The lights: the classic five colours in turn (Mike picked multicolour).
 constexpr uint32_t kMulti[5] = {0xF0323C, 0xFFC23A, 0x3CCB5A, 0x4C8CFF, 0xFF7A2A};   // red, gold, green, blue, orange
+constexpr uint32_t kWarmHalo = 0xFFB259;
 constexpr float kBulbR = 1.5f;        // a bulb's core, px
-constexpr float kHaloR0 = 2.0f;       // its halo's radius by day ... (none is drawn by day)
-constexpr float kHaloR1 = 4.2f;       // ... and at full dark
+constexpr float kHaloR0 = 2.0f;       // its halo's radius at the first dark ...
+constexpr float kHaloR1 = 3.4f;       // ... and at full dark
 constexpr float kHaloA = 105.f;       // the halo's opacity at full dark, of 255
 constexpr float kDimLevel = 0.35f;    // XP_DIM: how much light is left while the generator sparks
 constexpr float kGroundGlowA = 15.f;  // the light on the ground under the tree at full dark, each of three rings
@@ -67,11 +75,13 @@ constexpr uint32_t kStarGold = 0xF4C64A;
 constexpr float kStarR = 8.5f, kStarIn = 3.6f;
 // The wheel: rim radius, paddles beyond it, seen a little from downstream (the rim an ellipse).
 constexpr float kWheelR = 17.f, kPaddle = 7.f, kWheelSquash = 0.8f;   // x 601-640 at hub x 620: its bank
-constexpr float kWheelDip = 5.f;   // how far the lowest paddle reaches under the waterline (above the boulder's top)
+constexpr float kWheelDip = 5.f;    // how far the lowest paddle reaches under the waterline (above the boulder's top)
+constexpr float kWheelLift = 12.f;  // raised: the paddles clear the water
 constexpr int kSpokes = 8;      // four crossed sticks
 constexpr int kPaddles = 12;
 constexpr float kDepthX = -5.5f, kDepthY = -1.2f;   // the boards' width, back along the axle toward the bank
 constexpr float kBoxW = 17.f, kBoxH = 11.f;
+constexpr float kAxle = 28.f;   // the box's middle, back along the axle from the hub
 // The birds and the raccoon.
 constexpr float kBirdScale = 1.5f;   // as the mail bird
 constexpr float kCoonScale = 1.4f;   // over the story's raccoon, so the mask and rings read across the room
@@ -159,12 +169,11 @@ Vec2 sagAt(Vec2 a, Vec2 b, float sag, float u) {
 struct LightLook {
   float dark;    // 0 day .. 1 night
   float level;   // 1 on, kDimLevel dimmed, 0 off
-  bool multi;
 };
 
-uint32_t bulbHex(const LightLook& L, int k, int j) { return L.multi ? kMulti[(j + 2 * k) % 5] : kWarmCore; }
+uint32_t bulbHex(int k, int j) { return kMulti[(j + 2 * k) % 5]; }
 
-// Whether wrap k is lit: strung, powered, and not in the dead lower half.
+// Whether wrap k is lit: strung, powered (the wheel turning in the water), not in the dead lower half.
 bool wrapLit(const XmasMock& m, int k) {
   if (m.power == XP_OFF || k >= m.wraps) return false;
   if (m.power == XP_HALF_DEAD) return k < (m.wraps + 1) / 2;
@@ -172,6 +181,8 @@ bool wrapLit(const XmasMock& m, int k) {
 }
 float powerLevel(const XmasMock& m) { return m.power == XP_DIM ? kDimLevel : (m.power == XP_OFF ? 0.f : 1.f); }
 
+// The night rule (palette.h): a lit bulb is small; its core is the only bright thing, its halo soft and
+// held under the cap by the alpha.
 void drawBulb(Surface& sf, Vec2 p, uint32_t hex, bool lit, float level, float dark, const Palette& pal, const Rect& clip,
               float vary = 1.f) {
   const Pixel unlit = mixRGB(critterLitAs(pal, hex, MUSHROOM), pal[ACTOR], 0.45f);
@@ -181,12 +192,11 @@ void drawBulb(Surface& sf, Vec2 p, uint32_t hex, bool lit, float level, float da
   }
   const Pixel bright = hexPx(hex);
   if (dark > 0.f) {
-    const bool warm = hex == kWarmCore;
-    const float r = lerp(kHaloR0, warm ? kHaloR1 : kHaloR1 - 0.8f, dark);
-    softDisc(sf, p, r, r, hexPx(warm ? kWarmHalo : hex), kHaloA * dark * level * vary, clip);
+    const float r = lerp(kHaloR0, kHaloR1, dark);
+    softDisc(sf, p, r, r, bright, kHaloA * dark * level * vary, clip);
   }
-  // By day a lit bulb is a bright bead; in the dark its middle goes pale with the glow.
-  Pixel core = mixRGB(bright, hexPx(0xFFF6DC), 0.35f * dark);
+  // By day a lit bulb is a bright bead; in the dark its middle goes a little paler with the glow.
+  Pixel core = mixRGB(bright, hexPx(0xFFF0D0), 0.2f * dark);
   if (level < 1.f) core = mixRGB(unlit, core, level + 0.2f);
   fillCircle(sf, p, kBulbR, core, clip);
 }
@@ -205,7 +215,7 @@ void drawWrap(const World& w, int k, const LightLook& L, bool lit, Surface& sf, 
   const int n = bulbCount(ls, k);
   for (int j = 0; j < n; ++j) {
     const float vary = 0.75f + 0.25f * frac(0.618f * fl(j + 7 * k) + 0.3f);   // no two quite alike
-    drawBulb(sf, cordAt(ls, k, bulbA(j, n)), bulbHex(L, k, j), lit, L.level, L.dark, pal, clip, vary);
+    drawBulb(sf, cordAt(ls, k, bulbA(j, n)), bulbHex(k, j), lit, L.level, L.dark, pal, clip, vary);
   }
 }
 
@@ -263,7 +273,8 @@ void drawBall(Surface& sf, Vec2 c, bool gold, float lit, const Palette& pal, con
   fillCircle(sf, c, kOrnR, col, clip);
   fillCircle(sf, V(c.x + 0.9f, c.y + 1.1f), kOrnR * 0.55f, mixRGB(col, pal[ACTOR], 0.25f), clip);   // shade low right
   fillCircle(sf, V(c.x - 0.6f, c.y - 0.4f), kOrnR * 0.62f, col, clip);
-  const Pixel shine = lit > 0.f ? mixRGB(pal[CLOUD_LIT], hexPx(0xFFF0C8), lit) : mixRGB(pal[CLOUD_LIT], pal[STAR], 0.5f);
+  // (The night rule, palette.h: a glint no brighter than the bulbs, which stay under 0.82.)
+  const Pixel shine = lit > 0.f ? mixRGB(pal[CLOUD_LIT], hexPx(0xE8C890), lit) : mixRGB(pal[CLOUD_LIT], pal[STAR], 0.5f);
   fillCircle(sf, V(c.x - 1.2f, c.y - 1.3f), 0.9f, shine, clip);
   // The cap.
   fillRectF(sf, c.x - 1.1f, c.y - kOrnR - 1.2f, c.x + 1.1f, c.y - kOrnR + 0.4f, mixRGB(pal[ROCK], pal[CLOUD_LIT], 0.4f), clip);
@@ -285,44 +296,61 @@ void starPts(Vec2 c, float R, float r, Vec2* p) {
 void drawStar(Surface& sf, const Landscape& ls, float lit, const Palette& pal, const Rect& clip) {
   const Vec2 c = starAt(ls);
   if (lit > 0.f) {
-    softDisc(sf, c, 12.f, 12.f, hexPx(kWarmHalo), 20.f * lit, clip);
-    softDisc(sf, c, 8.5f, 8.5f, hexPx(kWarmHalo), 30.f * lit, clip);
-    softDisc(sf, c, 5.5f, 5.5f, hexPx(kWarmHalo), 45.f * lit, clip);
+    softDisc(sf, c, 12.f, 12.f, hexPx(kWarmHalo), 18.f * lit, clip);
+    softDisc(sf, c, 7.5f, 7.5f, hexPx(kWarmHalo), 26.f * lit, clip);
   }
   Vec2 p[10];
   starPts(c, kStarR + 0.9f, kStarIn + 0.6f, p);
   const Pixel gold = critterLitAs(pal, kStarGold, MUSHROOM);
   fillPolygon(sf, p, 10, mixRGB(gold, pal[ACTOR], 0.45f), clip);   // a darker rim, so it reads on the sky by day
   starPts(c, kStarR, kStarIn, p);
-  fillPolygon(sf, p, 10, lit > 0.f ? mixRGB(gold, hexPx(0xFFF0B8), lit) : gold, clip);
+  fillPolygon(sf, p, 10, lit > 0.f ? mixRGB(gold, hexPx(0xF0C860), 0.6f * lit) : gold, clip);
 }
 
 // ---- the ladder, the coil ---------------------------------------------------------------------------
 
-// The two rails, foot to top: leaning on the tree's right side.
-void ladderRails(const Landscape& ls, Vec2 rail[2][2]) {
+// The two rails, foot to top. Leaning on the tree's left side, under the bag branch, clear of the wheel
+// (k 1), or lying in the grass in front of the trunk's foot, top toward the right (k 0): each rail swings up
+// about its foot. Rail 0 is the near one.
+void ladderRails(const Landscape& ls, float k, Vec2 rail[2][2]) {
   const float cx = treeX(ls), base = treeBase(ls);
-  rail[0][0] = V(cx + 34.f, base + 7.f);
-  rail[0][1] = V(cx + 12.f, base - 88.f);
-  rail[1][0] = V(cx + 43.f, base + 6.f);
-  rail[1][1] = V(cx + 20.f, base - 88.f);
+  static const float kLean[2][4] = {{-34.f, 7.f, -12.f, -88.f}, {-43.f, 6.f, -20.f, -88.f}};
+  constexpr float kLieLen = 56.f;   // lying, seen end-on a little: foreshortened
+  for (int s = 0; s < 2; ++s) {
+    const Vec2 foot = V(cx + kLean[s][0], base + kLean[s][1] - (1.f - k) * (s == 0 ? -1.f : 3.f));
+    const float lx = kLean[s][2] - kLean[s][0], ly = kLean[s][3] - kLean[s][1];
+    const float L1 = sqrtf(lx * lx + ly * ly), a1 = atan2f(ly, lx);
+    const float e = easeInOut(k);
+    const float L = lerp(kLieLen, L1, e), a = lerp(0.f, a1, e);
+    rail[s][0] = foot;
+    rail[s][1] = V(foot.x + L * cosf(a), foot.y + L * sinf(a));
+  }
 }
 constexpr int kRungs = 7;
 inline float rungU(int k) { return 0.1f + 0.125f * fl(k); }
 Vec2 rungEnd(const Vec2 rail[2][2], int side, int k) { return mixV(rail[side][0], rail[side][1], rungU(k)); }
 Pixel ladderWood(const Palette& pal) { return mixRGB(pal[TRUNK], pal[ROCK], 0.45f); }
-void drawLadder(Surface& sf, const Landscape& ls, const Palette& pal, const Rect& clip) {
+float ladderK(const XmasMock& m) { return fl(m.ladder) / 255.f; }
+void drawLadder(Surface& sf, const Landscape& ls, float k, const Palette& pal, const Rect& clip) {
   Vec2 r[2][2];
-  ladderRails(ls, r);
+  ladderRails(ls, k, r);
   const Pixel wood = ladderWood(pal), lash = mixRGB(pal[ACTOR], pal[TRUNK], 0.3f);
   // The far rail first, then the rungs, then the near rail over their ends; the poles poke past the top rung.
   strokeCapsule(sf, r[1][0], r[1][1], 2.2f, mixRGB(wood, pal[ACTOR], 0.25f), clip);
-  for (int k = 0; k < kRungs; ++k) strokeCapsule(sf, rungEnd(r, 0, k), rungEnd(r, 1, k), 1.8f, wood, clip);
+  for (int i = 0; i < kRungs; ++i) strokeCapsule(sf, rungEnd(r, 0, i), rungEnd(r, 1, i), 1.8f, wood, clip);
   strokeCapsule(sf, r[0][0], r[0][1], 2.4f, wood, clip);
-  for (int k = 0; k < kRungs; ++k)
-    for (int side = 0; side < 2; ++side) fillCircle(sf, rungEnd(r, side, k), 1.1f, lash, clip);
+  for (int i = 0; i < kRungs; ++i)
+    for (int side = 0; side < 2; ++side) fillCircle(sf, rungEnd(r, side, i), 1.1f, lash, clip);
 }
-Vec2 coilAt(const Landscape& ls) { return V(treeX(ls) + 56.f, treeBase(ls) + 10.f); }
+Rect ladderBounds(const Landscape& ls, float k) {
+  Vec2 r[2][2];
+  ladderRails(ls, k, r);
+  Rect b = kNone;
+  for (int s = 0; s < 2; ++s)
+    for (int e = 0; e < 2; ++e) unite(b, around(r[s][e], 2.5f, 2.5f));
+  return b;
+}
+Vec2 coilAt(const Landscape& ls) { return V(treeX(ls) - 60.f, treeBase(ls) + 10.f); }
 void drawCoil(const World& w, Surface& sf, const LightLook& L, const Palette& pal, const Rect& clip) {
   const Vec2 c = coilAt(w.land);
   const Pixel cord = mixRGB(pal[ACTOR], pal[FOLIAGE_DARK], 0.35f);
@@ -334,21 +362,20 @@ void drawCoil(const World& w, Surface& sf, const LightLook& L, const Palette& pa
       p[i] = V(c.x + rx * cosT(u) + 0.7f * fl(ring), c.y - 1.2f * fl(ring) + ry * sinT(u));
     }
     polyline(sf, p, 13, 1.0f, cord, clip);
-    for (int i = 0; i < 12; i += 3)
-      drawBulb(sf, p[i + (ring & 1)], bulbHex(L, ring, i), false, 0.f, L.dark, pal, clip);
+    for (int i = 0; i < 12; i += 3) drawBulb(sf, p[i + (ring & 1)], bulbHex(ring, i), false, 0.f, L.dark, pal, clip);
   }
-  // The run up to his far hand.
-  if (!w.hiker.visible) return;
+  // The run up to his far hand (while he strings it).
+  if (!w.hiker.visible || !(w.xmas.m.extras & XE_RUN)) return;
   const Vec2 hand = hikerHandPos(w.hiker, 1);
   Vec2 p[9];
   for (int i = 0; i <= 8; ++i) p[i] = sagAt(V(c.x - 4.f, c.y - 3.f), hand, 6.f, fl(i) / 8.f);
   polyline(sf, p, 9, 0.9f, cord, clip);
-  for (int i = 1; i < 8; i += 2) drawBulb(sf, p[i], bulbHex(L, 3, i), false, 0.f, L.dark, pal, clip);
+  for (int i = 1; i < 8; i += 2) drawBulb(sf, p[i], bulbHex(3, i), false, 0.f, L.dark, pal, clip);
 }
 Rect coilBounds(const World& w) {
   const Vec2 c = coilAt(w.land);
   Rect r = box(c.x - 9.f, c.y - 6.f, c.x + 11.f, c.y + 4.f, 2.f);
-  if (w.hiker.visible) {
+  if (w.hiker.visible && (w.xmas.m.extras & XE_RUN)) {
     const Vec2 hand = hikerHandPos(w.hiker, 1);
     unite(r, box(minf(hand.x, c.x - 4.f), minf(hand.y, c.y - 3.f), maxf(hand.x, c.x - 4.f), maxf(hand.y, c.y - 3.f) + 7.f, 3.f));
   }
@@ -362,28 +389,49 @@ float bankYAt(const Landscape& ls, float x) {
   if (!landscapeStreamSpan(ls, x, cy, half)) return fl(LS_GROUND_Y) + 40.f;
   return cy - half;
 }
-Vec2 hubOf(const Landscape& ls) {
+Vec2 homeHub(const Landscape& ls) {
   const float x = fl(LS_BOULDER_X) + 8.f;
   return V(x, floorf(bankYAt(ls, x)) + kWheelDip - kWheelR - kPaddle);
 }
-// The box on the bank, up the axle from the wheel: its middle and its base line.
-Vec2 boxOf(const Landscape& ls) {
-  const Vec2 h = hubOf(ls);
-  const float x = h.x - 28.f;
-  return V(x, floorf(bankYAt(ls, x)) - 7.f);
+// Where the generator's hub is drawn: in place (raised by `lift`), or in his arms, the box toward his back.
+struct GenAt {
+  Vec2 hub;
+  Vec2 box;     // the box's middle at its base line
+  bool placed;  // in the stream: the water over its foot, the splash, the post, the wire
+  bool wet;     // lowered into the current
+};
+GenAt genAt(const World& w) {
+  const XmasMock& m = w.xmas.m;
+  GenAt g;
+  if (m.carry) {
+    const Hiker& h = w.hiker;
+    const Vec2 a = hikerHandPos(h, 0), b = hikerHandPos(h, 1);
+    const float f = fl(h.facing);
+    g.hub = V(floorf(0.5f * (a.x + b.x) + f * 14.f + 0.5f), floorf(0.5f * (a.y + b.y) - 2.f + 0.5f));
+    g.box = V(g.hub.x - f * kAxle * 0.75f, g.hub.y + 7.f);
+    g.placed = g.wet = false;
+    return g;
+  }
+  const Landscape& ls = w.land;
+  g.hub = homeHub(ls);
+  g.hub.y -= floorf(kWheelLift * fl(m.lift) / 255.f + 0.5f);
+  const float x = homeHub(ls).x - kAxle;
+  g.box = V(x, floorf(bankYAt(ls, x)) - 7.f);
+  g.placed = true;
+  g.wet = m.lift == 0;
+  return g;
 }
 Vec2 wheelPt(Vec2 hub, float r, float turn) { return V(hub.x + kWheelSquash * r * cosT(turn), hub.y + r * sinT(turn)); }
-Vec2 sparkFrom(const Landscape& ls) {
-  const Vec2 b = boxOf(ls);
-  return V(b.x + 0.5f * kBoxW - 2.f, b.y - kBoxH + 1.f);
-}
+Vec2 sparkFrom(const GenAt& g) { return V(g.box.x + 0.5f * kBoxW - 2.f, g.box.y - kBoxH + 1.f); }
 
-void drawBox(const World& w, Surface& sf, const Rect& clip, const Palette& pal) {
-  const Vec2 b = boxOf(w.land), h = hubOf(w.land);
+void drawBox(const GenAt& g, Surface& sf, const Rect& clip, const Palette& pal) {
+  const Vec2 b = g.box, h = g.hub;
   const float x0 = b.x - 0.5f * kBoxW, x1 = b.x + 0.5f * kBoxW, y1 = b.y, y0 = b.y - kBoxH;
   const Pixel wood = mixRGB(pal[TRUNK], pal[TENT], 0.18f), dark = mixRGB(wood, pal[ACTOR], 0.45f);
-  // The axle from the box's side down to the hub (the wheel draws over its end).
-  strokeCapsule(sf, V(x1 + 1.f, y0 + 4.f), h, 2.6f, mixRGB(pal[TRUNK], pal[ACTOR], 0.35f), clip);
+  const bool right = h.x >= b.x;
+  const float xs = right ? x1 : x0, dir = right ? 1.f : -1.f;
+  // The axle from the box's side to the hub (the wheel draws over its end).
+  strokeCapsule(sf, V(xs + dir, y0 + 4.f), h, 2.6f, mixRGB(pal[TRUNK], pal[ACTOR], 0.35f), clip);
   // A plank box with a lid, a darker side, a round housing where the axle goes in.
   const Vec2 side[4] = {V(x1, y0), V(x1 + 3.f, y0 - 2.5f), V(x1 + 3.f, y1 - 2.5f), V(x1, y1)};
   fillPolygon(sf, side, 4, dark, clip);
@@ -391,15 +439,16 @@ void drawBox(const World& w, Surface& sf, const Rect& clip, const Palette& pal) 
   fillPolygon(sf, lid, 4, mixRGB(wood, pal[CLOUD_LIT], 0.15f), clip);
   fillRectF(sf, x0, y0, x1, y1, wood, clip);
   strokeCapsule(sf, V(x0 + 0.5f, y0 + 0.5f * kBoxH), V(x1 - 0.5f, y0 + 0.5f * kBoxH), 0.7f, dark, clip);   // the planks
-  fillCircle(sf, V(x1 + 1.5f, y0 + 4.f), 2.6f, mixRGB(pal[ROCK], pal[ACTOR], 0.35f), clip);
+  fillCircle(sf, V(xs + 1.5f * dir, y0 + 4.f), 2.6f, mixRGB(pal[ROCK], pal[ACTOR], 0.35f), clip);
   // The wire leaves the far end along the ground (the rest is on the tree's layer).
-  strokeCapsule(sf, V(x0 + 1.f, y1 - 2.f), V(x0 - 3.f, y1 - 1.f), 1.3f, mixRGB(pal[ACTOR], pal[TRUNK], 0.2f), clip);
+  if (g.placed)
+    strokeCapsule(sf, V(x0 + 1.f, y1 - 2.f), V(x0 - 3.f, y1 - 1.f), 1.3f, mixRGB(pal[ACTOR], pal[TRUNK], 0.2f), clip);
 }
 
-void drawWheel(const World& w, Surface& sf, const Rect& clip, const Palette& pal) {
+void drawWheel(const World& w, const GenAt& g, Surface& sf, const Rect& clip, const Palette& pal) {
   const XmasMock& m = w.xmas.m;
   const Landscape& ls = w.land;
-  const Vec2 h = hubOf(ls);
+  const Vec2 h = g.hub;
   const float turn = fl(m.wheel) / 64.f;
   const Pixel wood = mixRGB(pal[TRUNK], pal[ROCK], 0.35f);
   const Pixel board = mixRGB(mixRGB(pal[TRUNK], pal[TENT_LIT], 0.6f), pal[CLOUD_LIT], 0.12f);   // fresh-cut boards
@@ -427,18 +476,19 @@ void drawWheel(const World& w, Surface& sf, const Rect& clip, const Palette& pal
   for (int i = 0; i < kSpokes; ++i) fillCircle(sf, wheelPt(h, kWheelR, turn + 0.5f / fl(kPaddles) + fl(i) / fl(kSpokes)), 1.1f, lash, clip);
   fillCircle(sf, h, 3.0f, mixRGB(pal[TRUNK], pal[ACTOR], 0.3f), clip);
   fillCircle(sf, h, 1.2f, lash, clip);
+  if (!g.placed) return;
   // The forked stick in front that carries the axle's near end, standing in the water.
-  const float wy0 = bankYAt(ls, h.x);
+  const float wy = bankYAt(ls, h.x);
   const Pixel post = mixRGB(pal[TRUNK], pal[ACTOR], 0.15f);
-  strokeCapsule(sf, V(h.x + 1.5f, wy0 + 7.f), V(h.x + 1.f, h.y + 4.5f), 2.4f, post, clip);
+  strokeCapsule(sf, V(h.x + 1.5f, wy + 7.f), V(h.x + 1.f, h.y + 4.5f), 2.4f, post, clip);
   strokeCapsule(sf, V(h.x + 1.f, h.y + 4.5f), V(h.x - 2.2f, h.y + 0.5f), 1.6f, post, clip);
   strokeCapsule(sf, V(h.x + 1.f, h.y + 4.5f), V(h.x + 4.2f, h.y + 0.8f), 1.6f, post, clip);
-  // The water over the part under it, then the splash where the paddles go in (upstream, right) and
-  // come up (downstream, left, throwing drops).
-  const float wy = bankYAt(ls, h.x);
+  // The water over the part under it, then (lowered) the splash where the paddles go in (upstream, right)
+  // and come up (downstream, left, throwing drops).
   const Rect under{(int)floorf(h.x - kWheelR - kPaddle - 2.f), (int)ceilf(wy) + 1, (int)ceilf(h.x + kWheelR + kPaddle + 2.f),
                    (int)ceilf(h.y + kWheelR + kPaddle + 2.f)};
   worldDrawWater(w, sf, clip.clipped(under), pal);
+  if (!g.wet) return;
   const Pixel foam = pal[WATER_LIGHT];
   const float ex = kWheelSquash * (kWheelR + 1.f);
   fillEllipse(sf, V(h.x + ex, wy + 2.6f), 3.2f, 1.2f, foam, clip);
@@ -453,22 +503,22 @@ void drawWheel(const World& w, Surface& sf, const Rect& clip, const Palette& pal
 
 // A spark burst off the box (the blaze sparks' look, ambient.cpp blazeSpark): step 1..8, 0.06 s each.
 constexpr int kSparks = 10;
-bool sparkAt(const Landscape& ls, int step, int i, Vec2& c, float& r, bool& hot) {
+bool sparkAt(const GenAt& g, int step, int i, Vec2& c, float& r, bool& hot) {
   const float t = 0.06f * fl(step);
   const float life = 0.3f + 0.22f * frac(0.71f * fl(i) + 0.13f);
   if (t > life) return false;
   const float ang = -0.18f + 0.36f * frac(0.618f * fl(i) + 0.05f);   // turns from straight up
   const float v = 40.f + 32.f * frac(0.37f * fl(i) + 0.2f);
-  const Vec2 o = sparkFrom(ls);
+  const Vec2 o = sparkFrom(g);
   c = V(o.x + sinT(ang) * v * t, o.y - cosT(ang) * v * t + 0.5f * 110.f * t * t);
   hot = t < 0.55f * life;
   r = hot ? 1.7f : 1.2f;
   return true;
 }
-void drawSparks(const World& w, Surface& sf, const Rect& clip, const Palette& pal) {
+void drawSparks(const World& w, const GenAt& g, Surface& sf, const Rect& clip, const Palette& pal) {
   const int step = w.xmas.m.spark;
-  if (step <= 0) return;
-  const Vec2 o = sparkFrom(w.land);
+  if (step <= 0 || !g.placed) return;
+  const Vec2 o = sparkFrom(g);
   if (step <= 2) {   // the crack: a flash at the box
     softDisc(sf, o, 7.f, 5.f, pal[FIRE], 60.f, clip);
     fillCircle(sf, o, 2.8f - 0.8f * fl(step), pal[FIRE_CORE], clip);
@@ -477,14 +527,15 @@ void drawSparks(const World& w, Surface& sf, const Rect& clip, const Palette& pa
     Vec2 c;
     float r;
     bool hot;
-    if (sparkAt(w.land, step, i, c, r, hot)) fillCircle(sf, c, r, hot ? pal[FIRE_CORE] : pal[FIRE], clip);
+    if (sparkAt(g, step, i, c, r, hot)) fillCircle(sf, c, r, hot ? pal[FIRE_CORE] : pal[FIRE], clip);
   }
 }
 
 // The wire on the ground from the box to the trunk's foot, then up the trunk into the boughs.
-void wirePts(const Landscape& ls, Vec2* p) {
-  const Vec2 b = boxOf(ls);
-  const Vec2 a = V(b.x - 0.5f * kBoxW - 3.f, b.y - 1.f);
+void wirePts(const World& w, Vec2* p) {
+  const Landscape& ls = w.land;
+  const GenAt g = genAt(w);
+  const Vec2 a = V(g.box.x - 0.5f * kBoxW - 3.f, g.box.y - 1.f);
   const Vec2 t = V(treeX(ls) + 4.f, treeBase(ls) + 1.f);
   for (int i = 0; i < 8; ++i) {
     const float u = fl(i) / 7.f;
@@ -493,13 +544,14 @@ void wirePts(const Landscape& ls, Vec2* p) {
   }
   p[8] = V(treeX(ls) + 4.f, 320.f);
 }
+bool wireOn(const XmasMock& m) { return m.gen && !m.carry; }
 void drawWire(const World& w, Surface& sf, const Rect& clip, const Palette& pal) {
   Vec2 p[9];
-  wirePts(w.land, p);
+  wirePts(w, p);
   polyline(sf, p, 9, 1.3f, mixRGB(pal[ACTOR], pal[TRUNK], 0.2f), clip);
 }
 
-// ---- the critters (built on the stack from the mock: nothing of theirs is stored) ----------------
+// ---- the critters (built on the stack from the state: nothing of theirs is stored) ----------------
 
 Critter bird(Vec2 feet, int facing, float wing, float pitch, bool flying) {
   Critter c;
@@ -519,6 +571,9 @@ Vec2 beakOf(const Critter& c, bool flying) {
   const float S = c.scale;
   return V(c.feet.x + fl(c.facing) * S * 9.0f, c.feet.y + S * (flying ? -5.9f : -4.4f));
 }
+// A wingbeat from how far along the flight is (so it is a pure function of the state): about 3 a second
+// over a 4 s flight.
+float wingOf(uint8_t fly, float phase) { return 0.35f + 1.0f * (0.5f + 0.5f * sinT(fl(fly) * (12.f / 255.f) + phase)); }
 
 Critter raccoon(Vec2 feet, int facing, CritterAction a) {
   Critter c;
@@ -529,11 +584,10 @@ Critter raccoon(Vec2 feet, int facing, CritterAction a) {
   return c;
 }
 
+// The raccoon's bush on the camp bank upstream of the boulder, right of the wheel.
 Vec2 bushAt(const Landscape& ls) {
-  const float x = 352.f;
-  float cy = 0.f, half = 0.f;
-  if (!landscapeStreamSpan(ls, x, cy, half)) return V(x, 462.f);
-  return V(x, minf(cy + half + 30.f, 474.f));
+  const float x = 722.f;
+  return V(x, floorf(bankYAt(ls, x)) - 1.f);
 }
 
 // The posed critters and what they hold. `out` gets each critter (up to 2) for drawing or bounds.
@@ -565,8 +619,8 @@ void castOf(const World& w, Cast& k) {
     const Vec2 ctl = V(lerp(a.x, b.x, 0.45f), minf(a.y, b.y) - 24.f);
     const float u = fl(m.fly) / 255.f;
     const Vec2 p0 = bez(a, ctl, b, u), p1 = bez(a, ctl, b, minf(1.f, u + 0.22f));
-    k.c[0] = bird(p1, -1, 1.35f, 0.08f, true);   // the leader, wings up
-    k.c[1] = bird(p0, -1, 0.35f, 0.02f, true);   // wings down
+    k.c[0] = bird(p1, -1, wingOf(m.fly, 0.f), 0.08f, true);    // the leader
+    k.c[1] = bird(p0, -1, wingOf(m.fly, 0.4f), 0.02f, true);
     k.n = 2;
     const Vec2 e0 = beakOf(k.c[1], true), e1 = beakOf(k.c[0], true);
     for (int i = 0; i <= 8; ++i) k.run[0][i] = sagAt(e0, V(e1.x + 4.f, e1.y + 1.f), 16.f, fl(i) / 8.f);
@@ -576,10 +630,17 @@ void castOf(const World& w, Cast& k) {
       k.run[1][i] = V(e0.x + 5.f * t + 2.f * sinT(0.5f * t), e0.y + 15.f * t - 4.f * t * t);
     }
     k.runs = 2;
+  } else if (m.garland == XG_LEAVING) {   // the job done, the pair away up to the right
+    const Vec2 a = V(cx + 34.f, treeTop(ls) + 40.f), b = V(fl(SS_WIDTH) + 40.f, 70.f);
+    const Vec2 ctl = V(lerp(a.x, b.x, 0.4f), a.y - 40.f);
+    const float u = fl(m.fly) / 255.f;
+    k.c[0] = bird(bez(a, ctl, b, minf(1.f, u + 0.12f)), 1, wingOf(m.fly, 0.f), -0.12f, true);
+    k.c[1] = bird(bez(a, ctl, b, u), 1, wingOf(m.fly, 0.5f), -0.08f, true);
+    k.n = 2;
   } else if (m.garland == XG_TANGLED) {   // one wound up in it off the right of the tree, one perched watching
     const TierG t2 = tierOf(ls, 2);
     const Vec2 f = V(cx + t2.hw + 9.f, t2.base + 7.f);
-    k.c[0] = bird(f, -1, 0.5f, 0.55f, true);
+    k.c[0] = bird(f, -1, 0.5f + 0.4f * (0.5f + 0.5f * sinT(fl(m.fly) * (8.f / 255.f))), 0.55f, true);   // struggling
     k.c[0].pose.lift = 0.f;
     k.c[0].pose.head = 0.4f;
     const TierG t0 = tierOf(ls, 0);
@@ -603,7 +664,7 @@ void castOf(const World& w, Cast& k) {
   } else if (m.garland == XG_PART) {   // two tiers done; one bird pulls the free end round to the third
     const TierG t3 = tierOf(ls, 3);
     const Vec2 f = V(cx + t3.hw + 16.f, t3.base - 6.f);
-    k.c[0] = bird(f, -1, 1.2f, 0.12f, true);
+    k.c[0] = bird(f, -1, wingOf(m.fly, 0.f), 0.12f, true);
     k.n = 1;
     const Vec2 a = scallopEnd(ls, 2, 0.94f), e = beakOf(k.c[0], true);
     for (int i = 0; i <= 8; ++i) k.run[0][i] = sagAt(a, e, 6.f, fl(i) / 8.f);
@@ -629,22 +690,32 @@ void castOf(const World& w, Cast& k) {
   } else if (m.coon == XR_PROUD) {   // sitting up by its own bush, admiring it
     const Vec2 b = bushAt(ls);
     k.c[k.n++] = raccoon(V(b.x + 34.f, b.y - 2.f), -1, CA_SIT);
+  } else if (m.coon == XR_HELD && m.coon_slot > 0 && m.coon_slot <= CRITTER_MAX) {   // the story's raccoon
+    const Critter& c = w.critters[m.coon_slot - 1];
+    if (c.visible) {
+      const Vec2 mo = critterMouth(c);
+      k.ball = true;
+      k.ball_at = V(floorf(mo.x - 1.5f * fl(c.facing) + 0.5f), floorf(mo.y + 2.4f + 0.5f));
+      k.ball_gold = kOrn[XMAS_LOW_ORN].gold != 0;
+    }
   }
 }
 
 int16_t castSortY(const World& w) {
   const XmasMock& m = w.xmas.m;
+  if (m.coon == XR_HELD && m.coon_slot > 0 && m.coon_slot <= CRITTER_MAX)
+    return (int16_t)(floorf(w.critters[m.coon_slot - 1].feet.y) + 1);   // in front of the raccoon that holds it
   if (m.coon != XR_NONE) {
     Cast k;
     castOf(w, k);
-    return (int16_t)floorf(k.c[k.n - 1].feet.y);
+    if (k.n > 0) return (int16_t)floorf(k.c[k.n - 1].feet.y);
   }
   return (int16_t)(w.land.camp.base_y + 1);
 }
 
 // ---- the bush -------------------------------------------------------------------------------------
 
-void drawBush(const World& w, Surface& sf, const Rect& clip, const Palette& pal, float lit) {
+void drawBush(const World& w, Surface& sf, const Rect& clip, const Palette& pal) {
   const Vec2 b = bushAt(w.land);
   const Pixel dark = pal[FOLIAGE_DARK], mid = pal[FOLIAGE], hi = mixRGB(pal[FOLIAGE], pal[GRASS], 0.5f);
   fillEllipse(sf, V(b.x, b.y - 11.f), 20.f, 12.f, dark, clip);
@@ -652,17 +723,17 @@ void drawBush(const World& w, Surface& sf, const Rect& clip, const Palette& pal,
   fillEllipse(sf, V(b.x + 8.f, b.y - 18.f), 11.f, 10.f, mid, clip);
   fillEllipse(sf, V(b.x + 1.f, b.y - 23.f), 8.f, 6.f, hi, clip);
   fillEllipse(sf, V(b.x, b.y - 2.f), 19.f, 2.8f, mixRGB(dark, pal[ACTOR], 0.3f), clip);
-  static const float kAt[4][2] = {{-10.f, -12.f}, {6.f, -20.f}, {11.f, -9.f}, {-3.f, -25.f}};
-  const int n = w.xmas.m.bush > 4 ? 4 : w.xmas.m.bush;
-  for (int i = 0; i < n; ++i) drawBall(sf, V(b.x + kAt[i][0], b.y + kAt[i][1]), (i & 1) != 0, lit, pal, clip);
+  static const float kAt[XMAS_BUSH_MAX][2] = {{-10.f, -12.f}, {6.f, -20.f}, {11.f, -9.f}, {-3.f, -25.f}, {-13.f, -20.f}, {1.f, -8.f}};
+  const int n = w.xmas.m.bush - 1 > XMAS_BUSH_MAX ? XMAS_BUSH_MAX : w.xmas.m.bush - 1;   // (1: the bare bush)
+  for (int i = 0; i < n; ++i) drawBall(sf, V(b.x + kAt[i][0], b.y + kAt[i][1]), (i & 1) != 0, 0.f, pal, clip);
 }
 Rect bushBounds(const World& w) {
-  if (w.xmas.m.bush == 0) return kNone;
+  if (w.xmas.m.bush == 0 || !buildDone(w.build)) return kNone;   // pops in with the scenery, not before
   const Vec2 b = bushAt(w.land);
   return box(b.x - 21.f, b.y - 31.f, b.x + 21.f, b.y + 1.f);
 }
 
-// ---- the presents, the stocking, the sleigh ------------------------------------------------------
+// ---- the presents, the stocking ------------------------------------------------------------------
 
 void giftBox(Surface& sf, float x, float y, float wd, float ht, Pixel paper, Pixel ribbon, const Palette& pal, const Rect& clip) {
   const Pixel side = mixRGB(paper, pal[ACTOR], 0.4f), top = mixRGB(paper, pal[CLOUD_LIT], 0.12f);
@@ -688,21 +759,34 @@ void boneGift(Surface& sf, Vec2 c, float len, float th, Pixel paper, Pixel ribbo
   fillEllipse(sf, V(c.x + 2.1f, c.y - 0.5f * th - 1.1f), 2.0f, 1.2f, ribbon, clip);
 }
 Vec2 giftsAt(const Landscape& ls) { return V(treeX(ls), treeBase(ls) + 10.f); }
+// The boxes in the order they arrive (x, y offsets from giftsAt, width, height, paper, ribbon): far ones
+// first, so a later one stands in front.
+struct GiftDef {
+  float dx, dy, w, h;
+  uint8_t paper, ribbon;   // 0 red, 1 green, 2 gold, 3 ribbon gold
+};
+const GiftDef kGifts[6] = {{-26.f, -3.f, 15.f, 11.f, 0, 3}, {14.f, -4.f, 12.f, 13.f, 1, 0}, {-8.f, 1.f, 11.f, 8.f, 2, 0},
+                           {-21.f, 7.f, 10.f, 8.f, 0, 3},   {-37.f, 3.f, 9.f, 7.f, 1, 3},   {3.f, 4.f, 9.f, 6.f, 0, 1}};
 void drawPresents(const World& w, Surface& sf, const Rect& clip, const Palette& pal) {
   const Vec2 g = giftsAt(w.land);
-  const Pixel gold = critterLitAs(pal, kRibbonGold, MUSHROOM);
-  giftBox(sf, g.x - 26.f, g.y - 3.f, 15.f, 11.f, critterLitAs(pal, kPaperRed, MUSHROOM), gold, pal, clip);
-  giftBox(sf, g.x + 14.f, g.y - 4.f, 12.f, 13.f, critterLitAs(pal, kPaperGreen, MUSHROOM), critterLitAs(pal, kPaperRed, MUSHROOM), pal, clip);
-  giftBox(sf, g.x - 8.f, g.y + 1.f, 11.f, 8.f, critterLitAs(pal, kPaperGold, MUSHROOM), critterLitAs(pal, kPaperRed, MUSHROOM), pal, clip);
-  // Lucy's: a big bone in her black with a white ribbon, in front. Copper's: a small one in his golden copper.
+  const uint32_t kHex[4] = {kPaperRed, kPaperGreen, kPaperGold, kRibbonGold};
+  const int n = w.xmas.m.gifts > 6 ? 6 : w.xmas.m.gifts;
+  for (int i = 0; i < n; ++i) {
+    const GiftDef& d = kGifts[i];
+    giftBox(sf, g.x + d.dx, g.y + d.dy, d.w, d.h, critterLitAs(pal, kHex[d.paper], MUSHROOM),
+            critterLitAs(pal, kHex[d.ribbon], MUSHROOM), pal, clip);
+  }
+  if (w.xmas.m.gifts < XMAS_GIFTS_ALL) return;
+  // Christmas: Lucy's big bone in her black with a white ribbon, in front; Copper's small one in his golden copper.
   const Pixel lucy = mixRGB(pal[ACTOR], pal[TRUNK], 0.3f), white = mixRGB(pal[WATER_LIGHT], pal[TENT_LIT], 0.15f);
-  boneGift(sf, V(g.x + 4.f, g.y + 9.f), 21.f, 5.4f, lucy, white, clip);
+  boneGift(sf, V(g.x + 4.f, g.y + 11.f), 21.f, 5.4f, lucy, white, clip);
   const Pixel copper = mixRGB(mixRGB(pal[TENT], pal[TENT_LIT], 0.34f), pal[TRUNK], 0.25f);
-  boneGift(sf, V(g.x - 42.f, g.y + 6.f), 13.f, 3.8f, copper, critterLitAs(pal, kPaperRed, MUSHROOM), clip);
+  boneGift(sf, V(g.x - 44.f, g.y + 9.f), 13.f, 3.8f, copper, critterLitAs(pal, kPaperRed, MUSHROOM), clip);
 }
 Rect presentsBounds(const World& w) {
+  if (w.xmas.m.gifts == 0) return kNone;
   const Vec2 g = giftsAt(w.land);
-  return box(g.x - 53.f, g.y - 19.f, g.x + 29.f, g.y + 15.f);
+  return box(g.x - 53.f, g.y - 19.f, g.x + 37.f, g.y + 17.f);
 }
 
 bool stockingShown(const World& w) {
@@ -732,65 +816,16 @@ Rect stockingBounds(const World& w) {
   return box(c[0].x, hook.y, p[3].x, p[5].y);
 }
 
-// The sleigh and three reindeer, a silhouette climbing left across the moon.
-constexpr float kMoonX = 640.f, kMoonY = 110.f;
-constexpr float kSleighK = 1.4f;   // the sleigh and team's size (1: the first mockup's)
-Vec2 sleighXf(float x, float y) {   // local (forward +x, y down) to frame: facing left, climbing a little
-  const float c = 0.985f * kSleighK, s = 0.17f * kSleighK;
-  const float lx = x - 9.f, ly = y + 4.f;
-  return V(kMoonX - (lx * c + ly * s), kMoonY + (ly * c - lx * s));
-}
-void drawSleigh(Surface& sf, const Rect& clip, const Palette& pal) {
-  const Pixel ink = pal[ACTOR];
-  // The sleigh: a curled runner, the box with its high back, him and the sack.
-  Vec2 runner[6] = {sleighXf(-7.f, 0.f), sleighXf(2.f, 0.4f), sleighXf(6.5f, 0.f), sleighXf(8.6f, -1.6f), sleighXf(8.4f, -3.2f), sleighXf(7.f, -3.4f)};
-  polyline(sf, runner, 6, 0.9f, ink, clip);
-  const Vec2 body[6] = {sleighXf(-6.f, -1.5f), sleighXf(5.f, -1.5f), sleighXf(6.4f, -4.4f), sleighXf(-2.f, -4.4f), sleighXf(-4.4f, -8.6f), sleighXf(-7.2f, -8.4f)};
-  fillPolygon(sf, body, 6, ink, clip);
-  fillCircle(sf, sleighXf(0.6f, -6.6f), 2.4f, ink, clip);   // him
-  fillCircle(sf, sleighXf(1.0f, -9.6f), 1.5f, ink, clip);
-  const Vec2 hat[3] = {sleighXf(-0.5f, -10.5f), sleighXf(2.4f, -10.6f), sleighXf(-1.2f, -12.8f)};
-  fillPolygon(sf, hat, 3, ink, clip);
-  fillCircle(sf, sleighXf(-3.6f, -6.8f), 2.3f, ink, clip);   // the sack
-  // The reins, then the team, leaping.
-  strokeCapsule(sf, sleighXf(4.f, -6.f), sleighXf(39.f, -8.4f), 0.5f, ink, clip);
-  for (int r = 0; r < 3; ++r) {
-    const float x = 14.f + 9.5f * fl(r), y = -2.f - 1.2f * fl(r);
-    auto P = [&](float dx, float dy) { return sleighXf(x + dx, y + dy); };
-    fillEllipse(sf, P(0.f, -4.6f), 3.4f, 1.7f, ink, clip);
-    strokeCapsule(sf, P(2.2f, -4.2f), P(4.8f, -2.6f), 0.8f, ink, clip);    // fore legs reaching
-    strokeCapsule(sf, P(1.4f, -4.0f), P(3.4f, -1.8f), 0.8f, ink, clip);
-    strokeCapsule(sf, P(-2.2f, -4.2f), P(-5.0f, -3.0f), 0.8f, ink, clip);  // hind legs kicked back
-    strokeCapsule(sf, P(-1.6f, -4.0f), P(-4.2f, -2.2f), 0.8f, ink, clip);
-    strokeCapsule(sf, P(2.4f, -5.4f), P(3.8f, -8.0f), 1.3f, ink, clip);    // neck
-    fillEllipse(sf, P(4.6f, -8.2f), 1.4f, 0.9f, ink, clip);
-    strokeCapsule(sf, P(3.6f, -8.8f), P(2.8f, -11.2f), 0.6f, ink, clip);   // antlers
-    strokeCapsule(sf, P(3.1f, -10.4f), P(4.4f, -11.4f), 0.6f, ink, clip);
-    strokeCapsule(sf, P(3.0f, -10.0f), P(1.7f, -10.6f), 0.6f, ink, clip);
-  }
-}
-Rect sleighBounds() {
-  Rect r = kNone;
-  const float pts[4][2] = {{-8.f, 1.f}, {-8.f, -14.f}, {44.f, 1.f}, {44.f, -16.f}};
-  for (const auto& q : pts) {
-    const Vec2 v = sleighXf(q[0], q[1]);
-    unite(r, box(v.x, v.y, v.x, v.y, 3.f));
-  }
-  return r;
-}
-
 bool treeOn(const XmasMock& m) {
-  return m.wraps || m.garland == XG_TANGLED || m.garland == XG_PART || m.garland == XG_DRAPED || m.orns || m.gen ||
-         (m.extras & (XE_STAR | XE_LADDER | XE_COIL | XE_GAP));
+  return m.wraps || m.garland == XG_TANGLED || m.garland == XG_PART || m.garland == XG_DRAPED || m.garland == XG_LEAVING ||
+         m.orns || wireOn(m) || (m.extras & (XE_STAR | XE_LADDER | XE_GAP));
 }
 bool castOn(const XmasMock& m) {
-  return m.garland == XG_FLYING || m.garland == XG_TANGLED || m.garland == XG_PART || m.coon != XR_NONE;
+  return m.garland == XG_FLYING || m.garland == XG_TANGLED || m.garland == XG_PART || m.garland == XG_LEAVING ||
+         m.coon != XR_NONE;
 }
 
-LightLook lookOf(const World& w, const Palette& pal) {
-  const XmasMock& m = w.xmas.m;
-  return LightLook{darkOf(pal), powerLevel(m), m.look == XL_MULTI};
-}
+LightLook lookOf(const World& w, const Palette& pal) { return LightLook{darkOf(pal), powerLevel(w.xmas.m)}; }
 // How much light from the strings falls on things near the tree (the ornaments, the garland, the star).
 float treeLight(const World& w, const LightLook& L) {
   int lit = 0;
@@ -799,7 +834,22 @@ float treeLight(const World& w, const LightLook& L) {
   return L.dark * L.level * (fl(lit) / fl(XMAS_WRAPS));
 }
 
+// ---- the raccoon's rim of light from the tree (the mocks' posed raccoon) ---------------------------
 
+Critter rimOf(const World& w, const Critter& c) {
+  Critter r = c;
+  const float dir = treeX(w.land) >= c.feet.x ? 1.f : -1.f;
+  r.feet = V(c.feet.x + 1.3f * dir, c.feet.y - 0.9f);
+  return r;
+}
+Palette rimPal(const Palette& pal, float lit) {
+  Palette p;
+  const Pixel rim = mixRGB(pal[GROUND], hexPx(0xFFC08A), clamp01(0.35f + 0.9f * lit));
+  for (Pixel& q : p.c) q = rim;
+  return p;
+}
+
+#if SS_XMAS_MOCKS
 // ---- the snow (XE_SNOW) ------------------------------------------------------------------------------
 //
 // Fire and ice's frost pass (fireice.cpp fireIceDrawStatic) recolours the cached ground pixel by pixel
@@ -976,6 +1026,8 @@ void drawBoulderCap(const World& w, Surface& s, const Rect& clip, const Palette&
 }
 
 // The tent's: a cap along the ridge and down the upper part of both panels, drifts at its corners.
+
+Vec2 boxOf(const Landscape& ls) { const float x = homeHub(ls).x - kAxle; return V(x, floorf(bankYAt(ls, x)) - 7.f); }
 bool tentPieces(const World& w) {
   const XmasMock& m = w.xmas.m;
   return (m.extras & (XE_STOCKING | XE_SNOW)) && w.tent.state == TENT_UP && w.tent.progress >= 1.f;
@@ -1010,6 +1062,7 @@ Rect tentXBounds(const World& w) {
   return r;
 }
 
+
 // ---- the north star ----------------------------------------------------------------------------------
 //
 // Upper left, above the clouds' band (the clouds ride at y 96 and 158, landscape.cpp; their puffs reach
@@ -1036,20 +1089,8 @@ void drawNorth(uint8_t step, Surface& s, const Rect& clip, const Palette& pal) {
   fillCircle(s, c, 1.3f + 0.6f * lv, mixRGB(star, hexPx(0xFFFFFF), 0.25f * lv), clip);
 }
 
-// ---- the raccoon's rim of light from the tree ------------------------------------------------------
 
-Critter rimOf(const World& w, const Critter& c) {
-  Critter r = c;
-  const float dir = treeX(w.land) >= c.feet.x ? 1.f : -1.f;
-  r.feet = V(c.feet.x + 1.3f * dir, c.feet.y - 0.9f);
-  return r;
-}
-Palette rimPal(const Palette& pal, const LightLook& L, float lit) {
-  Palette p;
-  const Pixel rim = mixRGB(pal[GROUND], hexPx(L.multi ? 0xFFC08A : kWarmHalo), clamp01(0.35f + 0.9f * lit));
-  for (Pixel& q : p.c) q = rim;
-  return p;
-}
+#endif  // SS_XMAS_MOCKS
 
 }  // namespace
 
@@ -1060,33 +1101,45 @@ bool xmasOn(const World& w) {
   return memcmp(&w.xmas.m, &kZero, sizeof(XmasMock)) != 0;
 }
 
-Vec2 xmasWheelHub(const Landscape& ls) { return hubOf(ls); }
+Vec2 xmasWheelHub(const Landscape& ls) { return homeHub(ls); }
+Vec2 xmasBoxAt(const Landscape& ls) {
+  const float x = homeHub(ls).x - kAxle;
+  return V(x, floorf(bankYAt(ls, x)) - 7.f);
+}
 float xmasBankY(const Landscape& ls, float x) { return bankYAt(ls, x); }
 Vec2 xmasLadderRung(const Landscape& ls, int k) {
   Vec2 r[2][2];
-  ladderRails(ls, r);
+  ladderRails(ls, 1.f, r);
   return mixV(rungEnd(r, 0, k), rungEnd(r, 1, k), 0.5f);
 }
+Vec2 xmasLadderFoot(const Landscape& ls) { return V(treeX(ls) - 38.f, treeBase(ls) + 7.f); }
 Vec2 xmasOrnament(const Landscape& ls, int i) { return ornBall(ls, i < 0 ? 0 : (i >= XMAS_ORNS ? XMAS_ORNS - 1 : i)); }
 Vec2 xmasBushAt(const Landscape& ls) { return bushAt(ls); }
+Vec2 xmasStarAt(const Landscape& ls) { return starAt(ls); }
+float xmasTreeX(const Landscape& ls) { return treeX(ls); }
+float xmasTreeBase(const Landscape& ls) { return treeBase(ls); }
 
 bool xmasActorY(const World& w, int idx, int16_t& y) {
   const XmasMock& m = w.xmas.m;
   switch (idx) {
     case 0:
-      if (!m.gen) return false;
-      y = (int16_t)floorf(boxOf(w.land).y);
+      if (!m.gen || m.carry) return false;
+      y = (int16_t)floorf(genAt(w).box.y);
       return true;
     case 1:
-      if (!m.gen) return false;
-      y = (int16_t)floorf(bankYAt(w.land, hubOf(w.land).x));
+      if (!m.gen || m.carry) return false;
+      y = (int16_t)floorf(bankYAt(w.land, homeHub(w.land).x));
       return true;
     case 2:
-      if (!(m.extras & XE_PRESENTS)) return false;
+      if (m.gifts == 0) return false;
       y = (int16_t)floorf(giftsAt(w.land).y + 9.f);
       return true;
     case 3:
+#if SS_XMAS_MOCKS
       if (!tentPieces(w)) return false;
+#else
+      if (!stockingShown(w)) return false;
+#endif
       y = (int16_t)floorf(w.tent.pos.y);
       return true;
     case 4:
@@ -1094,11 +1147,19 @@ bool xmasActorY(const World& w, int idx, int16_t& y) {
       y = castSortY(w);
       return true;
     case 5:
-      if (m.bush == 0) return false;
+      if (m.bush == 0 || !buildDone(w.build)) return false;
       y = (int16_t)floorf(bushAt(w.land).y);
       return true;
-    case 6:   // after the boulder (it is added after the stream's actors at the same y)
-      return (m.extras & XE_SNOW) && streamActorY(w, y);
+    case 6:
+      if (m.gen && m.carry && w.hiker.visible) {   // in his arms: in front of him
+        y = (int16_t)(floorf(w.hiker.feet.y) + 2);
+        return true;
+      }
+#if SS_XMAS_MOCKS
+      return (m.extras & XE_SNOW) && streamActorY(w, y);   // after the boulder (added after the stream's actors)
+#else
+      return false;
+#endif
     default: return false;
   }
 }
@@ -1107,24 +1168,28 @@ void xmasDrawActor(const World& w, int idx, Surface& s, const Rect& clip, const 
   const XmasMock& m = w.xmas.m;
   switch (idx) {
     case 0:
-      if (hits(xmasGenBounds(w), clip)) {
-        drawBox(w, s, clip, pal);
-        if (m.extras & XE_SNOW) drawBoxSnow(w, s, clip, pal);
-        drawSparks(w, s, clip, pal);
-      }
-      break;
     case 1:
       if (hits(xmasGenBounds(w), clip)) {
-        drawWheel(w, s, clip, pal);
-        drawSparks(w, s, clip, pal);   // over the wheel too: they fly in front of it
+        const GenAt g = genAt(w);
+        if (idx == 0) {
+          drawBox(g, s, clip, pal);
+#if SS_XMAS_MOCKS
+          if (m.extras & XE_SNOW) drawBoxSnow(w, s, clip, pal);
+#endif
+        } else {
+          drawWheel(w, g, s, clip, pal);
+        }
+        drawSparks(w, g, s, clip, pal);   // over the wheel too: they fly in front of it
       }
       break;
     case 2:
       if (hits(presentsBounds(w), clip)) drawPresents(w, s, clip, pal);
       break;
     case 3:
-      if (!hits(tentXBounds(w), clip)) break;
-      if (m.extras & XE_SNOW) drawTentSnow(w, s, clip, pal);
+      if (!hits(xmasExtraBounds(w), clip)) break;
+#if SS_XMAS_MOCKS
+      if ((m.extras & XE_SNOW) && tentPieces(w)) drawTentSnow(w, s, clip, pal);
+#endif
       if (stockingShown(w)) drawStocking(w, s, clip, pal);
       break;
     case 4: {
@@ -1136,20 +1201,26 @@ void xmasDrawActor(const World& w, int idx, Surface& s, const Rect& clip, const 
       for (int r = 0; r < k.runs; ++r) drawTinsel(s, k.run[r], 9, lit, pal, clip);
       for (int i = 0; i < k.n; ++i) {
         // The raccoon by the lit tree: a warm rim of the lights' glow on its tree side first.
-        if (k.c[i].kind == CR_RACCOON && lit > 0.05f) critterDraw(rimOf(w, k.c[i]), s, rimPal(pal, L, lit), clip);
+        if (k.c[i].kind == CR_RACCOON && lit > 0.05f) critterDraw(rimOf(w, k.c[i]), s, rimPal(pal, lit), clip);
         critterDraw(k.c[i], s, pal, clip);
       }
       if (m.garland == XG_TANGLED && k.runs > 1) drawTinsel(s, k.run[1], 5, lit, pal, clip);   // the loop over it
-      if (k.ball) {
-        drawBall(s, k.ball_at, k.ball_gold, lit, pal, clip);
-      }
+      if (k.ball) drawBall(s, k.ball_at, k.ball_gold, lit, pal, clip);
       break;
     }
     case 5:
-      if (hits(bushBounds(w), clip)) drawBush(w, s, clip, pal, 0.f);
+      if (hits(bushBounds(w), clip)) drawBush(w, s, clip, pal);
       break;
     case 6:
-      if (hits(boulderCapBounds(w), clip)) drawBoulderCap(w, s, clip, pal);
+      if (m.gen && m.carry) {
+        if (!hits(xmasGenBounds(w), clip)) break;
+        const GenAt g = genAt(w);
+        drawBox(g, s, clip, pal);
+        drawWheel(w, g, s, clip, pal);
+      }
+#if SS_XMAS_MOCKS
+      else if (hits(boulderCapBounds(w), clip)) drawBoulderCap(w, s, clip, pal);
+#endif
       break;
     default: break;
   }
@@ -1157,23 +1228,26 @@ void xmasDrawActor(const World& w, int idx, Surface& s, const Rect& clip, const 
 
 void xmasDrawTree(const World& w, Surface& s, const Rect& clip, const Palette& pal) {
   const XmasMock& m = w.xmas.m;
-  if (!treeOn(m) || !hits(xmasTreeBounds(w), clip)) return;
+  const bool coil = (m.extras & XE_COIL) != 0;
+  if (!treeOn(m) && !coil) return;
+  if (!hits(xmasTreeBounds(w), clip) && !(coil && hits(coilBounds(w), clip))) return;
   const Landscape& ls = w.land;
   const LightLook L = lookOf(w, pal);
   const float lit = treeLight(w, L);
   const float cx = treeX(ls), base = treeBase(ls);
   // The light on the ground under the tree, and a little on the tree itself.
   if (lit > 0.f) {
-    const Pixel gc = hexPx(L.multi ? 0xF0A07A : 0xFF9C52);
+    const Pixel gc = hexPx(0xF0A07A);
     for (int ring = 0; ring < 3; ++ring)
       softDisc(s, V(cx, base + 4.f), 60.f - 15.f * fl(ring), 9.f - 2.2f * fl(ring), gc, kGroundGlowA * lit, clip);
   }
-  if (m.gen) drawWire(w, s, clip, pal);
+  if (wireOn(m)) drawWire(w, s, clip, pal);
+  if (m.extras & XE_LADDER) drawLadder(s, ls, ladderK(m), pal, clip);
   const int n = tierCount(ls);
   for (int k = 0; k < n && k < m.wraps; ++k) drawWrap(w, k, L, wrapLit(m, k), s, clip, pal);
   // The garland: scallops on the tiers it is draped on.
   int draped = 0;
-  if (m.garland == XG_DRAPED) draped = n - 1;
+  if (m.garland == XG_DRAPED || m.garland == XG_LEAVING) draped = n - 1;
   else if (m.garland == XG_PART) draped = 2;
   else if (m.garland == XG_TANGLED) draped = 1;
   for (int k = 1; k <= draped && k < n; ++k)
@@ -1197,39 +1271,52 @@ void xmasDrawTree(const World& w, Surface& s, const Rect& clip, const Palette& p
     if (!on && !gap) continue;
     const Vec2 h = ornHook(ls, i), b = ornBall(ls, i);
     drawHook(s, h, V(b.x, b.y - kOrnR - (gap ? 0.f : 1.f)), pal, clip);
-    if (gap) {   // the empty hook, bent where it was pulled
+    if (gap && !on) {   // the empty hook, bent where it was pulled
       drawHook(s, V(b.x, b.y - kOrnR), V(b.x + 1.6f, b.y - kOrnR + 1.8f), pal, clip);
       continue;
     }
     drawBall(s, b, kOrn[i].gold != 0, lit, pal, clip);
   }
   if (m.extras & XE_STAR) drawStar(s, ls, m.power != XP_OFF && m.wraps > 0 ? L.dark * L.level : 0.f, pal, clip);
-  if (m.extras & XE_LADDER) drawLadder(s, ls, pal, clip);
-  if (m.extras & XE_COIL) drawCoil(w, s, L, pal, clip);
+  if (coil) drawCoil(w, s, L, pal, clip);
 }
 
 void xmasDrawSky(const World& w, Surface& s, const Rect& clip, const Palette& pal) {
-  if ((w.xmas.m.extras & XE_SLEIGH) && hits(sleighBounds(), clip)) drawSleigh(s, clip, pal);
+#if SS_XMAS_MOCKS
   if (w.xmas.m.north && hits(northBounds(), clip)) drawNorth(w.xmas.m.north, s, clip, pal);
+#else
+  (void)w, (void)s, (void)clip, (void)pal;
+#endif
 }
 
-Vec2 xmasNorthStar() { return V(kNorthX, kNorthY); }
-
 const Palette& xmasTuftPal(const World& w, const Palette& pal, Palette& tmp) {
+#if SS_XMAS_MOCKS
   if (!(w.xmas.m.extras & XE_SNOW)) return pal;
   tmp = pal;
   tmp.c[GRASS] = frostCol(pal);
   return tmp;
+#else
+  (void)w, (void)tmp;
+  return pal;
+#endif
 }
 
 void xmasDrawStatic(const World& w, Surface& frame, const Palette& pal) {
+#if SS_XMAS_MOCKS
   if (!(w.xmas.m.extras & XE_SNOW) || !buildDone(w.build)) return;
   snowStatic(w, frame, pal);
+#else
+  (void)w, (void)frame, (void)pal;
+#endif
 }
 
 void xmasDrawFgPineSnow(const World& w, int k, Surface& s, const Rect& clip, const Palette& pal) {
+#if SS_XMAS_MOCKS
   if (!(w.xmas.m.extras & XE_SNOW) || !buildDone(w.build)) return;
   pineSnow(s, fgPine(w.land.fg[k ? 1 : 0]), snowCol(pal), clip);
+#else
+  (void)w, (void)k, (void)s, (void)clip, (void)pal;
+#endif
 }
 
 Rect xmasTreeBounds(const World& w) {
@@ -1238,43 +1325,45 @@ Rect xmasTreeBounds(const World& w) {
   const Landscape& ls = w.land;
   const float cx = treeX(ls), top = treeTop(ls), base = treeBase(ls);
   Rect r = box(cx - 62.f, top - 16.f, cx + 62.f, base + 14.f);   // the star's glow, the light on the ground
-  if (m.gen) {
+  if (wireOn(m)) {
     Vec2 p[9];
-    wirePts(ls, p);   // (and the box's snow cap is in xmasGenBounds' box)
+    wirePts(w, p);
     for (const Vec2& q : p) unite(r, around(q, 2.f, 2.f));
   }
-  if (m.extras & XE_LADDER) {
-    Vec2 rl[2][2];
-    ladderRails(ls, rl);
-    unite(r, box(rl[0][1].x, rl[0][1].y, rl[1][0].x, rl[1][0].y, 3.f));
-  }
-  if (m.extras & XE_COIL) unite(r, coilBounds(w));
+  if (m.extras & XE_LADDER) unite(r, ladderBounds(ls, ladderK(m)));
   return r;
 }
 
 Rect xmasGenBounds(const World& w) {
-  if (!w.xmas.m.gen) return kNone;
-  const Landscape& ls = w.land;
-  const Vec2 h = hubOf(ls), b = boxOf(ls);
+  const XmasMock& m = w.xmas.m;
+  if (!m.gen) return kNone;
+  if (m.carry && !w.hiker.visible) return kNone;
+  const GenAt g = genAt(w);
+  const Vec2 h = g.hub, b = g.box;
   const float rr = kWheelR + kPaddle;
-  Rect r = box(h.x - kWheelSquash * rr - 16.f, h.y - rr + kDepthY, h.x + rr + 3.f, h.y + rr + 2.f, 3.f);   // the wheel, its splash and wake
+  Rect r = box(h.x - kWheelSquash * rr - 16.f + kDepthX, h.y - rr + kDepthY, h.x + rr + 3.f, h.y + rr + 2.f, 3.f);   // the wheel, its splash and wake
   unite(r, box(b.x - 0.5f * kBoxW - 4.f, b.y - kBoxH - 5.f, b.x + 0.5f * kBoxW + 5.f, b.y + 1.f));
-  if (w.xmas.m.spark) {
-    const Vec2 o = sparkFrom(ls);
+  if (g.placed) {
+    const float wy = bankYAt(w.land, h.x);
+    unite(r, box(h.x - 4.f, h.y, h.x + 6.f, wy + 9.f));   // the post into the water
+  }
+  if (m.spark && g.placed) {
+    const Vec2 o = sparkFrom(g);
     unite(r, box(o.x - 10.f, o.y - 8.f, o.x + 10.f, o.y + 8.f));
     for (int i = 0; i < kSparks; ++i) {
       Vec2 c;
       float rad;
       bool hot;
-      if (sparkAt(ls, w.xmas.m.spark, i, c, rad, hot)) unite(r, around(c, rad, rad));
+      if (sparkAt(g, m.spark, i, c, rad, hot)) unite(r, around(c, rad, rad));
     }
   }
   return r;
 }
 
 Rect xmasCritBounds(const World& w) {
+  const XmasMock& m = w.xmas.m;
   Rect r = kNone;
-  if (castOn(w.xmas.m)) {
+  if (castOn(m)) {
     Cast k;
     castOf(w, k);
     for (int i = 0; i < k.n; ++i) unite(r, critterBounds(k.c[i]));
@@ -1282,38 +1371,57 @@ Rect xmasCritBounds(const World& w) {
       for (int i = 0; i < 9; ++i) unite(r, around(k.run[j][i], 0.5f * kTinselW + 1.f, 0.5f * kTinselW + 1.f));
     if (k.ball) unite(r, around(k.ball_at, kOrnR + 1.f, kOrnR + 2.f));
   }
+  if (m.extras & XE_COIL) unite(r, coilBounds(w));
   unite(r, bushBounds(w));
   return r;
 }
 
 Rect xmasExtraBounds(const World& w) {
-  const XmasMock& m = w.xmas.m;
   Rect r = kNone;
-  if (m.extras & XE_PRESENTS) unite(r, presentsBounds(w));
+  unite(r, presentsBounds(w));
   if (stockingShown(w)) unite(r, stockingBounds(w));
-  if (m.extras & XE_SLEIGH) unite(r, sleighBounds());
+#if SS_XMAS_MOCKS
+  const XmasMock& m = w.xmas.m;
   if (m.north) unite(r, northBounds());
   if (tentPieces(w)) unite(r, tentXBounds(w));
   if (m.extras & XE_SNOW) unite(r, boulderCapBounds(w));
+#endif
   return r;
 }
 
 void xmasTrack(World& w, Renderer& r) {
   XmasState& x = w.xmas;
   const bool changed = memcmp(&x.m, &x.d, sizeof(XmasMock)) != 0;
-  const bool hand = (x.m.extras & XE_COIL) != 0;   // the run up to his hand moves as he breathes
-  if (!changed && !hand && x.d_tree.empty() && x.d_gen.empty() && x.d_crit.empty() && x.d_extra.empty()) return;
+  const bool hand = (x.m.extras & XE_RUN) != 0 || x.m.coon == XR_HELD;   // follows his hand, or the raccoon
+  const bool arms = x.m.gen && x.m.carry;                                 // the generator in his arms
+  if (!changed && !hand && !arms && x.d_tree.empty() && x.d_gen.empty() && x.d_crit.empty() && x.d_extra.empty()) return;
   auto mark = [&r](Rect& prev, const Rect& cur, bool ch) {
     if (!ch && prev.x0 == cur.x0 && prev.y0 == cur.y0 && prev.x1 == cur.x1 && prev.y1 == cur.y1) return;
     if (!prev.empty()) r.markDirtyRect(prev.clipped(Rect{0, 0, SS_WIDTH, SS_HEIGHT}));
     if (!cur.empty()) r.markDirtyRect(cur.clipped(Rect{0, 0, SS_WIDTH, SS_HEIGHT}));
     prev = cur;
   };
+#if SS_XMAS_MOCKS
   if ((x.m.extras ^ x.d.extras) & XE_SNOW) r.invalidateCache();   // the snow lives in the static cache
-  mark(x.d_tree, xmasTreeBounds(w), changed || hand);
-  mark(x.d_gen, xmasGenBounds(w), changed);
-  mark(x.d_crit, xmasCritBounds(w), changed);
+#endif
+  // Only the groups whose own fields moved (the wheel's turn and the sparks touch the generator alone).
+  const XmasMock& a = x.m;
+  const XmasMock& b = x.d;
+  const bool tree_ch = a.gen != b.gen || a.wraps != b.wraps || a.power != b.power || a.garland != b.garland ||
+                       a.orns != b.orns || a.extras != b.extras || a.ladder != b.ladder || a.carry != b.carry ||
+                       a.lift != b.lift;
+  const bool gen_ch = a.gen != b.gen || a.wheel != b.wheel || a.spark != b.spark || a.lift != b.lift || a.carry != b.carry;
+  const bool crit_ch = a.garland != b.garland || a.fly != b.fly || a.coon != b.coon || a.coon_slot != b.coon_slot ||
+                       a.bush != b.bush || a.power != b.power || a.wraps != b.wraps || a.extras != b.extras;
+  const bool extra_ch = a.gifts != b.gifts || a.extras != b.extras;
+  mark(x.d_tree, xmasTreeBounds(w), tree_ch);
+  mark(x.d_gen, xmasGenBounds(w), gen_ch || arms);
+  mark(x.d_crit, xmasCritBounds(w), crit_ch || hand);
+#if SS_XMAS_MOCKS
   mark(x.d_extra, xmasExtraBounds(w), changed || tentPieces(w) || ((x.d.extras & (XE_STOCKING | XE_SNOW)) != 0));
+#else
+  mark(x.d_extra, xmasExtraBounds(w), extra_ch);   // (the stocking hangs still; a tent change moves its rect)
+#endif
   x.d = x.m;
 }
 

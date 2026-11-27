@@ -200,18 +200,20 @@ static void testLayout() {
   CHECK(sizeof(DayPlink) <= sizeof(DayBike) && sizeof(DayTaichi) <= sizeof(DayBike) && sizeof(DayHerd) <= sizeof(DayBike) &&
             sizeof(DayTrip) <= sizeof(DayBike),
         "a day member is bigger than the bike's place");
-  CHECK(MJ_COUNT == 29, "MJ_COUNT %d", (int)MJ_COUNT);
+  CHECK(MJ_COUNT == 30, "MJ_COUNT %d", (int)MJ_COUNT);   // 30: bauble_thief (2026-11-26)
 }
 
 // ---- [2] the evening untouched ---------------------------------------------------------------------------------
 
 // FNV-1a of each line of reviews/stage22-baseline/loops.txt (made before the foundation step, HEAD 3260e2c):
 // evening seed 1, night seed 1, evening seed 7, night seed 7.
+// 2026-11-26 (Mike): re-captured for the removals (squirrel_splash and the fishing majors out of the evening's
+// pool, the firewood beat gone); out of the Christmas season, so these lines are the removal-only tree's.
 static const uint32_t kEveningLines[4][10] = {
-    {0x44A0975Du, 0x85A9D089u, 0xC3B4C9CBu, 0xB5E46435u, 0x7A6B28A4u, 0x797FE6D6u, 0xB50873B6u, 0xB4A46714u, 0x6EF5164Cu, 0x1860A55Fu},
-    {0x4FE14573u, 0x50BD0905u, 0x1276C886u, 0x3177C37Bu, 0x9031E759u, 0xB5B40A6Cu, 0x314CBAA8u, 0x6E58AF98u, 0x241AA48Bu, 0x21A836D6u},
-    {0x59DB3764u, 0x1F00D193u, 0x3C40CB9Au, 0xDDB10905u, 0xEA682E8Eu, 0xF111FFE8u, 0x78832571u, 0x789843FEu, 0x69A2F2B3u, 0xAE65B495u},
-    {0xA2E0DCAAu, 0x112C651Au, 0xFAABED88u, 0x666B57E8u, 0xDFA0F7F2u, 0x561C9FBDu, 0xAD67C165u, 0xF6797FEEu, 0x2502B40Au, 0x7E4B94CCu}};
+    {0xAB7AB063u, 0x2957D3EEu, 0x537ACF55u, 0x8090876Fu, 0x8B06F4C0u, 0x27203FD5u, 0x088C2C30u, 0x145B328Bu, 0x04D601E7u, 0x3C1B866Cu},
+    {0x9BFFEEF8u, 0x2E26A048u, 0x2322A19Cu, 0x07ABFBC3u, 0xEC0EED06u, 0xE758C7AFu, 0x10A41654u, 0x86B5F265u, 0x7B901BB8u, 0x177EC1C2u},
+    {0x1EA7D3FBu, 0x93FCA282u, 0xEA97B7D8u, 0xBD40ACFCu, 0xB5A97E48u, 0xE6469D85u, 0x443331C4u, 0x66AF6D10u, 0x65D50CF3u, 0x811DF8B2u},
+    {0xE75DC13Du, 0x6350265Fu, 0x7BE9D1BDu, 0x9CBD128Cu, 0x01BA7A13u, 0x5D881CFEu, 0xC34A0CA2u, 0xB3287EE0u, 0x585580E0u, 0x35D18310u}};
 
 static void testEvening() {
   printf("[2] the evening untouched\n");
